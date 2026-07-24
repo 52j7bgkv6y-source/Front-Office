@@ -1,0 +1,9 @@
+{
+  "name": "front-office-league",
+  "private": true,
+  "type": "module",
+  "description": "Shared league server for the Front Office dynasty cap manager",
+  "dependencies": {
+    "@netlify/blobs": "latest"
+  }
+}

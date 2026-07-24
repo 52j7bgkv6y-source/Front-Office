@@ -1,0 +1,16 @@
+# Front Office — Netlify config
+#
+# The page and the server live in the same site here, which is why the app can
+# be pointed at its own address with nothing else to configure.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# index.html is the app itself. Functions declare their own routes
+# (/league/:id and /stats) via `export const config` inside each file.
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
