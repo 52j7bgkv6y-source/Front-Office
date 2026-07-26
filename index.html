@@ -7008,6 +7008,19 @@ VIEWS.settings = function(){
         <label class="check"><input type="checkbox" data-set="settings.supa.on" ${S.settings.supa.on?'checked':''}>
           <span>Run this league on Supabase accounts</span></label>
 
+        ${S.settings.supa.on?(()=>{
+          const step = !Supa.client ? 1 : !Supa.user ? 2 : !S.settings.supa.leagueId ? 3 : 4;
+          const steps = [[1,'Connect'],[2,'Sign in'],[3,'League'],[4,'Running']];
+          return `<div class="row" style="gap:6px;margin:2px 0 4px">
+            ${steps.map(([n,label])=>`<span class="pill ${step>n?'ok':step===n?'warn':''}"
+              style="${step<n?'opacity:.4':''}">${step>n?'✓':n}. ${label}</span>`).join('<span class="dim">›</span>')}
+          </div>
+          <div class="hint">${step===1?'Paste the two strings below and it connects on its own.'
+            :step===2?'Connected. Now sign in — either method works, and the second one needs nothing set up in Supabase.'
+            :step===3?'Signed in as '+esc(Supa.user.email)+'. Create a league or join one with a code.'
+            :'All set. '+esc(Supa.boss()?'You are the commissioner.':'You are an owner.')}</div>`;
+        })():''}
+
         ${S.settings.supa.on?`
           <div class="grid g2">
             <label class="f"><span>Project URL</span>
@@ -7034,12 +7047,33 @@ VIEWS.settings = function(){
           ${Supa.client && !Supa.user?`
             <div class="hr"></div>
             <div class="flabel">Sign in</div>
-            <div class="row">
-              <input type="email" id="supaEmail" placeholder="you@example.com" style="flex:1;min-width:180px">
-              <button class="btn pri" data-a="supaSignIn">Email me a link</button>
+            <div class="tabs" style="margin-bottom:10px">
+              <button class="${(ui.tmp.supaMode||'pw')==='pw'?'on':''}" data-a="supaMode" data-m="pw">With a password</button>
+              <button class="${ui.tmp.supaMode==='link'?'on':''}" data-a="supaMode" data-m="link">By email link</button>
             </div>
-            <div class="hint">No password to invent or forget — a link arrives in your email and clicking it signs you in.</div>
-            <div class="assetbox">
+
+            ${(ui.tmp.supaMode||'pw')==='pw'?`
+              <div class="grid g2">
+                <label class="f"><span>Email</span><input type="email" id="supaEmail2" placeholder="you@example.com"></label>
+                <label class="f"><span>Password</span><input type="password" id="supaPw" placeholder="at least six characters"></label>
+              </div>
+              <div class="row">
+                <button class="btn pri" data-a="supaPw" data-mk="1">Make my account</button>
+                <button class="btn" data-a="supaPw" data-mk="0">Sign in</button>
+              </div>
+              <div class="hint">Nothing to configure in Supabase for this — no email is sent and nothing has to be on an
+                allow-list. First time through, press <b>Make my account</b>.</div>
+              <div class="hint">If it says the account needs confirming, go to <b>Authentication → Sign In / Providers → Email</b>
+                in Supabase and turn off <b>Confirm email</b>. For a private league that is the simplest arrangement.</div>
+            `:`
+              <div class="row">
+                <input type="email" id="supaEmail" placeholder="you@example.com" style="flex:1;min-width:180px">
+                <button class="btn pri" data-a="supaSignIn">Email me a link</button>
+              </div>
+              <div class="hint">A link arrives in your email and clicking it signs you in — but only if the address below
+                is on Supabase's allow-list first.</div>
+            `}
+            <div class="assetbox" style="${(ui.tmp.supaMode||'pw')==='pw'?'opacity:.5':''}">
               <div class="flabel">Before the first sign-in, Supabase needs this address</div>
               <input type="text" readonly value="${esc(Supa.redirectUrl()||'open the app from its web address, not a local file')}" onclick="this.select()">
               <div class="hint" style="margin-top:6px">Paste it into <b>Authentication → URL Configuration</b> in Supabase:
@@ -7085,6 +7119,8 @@ VIEWS.settings = function(){
               <div class="row">
                 <button class="btn pri" data-a="supaPush">Save now</button>
                 <button class="btn" data-a="supaPull">Pull the latest</button>
+                <div class="spacer"></div>
+                <button class="btn ghost sm" data-a="supaClearLeague">Not this league</button>
               </div>
               <div class="hint">${esc(Supa.msg||'')}</div>`}
 
@@ -7327,6 +7363,27 @@ ACT.supaSignIn = ()=>{
   const email = el ? String(el.value||'').trim() : '';
   if(!/.+@.+\..+/.test(email)) return toast('Put in a real email address','bad');
   Supa.signIn(email);
+};
+ACT.supaMode = (d)=>{ ui.tmp.supaMode = d.m; render(); };
+ACT.supaClearLeague = ()=>{
+  modal('Point this app at a different league',
+    '<p>This only forgets the league code on this device. Nothing on the server is touched and nobody else is affected.</p>'+
+    '<div class="hint">You will be back at the create-or-join screen.</div>',
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    '<button class="btn danger" data-a="supaClearGo">Forget it</button>');
+};
+ACT.supaClearGo = ()=>{
+  S.settings.supa.leagueId = '';
+  if(Supa.channel){ try{ Supa.client.removeChannel(Supa.channel); }catch(e){} Supa.channel = null; }
+  Supa.member = null; Supa.roster = [];
+  save(true); closeModal(); render(); toast('Back to create or join');
+};
+ACT.supaPw = (d)=>{
+  const email = String(($('#supaEmail2')||{}).value||'').trim();
+  const pw = String(($('#supaPw')||{}).value||'');
+  if(!/.+@.+\..+/.test(email)) return toast('Put in a real email address','bad');
+  if(pw.length < 6) return toast('Six characters or more','bad');
+  Supa.signInPassword(email, pw, d.mk==='1');
 };
 ACT.supaSignOut = ()=> Supa.signOut();
 ACT.supaCheck = async (d, el, failedWith)=>{
@@ -7933,6 +7990,37 @@ const Supa = {
     }
     toast('Check your email — the link signs you straight in','good');
     this.set('warn','Sign-in link sent to '+email);
+  },
+  async signInPassword(email, pw, makeAccount){
+    if(!await this.init(true)) return;
+    try{
+      let res;
+      if(makeAccount){
+        res = await this.client.auth.signUp({email, password:pw});
+        if(res.error) throw res.error;
+        if(!res.data.session){
+          // The project still wants people to confirm by email.
+          this.set('warn','Account made — confirm it from your email, then sign in');
+          return modal('One more step',
+            '<p>The account exists, but this project is set to make people confirm their address before they can sign in. '+
+            'There is a confirmation email on its way.</p>'+
+            '<div class="hint">To skip that for a private league: in Supabase go to <b>Authentication → Sign In / Providers → Email</b> '+
+            'and turn off <b>Confirm email</b>. Then come back and press Sign in.</div>',
+            '<button class="btn ghost" data-a="closeModal">Close</button>');
+        }
+      } else {
+        res = await this.client.auth.signInWithPassword({email, password:pw});
+        if(res.error) throw res.error;
+      }
+      this.user = res.data.user || (res.data.session && res.data.session.user) || null;
+      this.set('ok','Signed in as '+(this.user? this.user.email : email));
+      await this.afterSignIn();
+      toast('Signed in','good');
+    }catch(e){
+      this.set('bad', e.message);
+      toast(e.message,'bad');
+      render();
+    }
   },
   async signOut(){
     if(!this.client) return;
