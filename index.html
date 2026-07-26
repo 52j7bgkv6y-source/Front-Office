@@ -7045,7 +7045,10 @@ VIEWS.settings = function(){
               <div class="hint" style="margin-top:6px">Paste it into <b>Authentication → URL Configuration</b> in Supabase:
                 once as the <b>Site URL</b>, and again under <b>Redirect URLs</b> with <span class="num">/**</span> on the end.
                 Skip this and the sign-in is refused before an email is sent.</div>
-              <button class="btn sm ghost" data-a="copyRedirect" style="margin-top:6px">Copy it</button>
+              <div class="row" style="margin-top:6px">
+                <button class="btn sm ghost" data-a="copyRedirect">Copy it</button>
+                <button class="btn sm" data-a="supaCheck">Check my settings</button>
+              </div>
             </div>`:''}
 
           ${Supa.user?`
@@ -7326,6 +7329,27 @@ ACT.supaSignIn = ()=>{
   Supa.signIn(email);
 };
 ACT.supaSignOut = ()=> Supa.signOut();
+ACT.supaCheck = async (d, el, failedWith)=>{
+  modal('Checking your settings', '<div class="hint">Asking your project a few questions…</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+  const rows = await Supa.diagnose();
+  const bad = rows.filter(r=> !r.ok);
+  modal(bad.length ? 'Found '+bad.length+' thing'+(bad.length>1?'s':'')+' to fix' : 'Everything checks out',
+    (failedWith?'<div class="hint bad">Supabase turned the sign-in down with: <span class="num">'+esc(failedWith)+'</span></div>':'')+
+    '<div class="stack">'+rows.map(r=>
+      '<div class="assetbox" style="border-color:'+(r.ok?'var(--rule)':'#5C4526')+'">'+
+      '<div class="row"><span class="pill '+(r.ok?'ok':'live')+'">'+(r.ok?'ok':'no')+'</span>'+
+      '<b style="flex:1">'+esc(r.t)+'</b></div>'+
+      '<div class="tiny muted" style="margin-top:5px;word-break:break-all">'+esc(r.m)+'</div>'+
+      (r.note?'<div class="hint" style="margin-top:5px">'+esc(r.note)+'</div>':'')+
+      '</div>').join('')+'</div>'+
+    (bad.length ? '' :
+      '<div class="hint">All four are fine, so if sign-in is still refused the address above is not on the allow-list '+
+      'exactly as written. Check <b>Authentication → URL Configuration</b> for a stray slash, http instead of https, '+
+      'or a different site than the one you are looking at.</div>'),
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn" data-a="copyRedirect">Copy the return address</button>');
+};
 ACT.copyRedirect = ()=>{
   const u = ui.tmp.redirectUrl || Supa.redirectUrl();
   if(navigator.clipboard) navigator.clipboard.writeText(u).then(()=> toast('Copied','good'));
@@ -7840,6 +7864,57 @@ const Supa = {
     if(!origin || origin==='null') return '';        // opened from a file, not a site
     return origin + (typeof o.pathname==='string' ? o.pathname : '');
   },
+  /* Ask the project itself what is wrong, rather than reading tea leaves in an
+     error message. Each step reports separately so the failing one is obvious. */
+  async diagnose(){
+    const c = this.cfg();
+    const out = [];
+    const url = String(c.url||'').trim().replace(/\/+$/,'');
+    const key = String(c.anonKey||'').trim();
+
+    // 1. does the address even look like a project API endpoint
+    if(!url) out.push({ok:false, t:'Project URL', m:'Nothing filled in.'});
+    else if(/supabase\.com\/dashboard|\/project\//.test(url))
+      out.push({ok:false, t:'Project URL', m:'That is the dashboard address, not the API one. '+
+        'You want the short one that looks like https://abcdefgh.supabase.co — it is on Settings › Data API, '+
+        'or behind the Connect button.'});
+    else if(!/^https:\/\//.test(url))
+      out.push({ok:false, t:'Project URL', m:'It has to start with https://'});
+    else if(!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in|red)$/i.test(url) && !/^https:\/\/[^\/]+$/.test(url))
+      out.push({ok:false, t:'Project URL', m:'There is a path on the end. It should stop after the host: '+url.split('/').slice(0,3).join('/')});
+    else out.push({ok:true, t:'Project URL', m:url});
+
+    // 2. is anything actually listening there
+    if(url && /^https:\/\//.test(url)){
+      try{
+        const r = await fetch(url+'/auth/v1/health', {headers:{apikey:key}});
+        const txt = await r.text();
+        if(r.ok) out.push({ok:true, t:'Reaching the project', m:'Answered — '+txt.slice(0,80)});
+        else out.push({ok:false, t:'Reaching the project',
+          m:'Answered '+r.status+' — '+txt.slice(0,120)+
+            (r.status===404?' · that usually means the address is not a Supabase project':'')});
+      }catch(e){ out.push({ok:false, t:'Reaching the project', m:'Could not reach it at all — '+e.message}); }
+    }
+
+    // 3. does the key work
+    if(url && key){
+      try{
+        const r = await fetch(url+'/rest/v1/', {headers:{apikey:key, Authorization:'Bearer '+key}});
+        if(r.status===401 || r.status===403){
+          const t = await r.text();
+          out.push({ok:false, t:'The key', m:'Refused — '+t.slice(0,120)});
+        } else out.push({ok:true, t:'The key', m:'Accepted'});
+      }catch(e){ out.push({ok:false, t:'The key', m:e.message}); }
+    } else if(!key) out.push({ok:false, t:'The key', m:'Nothing filled in.'});
+
+    // 4. where sign-in would send people back to
+    const back = this.redirectUrl();
+    out.push(back
+      ? {ok:true, t:'Sign-in returns to', m:back, note:'This exact address has to be on the allow-list in '+
+          'Authentication › URL Configuration, and add it again under Redirect URLs with /** on the end.'}
+      : {ok:false, t:'Sign-in returns to', m:'Nowhere — the app is open from a file rather than a web address.'});
+    return out;
+  },
   async signIn(email){
     if(!await this.init(true)) return;
     const back = this.redirectUrl();
@@ -7851,23 +7926,9 @@ const Supa = {
       email, options:{ emailRedirectTo: back }
     });
     if(error){
-      const path = /path|redirect|invalid/i.test(error.message||'');
       this.set('bad', error.message);
-      if(path){
-        modal('Supabase has not been told about this address',
-          '<p>The sign-in was refused before any email went out. Supabase only sends people back to addresses you have '+
-          'put on its allow-list, and a new project starts with nothing but localhost on it.</p>'+
-          '<div class="flabel" style="margin-top:12px">Add this exact address</div>'+
-          '<input type="text" readonly value="'+esc(back)+'" onclick="this.select()">'+
-          '<div class="hint">In Supabase: <b>Authentication → URL Configuration</b>. Put it in <b>Site URL</b>, and add '+
-          'it again under <b>Redirect URLs</b> with <span class="num">/**</span> on the end so any page of the app works. '+
-          'Save, then try again here.</div>'+
-          '<div class="hint">The message Supabase gave back was: <span class="num">'+esc(error.message)+'</span></div>',
-          '<button class="btn ghost" data-a="closeModal">Close</button>'+
-          '<button class="btn pri" data-a="copyRedirect">Copy the address</button>');
-        ui.tmp.redirectUrl = back;
-      } else toast(error.message,'bad');
-      render();
+      ui.tmp.redirectUrl = back;
+      ACT.supaCheck(null, null, error.message);
       return;
     }
     toast('Check your email — the link signs you straight in','good');
