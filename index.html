@@ -7454,14 +7454,31 @@ VIEWS.settings = function(){
               </tbody></table></div>
               ${Supa.boss()?`
                 <div class="hr"></div>
-                <div class="flabel">Invite somebody</div>
+                <div class="flabel">Invite the whole league at once</div>
+                <div class="grid g2">
+                  <label class="f"><span>League password</span>
+                    <div class="row"><input type="text" id="joinPw" value="${esc(ui.tmp.joinPw!=null?ui.tmp.joinPw:'')}"
+                      placeholder="one word everybody gets" style="flex:1">
+                      <button class="btn sm" data-a="setJoinPw">Set</button></div></label>
+                  <div><div class="flabel">The link</div>
+                    <input type="text" readonly value="${esc(lobbyLink())}" onclick="this.select()"></div>
+                </div>
+                <div class="row">
+                  <button class="btn pri" data-a="shareLobby">Update the league and copy the invitation</button>
+                  <span class="tiny dim">pushes what you have, then copies the message</span>
+                </div>
+                <div class="hint">Send that one link to everybody. They open it, pick their own team off the list,
+                  type the league password, choose an email and a password for themselves, and they are in.
+                  Nothing for you to do per person.</div>
+                <div class="hr"></div>
+                <div class="flabel">Or invite one person to one team</div>
                 <div class="row">
                   ${S.teams.map(t=> Supa.roster.some(m=> m.team_id===t.id) ? ''
                     : '<button class="btn sm" data-a="supaInvite" data-team="'+t.id+'">'+esc(t.name)+'</button>').join('')
                     || '<span class="tiny dim">every team has somebody in it</span>'}
                   <button class="btn sm ghost" data-a="supaInvite">No particular team</button>
                 </div>
-                <div class="hint">One invitation, one person, and it stops working once it is used.</div>`:''}
+                <div class="hint">A single-use code that puts them straight into that team, no choosing.</div>`:''}
             `:''}
           `:''}
 
@@ -7776,6 +7793,34 @@ ACT.supaInvite = async (d)=>{
       '<button class="btn pri" data-a="copyInvite">Copy the link</button>');
   }catch(e){ toast(e.message,'bad'); }
 };
+ACT.setJoinPw = async ()=>{
+  const v = String(($('#joinPw')||{}).value||'').trim();
+  try{
+    const {error} = await Supa.client.rpc('set_join_password', {p_league:Supa.cfg().leagueId, p_password:v});
+    if(error) throw error;
+    ui.tmp.joinPw = v;
+    render();
+    toast(v?'League password set':'League password removed','good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.shareLobby = async ()=>{
+  if(!Supa.boss()) return toast('Commissioners only','bad');
+  const link = lobbyLink();
+  if(!link) return toast('Connect and create the league first','bad');
+  // Send them the league as it stands right now, not as it stood yesterday.
+  await Supa.push(false, 'shared an invitation');
+  const pw = String(($('#joinPw')||{}).value||ui.tmp.joinPw||'').trim();
+  const text = 'Join the '+S.league.name+'.\n\n'+link+
+    (pw?'\n\nLeague password: '+pw:'')+
+    '\n\nOpen it on your phone or your computer, pick your team from the list, and choose an email and password '+
+    'for yourself. That is the whole thing.';
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(
+      ()=> toast('League saved and invitation copied','good'),
+      ()=> toast('League saved — copy the link by hand','bad'));
+  } else toast('League saved — copy the link by hand');
+  render();
+};
 ACT.copyInvite = ()=>{
   const t = ui.tmp.invite; if(!t) return;
   const text = 'Join the '+S.league.name+' front office.\n\n'+t.link+
@@ -7783,6 +7828,114 @@ ACT.copyInvite = ()=>{
     'press the button, and you are in your team. Nothing else to set up.';
   if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('Copied','good'));
 };
+/* One link for the whole league. Whoever opens it picks a team, says the
+   password, makes an account, and is in — no per-person codes to hand out. */
+function lobbyLink(){
+  const c = Supa.cfg();
+  if(!c.url || !c.anonKey || !c.leagueId) return '';
+  const bundle = btoa(JSON.stringify({u:c.url, k:c.anonKey, l:c.leagueId, n:S.league.name}));
+  const loc = (typeof location==='object' && location) ? location : {};
+  const here = (typeof loc.origin==='string' && loc.origin!=='null' ? loc.origin : '') +
+               (typeof loc.pathname==='string' ? loc.pathname : '');
+  return here + '#lobby=' + encodeURIComponent(bundle);
+}
+async function openLobby(name){
+  ui.tmp.lobby = {name:name||'', teams:[], team:'', pw:'', loading:true, err:''};
+  lobbyModal();
+  try{
+    const {data, error} = await Supa.client.rpc('league_lobby', {p_league:Supa.cfg().leagueId});
+    if(error) throw error;
+    const t = ui.tmp.lobby;
+    t.teams = data || [];
+    t.name = (t.teams[0] && t.teams[0].league_name) || name || 'the league';
+    t.needsPw = !!(t.teams[0] && t.teams[0].needs_password);
+    t.loading = false;
+  }catch(e){
+    ui.tmp.lobby.loading = false;
+    ui.tmp.lobby.err = e.message;
+  }
+  lobbyModal();
+}
+function lobbyModal(){
+  const t = ui.tmp.lobby || {};
+  if(t.loading) return modal('Joining…', '<div class="hint">Fetching the league…</div>',
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>');
+  if(t.err) return modal('That did not work',
+    '<div class="hint bad">'+esc(t.err)+'</div>'+
+    '<div class="hint">If it mentions a missing function, the commissioner needs to run the newest setup SQL in Supabase.</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+
+  const free = t.teams.filter(x=> !x.taken);
+  const gone = t.teams.filter(x=> x.taken);
+  modal('Join '+(t.name||'the league'), `
+    <div class="flabel">Which team is yours</div>
+    <div class="stack" style="max-height:34vh;overflow:auto;margin-bottom:12px">
+      ${free.map(x=>`<button class="btn wide ${t.team===x.team_id?'on':''}" data-a="lobbyPick" data-id="${esc(x.team_id)}"
+        style="justify-content:flex-start">${esc(x.team_name)}
+        ${x.owner_name?'<span class="dim" style="margin-left:6px">'+esc(x.owner_name)+'</span>':''}</button>`).join('')
+        || '<div class="hint bad">Every team already has somebody in it. Ask your commissioner.</div>'}
+    </div>
+    ${gone.length?`<div class="hint">Already taken: ${gone.map(x=> esc(x.team_name)).join(', ')}</div>`:''}
+    <div class="hr"></div>
+    ${t.needsPw!==false?`<label class="f"><span>League password</span>
+      <input type="text" id="lobbyPw" value="${esc(t.pw||'')}" placeholder="the word your commissioner gave you"></label>`:''}
+    <div class="flabel" style="margin-top:10px">Make yourself an account</div>
+    <div class="grid g2">
+      <label class="f"><span>Email</span><input type="email" id="lobbyEmail" placeholder="you@example.com"></label>
+      <label class="f"><span>Password</span><input type="password" id="lobbyPw2" placeholder="six or more"></label>
+    </div>
+    <div class="hint">This is your own sign-in, not the league password. Nothing is emailed to you — pick something
+      and press the button.</div>
+    ${Supa.user?'<div class="hint good">Already signed in as '+esc(Supa.user.email)+'. Your email and password can stay empty.</div>':''}`,
+    '<button class="btn ghost" data-a="closeModal">Later</button>'+
+    '<button class="btn pri" data-a="lobbyGo">Take my team</button>');
+}
+ACT.lobbyPick = (d)=>{
+  const t = ui.tmp.lobby;
+  const pw = $('#lobbyPw'), em = $('#lobbyEmail'), p2 = $('#lobbyPw2');
+  if(pw) t.pw = pw.value; if(em) t.email = em.value; if(p2) t.pw2 = p2.value;
+  t.team = d.id;
+  lobbyModal();
+};
+ACT.lobbyGo = async ()=>{
+  const t = ui.tmp.lobby;
+  const pw = ($('#lobbyPw')||{}).value || t.pw || '';
+  const email = ($('#lobbyEmail')||{}).value || '';
+  const mine = ($('#lobbyPw2')||{}).value || '';
+  if(!t.team) return toast('Pick your team first','bad');
+  try{
+    if(!Supa.user){
+      if(!/.+@.+\..+/.test(email)) return toast('Put in a real email address','bad');
+      if(mine.length < 6) return toast('Give yourself a password of six or more','bad');
+      let r = await Supa.client.auth.signUp({email, password:mine});
+      if(r.error && /already/i.test(r.error.message)){
+        r = await Supa.client.auth.signInWithPassword({email, password:mine});
+      }
+      if(r.error) throw r.error;
+      if(!r.data.session){
+        return modal('Nearly there',
+          '<p>The account is made, but this project asks people to confirm by email first.</p>'+
+          '<div class="hint">Ask your commissioner to switch off <b>Confirm email</b> under '+
+          '<b>Authentication → Sign In / Providers → Email</b> in Supabase, then open this link again.</div>',
+          '<button class="btn ghost" data-a="closeModal">Close</button>');
+      }
+      Supa.user = r.data.session.user;
+    }
+    const {data, error} = await Supa.client.rpc('join_with_password', {
+      p_league:Supa.cfg().leagueId, p_password:pw, p_team:t.team, p_label:Supa.user.email });
+    if(error) throw error;
+    S.settings.supa.leagueId = data.league_id;
+    save(true);
+    await Supa.loadMember();
+    await Supa.pull(true);
+    if(Supa.member && Supa.member.team_id){ S.league.myTeamId = Supa.member.team_id; Store.set(KEY, S); }
+    Supa.listen();
+    ui.tmp.lobby = null;
+    closeModal(); render();
+    toast('Welcome — you are '+teamName(S.league.myTeamId),'good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+
 /* The one screen an invited owner ever has to look at. */
 function joinModal(leagueName){
   const code = ui.tmp.pendingCode || '';
@@ -8654,6 +8807,19 @@ async function init(){
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
 function greetInvites(){
+  // The league-wide link: project, key and league, no per-person code.
+  const lob = /[#&]lobby=([^&]+)/.exec(location.hash||'');
+  if(lob){
+    let inv = null;
+    try{ inv = JSON.parse(atob(decodeURIComponent(lob[1]))); }catch(e){}
+    if(inv && inv.u && inv.k && inv.l){
+      S.settings.supa = Object.assign({}, S.settings.supa, {on:true, url:inv.u, anonKey:inv.k, leagueId:inv.l});
+      save(true);
+      history.replaceState(null,'',location.pathname);
+      setTimeout(()=> Supa.init().then(()=> openLobby(inv.n)), 350);
+      return;
+    }
+  }
   // The full invitation: project, key, league and code, all in one link.
   const full = /[#&]join2=([^&]+)/.exec(location.hash||'');
   if(full){
