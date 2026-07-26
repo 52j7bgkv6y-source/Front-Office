@@ -615,7 +615,7 @@ function defaultState(){
   const season = 2026;
   return {
     meta:{version:1, savedAt:0, created:Date.now()},
-    league:{name:'Dynasty Cap League', season, myTeamId:null, commishTeamId:null, weekOfSeason:1},
+    league:{name:'Dynasty Cap League', season, myTeamId:null, commishTeamId:null, coCommishIds:[], weekOfSeason:1},
     settings:{
       scoring: defaultScoring(),
       roster:{
@@ -666,6 +666,7 @@ function defaultState(){
       },
       dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'', remindDays:[14,7,1] },
       sync:{ on:false, url:'', leagueId:'', key:'', everySec:20 },
+      supa:{ on:false, url:'', anonKey:'', leagueId:'' },
       live:{ mode:'demo', endpoint:'', pollSec:30, speed:1, running:false }
     },
     rev:0, season:{year:season, byPlayer:{}}, history:{}, dvp:{}, faAuctions:[],
@@ -959,7 +960,8 @@ let saveT=null;
 function save(now){
   S.meta.savedAt = Date.now();
   if(typeof clearCapCache==='function'){ clearCapCache(); dppCache = null; }
-  if(typeof syncPush==='function') syncPush();
+  if(typeof Supa==='object' && Supa.ready()) supaPush();
+  else if(typeof syncPush==='function') syncPush();
   if(now){ Store.set(KEY, S); return; }
   clearTimeout(saveT); saveT = setTimeout(()=> Store.set(KEY, S), 400);
 }
@@ -1074,7 +1076,34 @@ const NAV = [
 const MOBILE_TABS = ['live','cap','block','trades'];
 
 function myTeam(){ return byId(S.teams, S.league.myTeamId) || S.teams[0] || null; }
-function isCommish(){ return !S.league.commishTeamId || S.league.myTeamId===S.league.commishTeamId; }
+/* One commissioner, plus anyone they have handed the keys to. */
+function commishIds(){
+  const extra = Array.isArray(S.league.coCommishIds) ? S.league.coCommishIds : [];
+  return [S.league.commishTeamId].concat(extra).filter(Boolean);
+}
+function isCommishTeam(teamId){
+  const all = commishIds();
+  return !all.length || all.indexOf(teamId) >= 0;
+}
+function isCommish(){
+  // With real accounts the database has the final say; the local list is only
+  // a fallback for leagues still running on the shared password.
+  if(typeof Supa==='object' && Supa.ready()) return Supa.boss();
+  return isCommishTeam(S.league.myTeamId);
+}
+/* Signed in, you are your own team and nobody else's — unless you run the league. */
+function canActAs(teamId){
+  if(typeof Supa!=='object' || !Supa.seated()) return true;
+  return Supa.boss() || teamId === Supa.member.team_id;
+}
+function identityNote(){
+  if(typeof Supa!=='object' || !Supa.ready()) return '';
+  return Supa.user ? Supa.user.email : '';
+}
+function commishLabel(teamId){
+  if(teamId === S.league.commishTeamId) return '<span class="pill warn">commissioner</span>';
+  return (S.league.coCommishIds||[]).indexOf(teamId)>=0 ? '<span class="pill">co-commissioner</span>' : '';
+}
 function teamName(id){ const t=byId(S.teams,id); return t? t.name : '—'; }
 function playerName(id){ const p=byId(S.players,id); return p? p.name : '—'; }
 function pickLabel(pk){ return pk.year+' R'+pk.round + (pk.originTeamId!==pk.ownerTeamId ? ' ('+(byId(S.teams,pk.originTeamId)||{abbr:'?'}).abbr+')' : ''); }
@@ -1181,6 +1210,16 @@ document.addEventListener('change', e=>{
   if(!t) return;
   // comp overrides are keyed "round.index", which would otherwise be read as
   // two levels of nesting
+  if(/^settings\.supa\.(url|anonKey|on)$/.test(t.dataset.set)){
+    setPath(t.dataset.set, val(t));
+    save();
+    // Nothing to press: as soon as both strings are there, connect.
+    if(S.settings.supa.on && S.settings.supa.url && S.settings.supa.anonKey && !Supa.client){
+      Supa.init(true).then(ok=>{ render(); if(ok) toast('Connected to Supabase','good'); });
+    }
+    render();
+    return;
+  }
   const m = /^settings\.comp\.overrides\.(\d+)\.(\d+)$/.exec(t.dataset.set);
   if(m){
     S.settings.comp.overrides = S.settings.comp.overrides || {};
@@ -2364,6 +2403,7 @@ VIEWS.teams = function(){
           return `<tr class="${t.id===tid?'me':''}">
             <td class="num">${seed?'<span class="pill ok">'+seed+'</span>':'<span class="dim">'+(i+1)+'</span>'}</td>
             <td><b style="font-weight:500">${esc(t.name)}</b>${seed&&seed<=P.byes?' <span class="tiny good">bye</span>':''}
+              ${commishLabel(t.id)}
               ${t._why?'<div class="tiny dim">tie broken on '+esc(t._why)+'</div>':''}</td>
             <td class="right num">${r.w}</td><td class="right num">${r.l}</td><td class="right num">${r.t}</td>
             <td class="right num">${winPct(t).toFixed(3).replace(/^0/,'')}</td>
@@ -3055,6 +3095,10 @@ ACT.growthMode = (d)=>{ S.settings.cap.growthMode=d.m; save(); render(); };
    ============================================================ */
 function actingTeam(){ return ui.tmp.actAs || S.league.myTeamId || (S.teams[0]||{}).id; }
 function actAsBar(){
+  if(typeof Supa==='object' && Supa.seated() && !Supa.boss()){
+    return '<span class="pill ok" title="signed in as '+esc(Supa.user.email)+'">'+
+      esc(teamName(Supa.member.team_id))+'</span>';
+  }
   return '<label class="row" style="gap:8px"><span class="eyebrow">Acting as</span>'+
     '<select data-a="setActAs" style="max-width:200px">'+S.teams.map(t=>'<option value="'+t.id+'"'+(t.id===actingTeam()?' selected':'')+'>'+esc(t.name)+'</option>').join('')+'</select></label>';
 }
@@ -6364,6 +6408,16 @@ VIEWS.settings = function(){
         </div>
         <label class="f"><span>Your team</span>${teamSelect('league.myTeamId', S.league.myTeamId)}</label>
         <label class="f"><span>Commissioner</span>${teamSelect('league.commishTeamId', S.league.commishTeamId)}</label>
+        <div class="flabel" style="margin-top:10px">Co-commissioners</div>
+        <div class="stack">
+          ${S.teams.filter(t=> t.id!==S.league.commishTeamId).map(t=>`<label class="check">
+            <input type="checkbox" data-a="toggleCoCommish" data-id="${t.id}" ${(S.league.coCommishIds||[]).indexOf(t.id)>=0?'checked':''}>
+            <span>${esc(t.name)}${t.owner?' <span class="dim">'+esc(t.owner)+'</span>':''}</span></label>`).join('')
+            || '<div class="dim tiny">Only one team in the league so far.</div>'}
+        </div>
+        <div class="hint">Co-commissioners get every button the commissioner gets — settling auctions early, free cuts,
+          working out comp picks, rolling the season over. ${(S.league.coCommishIds||[]).length
+            ? (S.league.coCommishIds||[]).length+' named so far.' : 'Nobody named yet.'}</div>
       </div></div>
       <div class="panel"><div class="ph"><h3>Teams</h3><div class="spacer"></div><button class="btn sm" data-a="addTeam">Add a team</button></div>
         <div class="pb tight scrollx"><table><thead><tr><th>Name</th><th>Owner</th><th>Email</th><th></th></tr></thead><tbody>
@@ -6942,8 +6996,141 @@ VIEWS.settings = function(){
       </div></div>
     </div>`:''}
 
-    ${sub==='server'?`<div class="grid g2">
-      <div class="panel"><div class="ph"><h3>Shared league server</h3><div class="spacer"></div>
+    ${sub==='server'?`
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Accounts and permissions</h3><div class="spacer"></div>
+        <span class="pill ${Supa.status==='ok'?'ok':Supa.status==='bad'?'live':Supa.status==='warn'?'warn':''}">
+          ${Supa.ready()?(Supa.boss()?'commissioner':'owner'):Supa.configured()?'not signed in':'off'}</span></div>
+        <div class="pb stack">
+        <p class="muted" style="margin:0">The shared password lets anyone holding it act as anybody. This does not: people
+          sign in with their own email, a team belongs to an account, and the database turns away writes it should not
+          accept rather than trusting the app to ask nicely.</p>
+
+        <label class="check"><input type="checkbox" data-set="settings.supa.on" ${S.settings.supa.on?'checked':''}>
+          <span>Run this league on Supabase accounts</span></label>
+
+        ${S.settings.supa.on?`
+          <div class="grid g2">
+            <label class="f"><span>Project URL</span>
+              <input type="text" data-set="settings.supa.url" value="${esc(S.settings.supa.url)}" placeholder="https://abcdefgh.supabase.co"></label>
+            <label class="f"><span>Publishable or anon key</span>
+              <input type="text" data-set="settings.supa.anonKey" value="${esc(S.settings.supa.anonKey)}" placeholder="sb_publishable_… or eyJhbGciOi…"></label>
+          </div>
+          <div class="hint">Both live in your Supabase project under <b>Settings › API Keys</b>. Newer projects show a
+            <b>publishable key</b> starting <span class="num">sb_publishable_</span>; older ones have an <b>anon</b> key
+            starting <span class="num">eyJ</span> under a Legacy tab. Either works here — paste whichever you have.</div>
+          <div class="hint">That key is meant to be public. The row level security you installed with the SQL is what
+            protects the league, not the secrecy of the string.</div>
+
+          <div class="row">
+            <button class="btn ${Supa.client?'ghost':'pri'}" data-a="supaConnect">
+              ${Supa.client?'Reconnect':Supa.booting?'Connecting…':'Connect'}</button>
+            <span class="tiny ${Supa.status==='bad'?'bad':Supa.client?'good':'dim'}">
+              ${Supa.client ? 'Connected to '+esc(String(S.settings.supa.url).replace(/^https?:\/\//,''))
+                : Supa.configured() ? 'Ready — press connect'
+                : 'Paste the project URL and key above'}</span>
+          </div>
+          ${Supa.status==='bad'&&Supa.msg?'<div class="hint bad">'+esc(Supa.msg)+'</div>':''}
+
+          ${Supa.client && !Supa.user?`
+            <div class="hr"></div>
+            <div class="flabel">Sign in</div>
+            <div class="row">
+              <input type="email" id="supaEmail" placeholder="you@example.com" style="flex:1;min-width:180px">
+              <button class="btn pri" data-a="supaSignIn">Email me a link</button>
+            </div>
+            <div class="hint">No password to invent or forget — a link arrives in your email and clicking it signs you in.</div>
+            <div class="assetbox">
+              <div class="flabel">Before the first sign-in, Supabase needs this address</div>
+              <input type="text" readonly value="${esc(Supa.redirectUrl()||'open the app from its web address, not a local file')}" onclick="this.select()">
+              <div class="hint" style="margin-top:6px">Paste it into <b>Authentication → URL Configuration</b> in Supabase:
+                once as the <b>Site URL</b>, and again under <b>Redirect URLs</b> with <span class="num">/**</span> on the end.
+                Skip this and the sign-in is refused before an email is sent.</div>
+              <button class="btn sm ghost" data-a="copyRedirect" style="margin-top:6px">Copy it</button>
+            </div>`:''}
+
+          ${Supa.user?`
+            <div class="hr"></div>
+            <div class="row">
+              <div style="flex:1"><div class="flabel">Signed in</div>
+                <b>${esc(Supa.user.email)}</b>
+                ${Supa.member?' <span class="pill '+(Supa.boss()?'warn':'')+'">'+(Supa.boss()?'commissioner':'owner')+'</span>':''}
+                ${Supa.member&&Supa.member.team_id?'<div class="tiny muted">'+esc(teamName(Supa.member.team_id))+'</div>':''}
+              </div>
+              <button class="btn ghost sm" data-a="supaSignOut">Sign out</button>
+            </div>
+
+            ${!S.settings.supa.leagueId?`
+              <div class="hr"></div>
+              <div class="grid g2">
+                <div><div class="flabel">Start a league here</div>
+                  <div class="row"><input type="text" id="supaLeagueId" placeholder="a short code" style="flex:1">
+                    <button class="btn pri" data-a="supaCreate">Create</button></div>
+                  <div class="hint">Puts what is loaded here on the server and makes you commissioner.</div></div>
+                <div><div class="flabel">Or join one</div>
+                  <div class="row"><input type="text" id="supaCode" placeholder="invitation code" style="flex:1">
+                    <button class="btn" data-a="supaJoin">Join</button></div>
+                  <div class="hint">The commissioner sends you a link or a code.</div></div>
+              </div>`
+            :`
+              <div class="hr"></div>
+              <div class="kv">
+                <dt>League code</dt><dd class="num">${esc(S.settings.supa.leagueId)}</dd>
+                <dt>Revision</dt><dd>${S.rev||0}</dd>
+                <dt>Live updates</dt><dd>${Supa.channel?'listening':'not connected'}</dd>
+                <dt>Last saved</dt><dd>${Supa.lastPush?dstr(Supa.lastPush):'—'}</dd>
+              </div>
+              <div class="row">
+                <button class="btn pri" data-a="supaPush">Save now</button>
+                <button class="btn" data-a="supaPull">Pull the latest</button>
+              </div>
+              <div class="hint">${esc(Supa.msg||'')}</div>`}
+
+            ${Supa.ready() && Supa.roster.length?`
+              <div class="hr"></div>
+              <div class="flabel">Who is in</div>
+              <div class="scrollx"><table><thead><tr><th>Account</th><th>Team</th><th>Role</th><th></th></tr></thead><tbody>
+              ${Supa.roster.map(m=>`<tr>
+                <td class="tiny">${esc(m.email||'—')}${m.user_id===Supa.user.id?' <span class="dim">(you)</span>':''}</td>
+                <td>${Supa.boss()
+                  ? '<select data-a="supaMemberTeam" data-user="'+m.user_id+'" data-role="'+m.role+'" style="width:150px">'+
+                    '<option value="">— none —</option>'+
+                    S.teams.map(t=>'<option value="'+t.id+'"'+(t.id===m.team_id?' selected':'')+'>'+esc(t.name)+'</option>').join('')+
+                    '</select>'
+                  : esc(m.team_id?teamName(m.team_id):'—')}</td>
+                <td>${Supa.boss() && m.user_id!==Supa.user.id
+                  ? '<button class="btn sm '+(m.role==='commish'?'on':'ghost')+'" data-a="supaSetMember" data-user="'+m.user_id+
+                    '" data-team="'+(m.team_id||'')+'" data-role="'+(m.role==='commish'?'owner':'commish')+'">'+
+                    (m.role==='commish'?'commissioner':'owner')+'</button>'
+                  : '<span class="pill '+(m.role==='commish'?'warn':'')+'">'+(m.role==='commish'?'commissioner':'owner')+'</span>'}</td>
+                <td class="right">${Supa.boss() && m.user_id!==Supa.user.id
+                  ? '<button class="btn sm ghost danger" data-a="supaDropMember" data-user="'+m.user_id+'">Remove</button>':''}</td>
+              </tr>`).join('')}
+              </tbody></table></div>
+              ${Supa.boss()?`
+                <div class="hr"></div>
+                <div class="flabel">Invite somebody</div>
+                <div class="row">
+                  ${S.teams.map(t=> Supa.roster.some(m=> m.team_id===t.id) ? ''
+                    : '<button class="btn sm" data-a="supaInvite" data-team="'+t.id+'">'+esc(t.name)+'</button>').join('')
+                    || '<span class="tiny dim">every team has somebody in it</span>'}
+                  <button class="btn sm ghost" data-a="supaInvite">No particular team</button>
+                </div>
+                <div class="hint">One invitation, one person, and it stops working once it is used.</div>`:''}
+            `:''}
+          `:''}
+
+          <div class="hr"></div>
+          <div class="hint"><b>What the database enforces:</b> only members can read or write this league at all, and only
+            a commissioner can change the settings, the league block, or the list of teams. An owner who tries is turned
+            away by Postgres, not by a polite message in the app. Every save records which account made it.</div>
+          <div class="hint"><b>What it still cannot:</b> the league is one document, so an owner can edit rosters other
+            than their own inside it. The write log names who did what, which is the honest answer for a league of people
+            who know each other.</div>
+        `:'<div class="hint">Leave this off and the league keeps running on the shared-password server below.</div>'}
+      </div></div>
+
+      <div class="grid g2">
+      <div class="panel"><div class="ph"><h3>Shared league server${Supa.ready()?' <span class="dim tiny">— standing by</span>':''}</h3><div class="spacer"></div>
         <span class="pill ${Sync.status==='ok'?'ok':Sync.status==='bad'?'live':Sync.status==='warn'?'warn':''}">${Sync.ready()?esc(Sync.status==='bad'?'Offline':'Connected'):'Not connected'}</span></div>
         <div class="pb stack">
         <p class="muted" style="margin:0">Point every owner at the same address and league code and you all work off one copy. Until then this page is yours alone.</p>
@@ -6966,12 +7153,38 @@ VIEWS.settings = function(){
         </div>
         <div class="hint">${Sync.msg?esc(Sync.msg):'Nothing sent yet.'} ${Sync.lastPull?'· last checked '+dstr(Sync.lastPull):''}</div>
       </div></div>
+      <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Inviting your owners</h3></div><div class="pb stack">
+        ${Sync.ready() ? `
+          <p class="muted" style="margin:0">Send each owner the link below and the password separately. The link fills in
+            the address and the league code for them; the password is the bit that keeps strangers out, so it should not
+            travel in the same message.</p>
+          <label class="f"><span>Their link</span>
+            <input type="text" readonly value="${esc(joinLink())}" onclick="this.select()"></label>
+          <div class="row">
+            <button class="btn pri" data-a="copyJoin">Copy the whole invitation</button>
+            <span class="tiny dim">link, instructions and all — paste it straight into a message</span>
+          </div>
+          <div class="hr"></div>
+          <div class="flabel">What happens on their end</div>
+          <ol class="muted tiny" style="line-height:1.9;padding-left:18px;margin:0">
+            <li>They open the link and are asked for the password</li>
+            <li>The league comes down and they pick their team from a list</li>
+            <li>That seat is remembered on their device — everyone opens on their own roster</li>
+          </ol>
+          <div class="hint">There is no sign-up and no account. Anyone with the link and the password is in.</div>
+        ` : `<div class="empty-state" style="padding:18px">
+          <p>Fill in the server address and league code above, push the league up, and an invitation link will appear here.</p>
+        </div>`}
+      </div></div>
+
       <div class="panel"><div class="ph"><h3>How the sharing works</h3></div><div class="pb">
         <div class="kv">
           <dt>Local revision</dt><dd>${S.rev||0}</dd>
-          <dt>Your team</dt><dd>${esc((myTeam()||{}).name||'—')}</dd>
+          <dt>Your team</dt><dd>${esc((myTeam()||{}).name||'—')} ${commishLabel(S.league.myTeamId)}</dd>
+          <dt>Running the league</dt><dd>${commishIds().map(teamName).join(', ')||'anyone'}</dd>
           <dt>Last pushed</dt><dd>${Sync.lastPush?dstr(Sync.lastPush):'—'}</dd>
         </div>
+        <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="pickSeat">Change which team is mine</button></div>
         <div class="hr"></div>
         <p class="muted tiny" style="margin:0">Every change bumps a revision number and goes up. If someone beat you to it your push is refused, their copy comes down, and you make the change again. That is plenty for a league where a few people act a few times a day.</p>
         <div class="hr"></div>
@@ -7106,6 +7319,177 @@ document.addEventListener('change', e=>{
 ACT.clearLimits = ()=>{ S.settings.contracts.limits = {}; save(); render(); };
 ACT.clearRookieOv = ()=>{ S.settings.rookie.overrides = {}; save(); render(); toast('Back to the formula'); };
 ACT.clearCompOv = ()=>{ S.settings.comp.overrides = {}; save(); render(); toast('Back to the formula'); };
+ACT.supaSignIn = ()=>{
+  const el = $('#supaEmail');
+  const email = el ? String(el.value||'').trim() : '';
+  if(!/.+@.+\..+/.test(email)) return toast('Put in a real email address','bad');
+  Supa.signIn(email);
+};
+ACT.supaSignOut = ()=> Supa.signOut();
+ACT.copyRedirect = ()=>{
+  const u = ui.tmp.redirectUrl || Supa.redirectUrl();
+  if(navigator.clipboard) navigator.clipboard.writeText(u).then(()=> toast('Copied','good'));
+};
+ACT.supaConnect = async ()=>{
+  if(!Supa.configured()) return toast('Fill in the project URL and the key first','bad');
+  if(Supa.client){                    // start over against whatever is typed now
+    if(Supa.channel){ try{ Supa.client.removeChannel(Supa.channel); }catch(e){} Supa.channel=null; }
+    Supa.client=null; Supa.user=null; Supa.member=null; Supa.roster=[];
+  }
+  Supa.set('warn','Connecting…'); render();
+  const ok = await Supa.init(true);
+  save(); render();
+  if(ok) toast(Supa.user?'Connected — signed in as '+Supa.user.email:'Connected. Now sign in.','good');
+};
+ACT.supaPull = ()=> Supa.pull(true);
+ACT.supaPush = ()=> Supa.push(true, 'manual save');
+ACT.supaCreate = async ()=>{
+  if(!Supa.client || !Supa.user) return toast('Sign in first','bad');
+  const id = String(($('#supaLeagueId')||{}).value||'').trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
+  if(!id) return toast('Give the league a code','bad');
+  const team = S.league.myTeamId || (S.teams[0]||{}).id;
+  try{
+    const {data, error} = await Supa.client.rpc('create_league', {
+      p_id:id, p_name:S.league.name, p_state:S, p_team:team, p_label:Supa.user.email
+    });
+    if(error) throw error;
+    S.settings.supa.leagueId = id;
+    S.rev = +data.rev||1;
+    save(true);
+    await Supa.loadMember();
+    Supa.listen();
+    render(); toast('League created and you are the commissioner','good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.supaInvite = async (d)=>{
+  if(!Supa.boss()) return toast('Commissioners only','bad');
+  try{
+    const {data, error} = await Supa.client.rpc('make_invite', {
+      p_league:Supa.cfg().leagueId, p_team:d.team || null });
+    if(error) throw error;
+    const link = location.origin + location.pathname + '#code=' + encodeURIComponent(data);
+    ui.tmp.invite = {code:data, team:d.team, link};
+    modal('Invitation for '+(d.team?teamName(d.team):'whoever you send it to'),
+      '<p>One invitation, one person. It stops working once it is used.</p>'+
+      '<label class="f"><span>Their link</span><input type="text" readonly value="'+esc(link)+'" onclick="this.select()"></label>'+
+      '<label class="f"><span>Or the code on its own</span><input type="text" readonly value="'+esc(data)+'" onclick="this.select()"></label>'+
+      '<div class="hint">They open the link, sign in with their email, and they are '+
+      (d.team?'put straight into '+esc(teamName(d.team)):'added to the league')+
+      '. No password to pass around, and nothing for you to approve afterwards.</div>',
+      '<button class="btn ghost" data-a="closeModal">Close</button>'+
+      '<button class="btn pri" data-a="copyInvite">Copy the link</button>');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.copyInvite = ()=>{
+  const t = ui.tmp.invite; if(!t) return;
+  const text = 'Join the '+S.league.name+' front office.\n\n'+t.link+
+    '\n\nOpen it, put in your email, and click the link they send you. That is the whole thing.';
+  if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('Copied','good'));
+};
+ACT.supaJoin = async ()=>{
+  if(!Supa.client || !Supa.user) return toast('Sign in first','bad');
+  const code = String(($('#supaCode')||{}).value||'').trim();
+  if(!code) return toast('Paste the invitation code','bad');
+  try{
+    const {data, error} = await Supa.client.rpc('join_league', {p_code:code, p_label:Supa.user.email});
+    if(error) throw error;
+    S.settings.supa.leagueId = data.league_id;
+    save(true);
+    await Supa.loadMember();
+    await Supa.pull(true);
+    Supa.listen();
+    render();
+    toast(data.already ? 'You were already in — welcome back' : 'You are in','good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.supaSetMember = async (d)=>{
+  try{
+    const {error} = await Supa.client.rpc('set_member', {
+      p_league:Supa.cfg().leagueId, p_user:d.user, p_team:d.team||null, p_role:d.role });
+    if(error) throw error;
+    await Supa.loadRoster(); await Supa.loadMember(); render(); toast('Updated','good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.supaMemberTeam = async (d,el)=>{
+  await ACT.supaSetMember({user:d.user, team:el.value, role:d.role});
+};
+ACT.supaDropMember = async (d)=>{
+  try{
+    const {error} = await Supa.client.rpc('drop_member', {p_league:Supa.cfg().leagueId, p_user:d.user});
+    if(error) throw error;
+    await Supa.loadRoster(); render(); toast('Removed');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.toggleCoCommish = (d)=>{
+  const list = S.league.coCommishIds = Array.isArray(S.league.coCommishIds) ? S.league.coCommishIds : [];
+  const i = list.indexOf(d.id);
+  if(i>=0) list.splice(i,1); else list.push(d.id);
+  logIt(teamName(d.id) + (i>=0 ? ' is no longer a co-commissioner' : ' was made a co-commissioner'), {type:'admin', teams:[d.id]});
+  save(); render();
+};
+
+/* ============================================================
+   INVITING PEOPLE
+   A link carries the address and the league code so nobody has to retype
+   them. The password never goes in it — that gets sent separately, or it is
+   not really a password.
+   ============================================================ */
+function joinLink(){
+  const c = S.settings.sync;
+  if(!c.url || !c.leagueId) return '';
+  const payload = btoa(JSON.stringify({u:c.url, l:c.leagueId, n:S.league.name}));
+  const loc = (typeof location==='object' && location) ? location : {};
+  const here = (typeof loc.origin==='string' ? loc.origin : '') +
+               (typeof loc.pathname==='string' ? loc.pathname : '');
+  return (here || (typeof loc.href==='string' ? loc.href.split('#')[0] : '')) +
+         '#join=' + encodeURIComponent(payload);
+}
+function readJoinLink(){
+  const m = /[#&]join=([^&]+)/.exec(location.hash || '');
+  if(!m) return null;
+  try{ return JSON.parse(atob(decodeURIComponent(m[1]))); }catch(e){ return null; }
+}
+ACT.copyJoin = ()=>{
+  const link = joinLink();
+  if(!link) return toast('Set the server address and league code first','bad');
+  const text = 'Join the '+S.league.name+' front office.\n\n'+
+    '1. Open this: '+link+'\n'+
+    '2. Type in the league password I sent you separately.\n'+
+    '3. Pick your team from the list.\n\n'+
+    'Everything else is already filled in.';
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=> toast('Invitation copied','good'),
+      ()=> toast('Could not copy — select it by hand','bad'));
+  } else toast('Select the text and copy it by hand');
+};
+ACT.joinGo = ()=>{
+  const t = ui.tmp.join;
+  S.settings.sync.url = t.u;
+  S.settings.sync.leagueId = t.l;
+  S.settings.sync.key = ($('#joinKey')||{}).value || '';
+  S.settings.sync.on = true;
+  save(true);
+  closeModal();
+  toast('Pulling the league down…');
+  Sync.pull(true).then(()=>{
+    history.replaceState(null, '', location.pathname);
+    render();
+    setTimeout(()=> ACT.pickSeat(), 400);
+  });
+};
+ACT.pickSeat = ()=>{
+  modal('Which team is yours?',
+    '<p class="muted" style="margin-top:0">This is remembered on your own device. Everyone sees the same league but opens on their own roster.</p>'+
+    '<div class="stack">'+S.teams.map(t=>
+      '<button class="btn wide" data-a="takeSeat" data-id="'+t.id+'" style="justify-content:flex-start">'+
+      esc(t.name)+(t.owner?' <span class="dim" style="margin-left:6px">'+esc(t.owner)+'</span>':'')+'</button>').join('')+'</div>',
+    '<button class="btn ghost" data-a="closeModal">Later</button>');
+};
+ACT.takeSeat = (d)=>{
+  S.league.myTeamId = d.id;
+  Store.set(KEY, S);
+  closeModal(); render(); toast('Welcome — you are '+teamName(d.id),'good');
+};
 ACT.tagPlayer = (d)=>{
   const p = byId(S.players, d.id);
   if(!p || !p.contract) return;
@@ -7374,6 +7758,204 @@ ACT.syncNewCode = ()=>{
 };
 
 /* ============================================================
+   SUPABASE — real accounts, and a database that enforces the rules
+   The shared-password server trusts whoever holds the password. This does
+   not: you sign in, the database knows which team is yours, and it refuses
+   writes it should not accept rather than hoping the app asked nicely.
+   ============================================================ */
+const Supa = {
+  client:null, user:null, member:null, roster:[], status:'off', msg:'',
+  busy:false, pending:false, channel:null, lastPush:0, booting:false,
+
+  cfg(){ return S.settings.supa || (S.settings.supa = {on:false, url:'', anonKey:'', leagueId:''}); },
+  configured(){ const c=this.cfg(); return !!(c.on && c.url && c.anonKey); },
+  ready(){ return !!(this.client && this.user && this.cfg().leagueId); },
+  seated(){ return this.ready() && this.member && this.member.team_id; },
+  boss(){ return !!(this.member && this.member.role==='commish'); },
+  set(st,msg){ this.status=st; this.msg=msg||''; renderShell(); },
+
+  async init(loud){
+    const c = this.cfg();
+    if(!this.configured()) return false;
+    if(this.client) return true;
+    if(this.booting) return false;
+    this.booting = true;
+    try{
+      const mod = await import('https://esm.sh/@supabase/supabase-js@2');
+      this.client = mod.createClient(c.url.replace(/\/+$/,''), c.anonKey, {
+        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true }
+      });
+      const {data} = await this.client.auth.getSession();
+      this.user = (data && data.session && data.session.user) || null;
+      this.client.auth.onAuthStateChange((_e, sess)=>{
+        this.user = sess ? sess.user : null;
+        if(this.user) this.afterSignIn(); else { this.member=null; this.roster=[]; render(); }
+      });
+      this.set(this.user?'ok':'warn', this.user?('Signed in as '+this.user.email):'Not signed in');
+      if(this.user) await this.afterSignIn();
+      this.booting = false;
+      return true;
+    }catch(e){
+      this.booting = false;
+      this.set('bad','Could not load the Supabase client — '+e.message);
+      if(loud) toast('Could not reach Supabase — '+e.message,'bad');
+      return false;
+    }
+  },
+
+  async afterSignIn(){
+    await this.loadMember();
+    if(this.cfg().leagueId){ await this.pull(); this.listen(); }
+    render();
+  },
+
+  async loadMember(){
+    const c = this.cfg();
+    if(!this.client || !this.user || !c.leagueId){ this.member=null; return; }
+    try{
+      const {data, error} = await this.client
+        .from('league_members').select('*')
+        .eq('league_id', c.leagueId).eq('user_id', this.user.id).maybeSingle();
+      if(error) throw error;
+      this.member = data || null;
+      if(this.member && this.member.team_id){
+        S.league.myTeamId = this.member.team_id;   // your seat travels with your account
+      }
+      await this.loadRoster();
+    }catch(e){ this.set('bad', e.message); }
+  },
+
+  async loadRoster(){
+    try{
+      const {data, error} = await this.client.rpc('league_roster', {p_league:this.cfg().leagueId});
+      if(!error) this.roster = data || [];
+    }catch(e){ /* a non-member simply sees nobody */ }
+  },
+
+  /* Where Supabase should send them back to. It has to be on the allow-list in
+     the project, or the sign-in is refused before an email is ever sent. */
+  redirectUrl(){
+    const o = (typeof location==='object' && location) ? location : {};
+    const origin = typeof o.origin==='string' ? o.origin : '';
+    if(!origin || origin==='null') return '';        // opened from a file, not a site
+    return origin + (typeof o.pathname==='string' ? o.pathname : '');
+  },
+  async signIn(email){
+    if(!await this.init(true)) return;
+    const back = this.redirectUrl();
+    if(!back){
+      this.set('bad','Open the app from its web address, not from a file on your computer');
+      return toast('Sign-in only works from your deployed address, not a local file','bad');
+    }
+    const {error} = await this.client.auth.signInWithOtp({
+      email, options:{ emailRedirectTo: back }
+    });
+    if(error){
+      const path = /path|redirect|invalid/i.test(error.message||'');
+      this.set('bad', error.message);
+      if(path){
+        modal('Supabase has not been told about this address',
+          '<p>The sign-in was refused before any email went out. Supabase only sends people back to addresses you have '+
+          'put on its allow-list, and a new project starts with nothing but localhost on it.</p>'+
+          '<div class="flabel" style="margin-top:12px">Add this exact address</div>'+
+          '<input type="text" readonly value="'+esc(back)+'" onclick="this.select()">'+
+          '<div class="hint">In Supabase: <b>Authentication → URL Configuration</b>. Put it in <b>Site URL</b>, and add '+
+          'it again under <b>Redirect URLs</b> with <span class="num">/**</span> on the end so any page of the app works. '+
+          'Save, then try again here.</div>'+
+          '<div class="hint">The message Supabase gave back was: <span class="num">'+esc(error.message)+'</span></div>',
+          '<button class="btn ghost" data-a="closeModal">Close</button>'+
+          '<button class="btn pri" data-a="copyRedirect">Copy the address</button>');
+        ui.tmp.redirectUrl = back;
+      } else toast(error.message,'bad');
+      render();
+      return;
+    }
+    toast('Check your email — the link signs you straight in','good');
+    this.set('warn','Sign-in link sent to '+email);
+  },
+  async signOut(){
+    if(!this.client) return;
+    await this.client.auth.signOut();
+    this.user=null; this.member=null; this.roster=[];
+    if(this.channel){ this.client.removeChannel(this.channel); this.channel=null; }
+    this.set('warn','Signed out'); render();
+  },
+
+  async pull(loud){
+    if(!this.ready() || this.busy) return;
+    this.busy = true;
+    try{
+      const {data, error} = await this.client.from('leagues')
+        .select('rev,state').eq('id', this.cfg().leagueId).maybeSingle();
+      if(error) throw error;
+      if(!data){ this.set('warn','No league on the server under that code'); this.busy=false; return; }
+      if((+data.rev||0) > (+S.rev||0)){
+        adoptRemote(data.state, +data.rev||0);
+        if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
+        this.set('ok','Up to date at revision '+data.rev);
+        render();
+        if(loud) toast('League updated','good');
+      } else {
+        this.set('ok','Up to date');
+        if(loud) toast('Already up to date');
+      }
+    }catch(e){ this.set('bad', e.message); if(loud) toast('Pull failed — '+e.message,'bad'); }
+    this.busy = false;
+  },
+
+  async push(loud, note){
+    if(!this.ready()){ if(loud) toast('Sign in and pick a league first','bad'); return; }
+    if(this.busy){ this.pending = true; return; }
+    this.busy = true;
+    try{
+      const {data, error} = await this.client.rpc('push_league', {
+        p_id:this.cfg().leagueId, p_rev:+S.rev||0, p_state:S, p_note: note || null
+      });
+      if(error) throw error;
+      if(data && data.conflict){
+        adoptRemote(data.state, +data.rev||0);
+        this.set('warn','Somebody saved first — took their copy');
+        render(); toast('Someone else saved first. Their version is loaded, redo your change.','bad');
+      } else {
+        S.rev = +(data && data.rev) || ((+S.rev||0)+1);
+        this.lastPush = Date.now();
+        this.set('ok','Saved revision '+S.rev);
+        if(loud) toast('Saved','good');
+      }
+    }catch(e){
+      this.set('bad', e.message);
+      toast(e.message,'bad');
+    }
+    this.busy = false;
+    if(this.pending){ this.pending=false; setTimeout(()=> this.push(), 300); }
+  },
+
+  listen(){
+    if(!this.client || this.channel) return;
+    const id = this.cfg().leagueId;
+    this.channel = this.client.channel('league:'+id)
+      .on('postgres_changes',
+        {event:'UPDATE', schema:'public', table:'leagues', filter:'id=eq.'+id},
+        (payload)=>{
+          const row = payload.new;
+          if(!row || (+row.rev||0) <= (+S.rev||0)) return;
+          adoptRemote(row.state, +row.rev||0);
+          if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
+          this.set('ok','Updated live to revision '+row.rev);
+          render();
+          toast('League updated','good');
+        })
+      .subscribe();
+  }
+};
+let supaT = null;
+function supaPush(){
+  if(!Supa.ready()) return;
+  clearTimeout(supaT);
+  supaT = setTimeout(()=> Supa.push(), 1200);
+}
+
+/* ============================================================
    TICK LOOP — clocks, settlements, live feed
    ============================================================ */
 /* Rebuild an object-shaped setting from defaults, keeping whatever the saved
@@ -7415,6 +7997,7 @@ function migrate(j){
     .forEach(k=> out[k] = Array.isArray(j[k]) ? j[k] : []);
   out.dvp = (j.dvp && typeof j.dvp==='object') ? j.dvp : {};
   out.news = (j.news && Array.isArray(j.news.items)) ? j.news : {at:0, items:[]};
+  out.league.coCommishIds = Array.isArray((j.league||{}).coCommishIds) ? j.league.coCommishIds : [];
   out.h2h = (j.h2h && typeof j.h2h==='object') ? j.h2h : {};
   out.lineups = (j.lineups && typeof j.lineups==='object') ? j.lineups : {};
   out.schedule = Array.isArray(j.schedule) ? j.schedule : [];
@@ -7517,7 +8100,7 @@ function tickAll(){
     const gap = Math.max(10, +S.settings.live.pollSec||30)*1000;
     if(Date.now()-lastPoll > gap){ lastPoll = Date.now(); pollEndpoint(); }
   }
-  if(Sync.ready()){
+  if(Sync.ready() && !Supa.ready()){
     const gap = Math.max(5, +S.settings.sync.everySec||20)*1000;
     if(Date.now()-Sync.lastPull > gap && !Sync.busy){ Sync.lastPull = Date.now(); Sync.pull(); }
   }
@@ -7558,6 +8141,53 @@ async function init(){
   const h = location.hash.slice(1);
   route = VIEWS[h] ? h : 'dash';
   render();
+  if(S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(), 300);
+  greetInvites();
+}
+/* A link can carry a Supabase invitation code, or the older address-and-code
+   pair for leagues on the shared-password server. Both land here. */
+function greetInvites(){
+  const codeIn = /[#&]code=([^&]+)/.exec(location.hash||'');
+  if(codeIn){
+    ui.tmp.pendingCode = decodeURIComponent(codeIn[1]);
+    setTimeout(()=>{
+      if(!S.settings.supa.on || !S.settings.supa.url){
+        modal('You have been invited',
+          '<p>This link carries an invitation code, but this copy of the app has not been pointed at a Supabase project yet.</p>'+
+          '<div class="kv" style="margin:12px 0"><dt>Your code</dt><dd class="num">'+esc(ui.tmp.pendingCode)+'</dd></div>'+
+          '<div class="hint">Ask whoever invited you for the project URL and anon key, put them in under Settings › Server, '+
+          'then paste this code into Join.</div>',
+          '<button class="btn ghost" data-a="closeModal">Close</button>'+
+          '<button class="btn pri" data-a="go" data-r="settings" data-s="server">Take me there</button>');
+      } else {
+        Supa.init().then(()=>{
+          modal('You have been invited',
+            (Supa.user
+              ? '<p>Signed in as <b>'+esc(Supa.user.email)+'</b>. Say the word and you are in.</p>'
+              : '<p>Put in your email and we will send you a sign-in link. Once you are in, this code adds you to the league.</p>'+
+                '<div class="row" style="margin:10px 0"><input type="email" id="supaEmail" placeholder="you@example.com" style="flex:1">'+
+                '<button class="btn pri" data-a="supaSignIn">Email me a link</button></div>')+
+            '<label class="f"><span>Invitation code</span><input type="text" id="supaCode" value="'+esc(ui.tmp.pendingCode)+'"></label>',
+            '<button class="btn ghost" data-a="closeModal">Later</button>'+
+            (Supa.user?'<button class="btn pri" data-a="supaJoin">Join the league</button>':''));
+        });
+      }
+    }, 500);
+    return;
+  }
+  const invite = readJoinLink();
+  if(invite && invite.u && invite.l){
+    ui.tmp.join = invite;
+    setTimeout(()=> modal('Join '+(invite.n || 'the league'),
+      '<p>This link carries the server address and the league code. You just need the password the commissioner sent you.</p>'+
+      '<div class="kv" style="margin:12px 0"><dt>Server</dt><dd class="tiny">'+esc(invite.u)+'</dd>'+
+      '<dt>League code</dt><dd class="tiny">'+esc(invite.l)+'</dd></div>'+
+      '<label class="f"><span>League password</span><input type="text" id="joinKey" placeholder="leave blank if there is not one"></label>'+
+      '<div class="hint">This replaces whatever is loaded here now. If you have a league of your own on this device, '+
+      'download it first under Settings › Data.</div>',
+      '<button class="btn ghost" data-a="closeModal">Not now</button>'+
+      '<button class="btn pri" data-a="joinGo">Join it</button>'), 500);
+  }
 }
 init();
 </script>
