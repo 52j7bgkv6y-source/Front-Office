@@ -493,6 +493,11 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 @media (max-width:860px){ .bub{max-width:60%} }
 
 /* news list */
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--ink-0)}
+th.sortable.sorted{color:var(--brass)}
+th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
+
 .newslist{display:flex;flex-direction:column}
 .newsrow{display:block;padding:9px 2px;border-bottom:1px solid var(--rule);text-decoration:none;color:inherit;cursor:pointer}
 .newsrow:last-child{border-bottom:0}
@@ -1389,6 +1394,40 @@ window.addEventListener('hashchange', ()=>{ const h=location.hash.slice(1); if(h
 
 /* small shared bits ------------------------------------------------------- */
 function posTag(p){ return '<span class="pos '+p+'">'+p+'</span>'; }
+
+/* ============================================================
+   SORTABLE COLUMNS
+   Every table names its columns once; clicking a heading sorts by it and
+   clicking the same one again turns it round.
+   ============================================================ */
+function sortOf(tid){ return (ui.tmp.sorts||{})[tid] || null; }
+function sortTh(tid, key, label, cls){
+  const cur = sortOf(tid), on = cur && cur.key===key;
+  return '<th class="sortable'+(cls?' '+cls:'')+(on?' sorted':'')+'" data-a="sortBy" data-t="'+esc(tid)+
+    '" data-k="'+esc(key)+'">'+label+'<i class="sarr">'+(on ? (cur.dir>0?'▲':'▼') : '')+'</i></th>';
+}
+/* Blanks always sink, whichever way round the column is. */
+function sortRows(tid, rows, cols, fallback){
+  const cur = sortOf(tid) || fallback;
+  if(!cur || !cols[cur.key]) return rows;
+  const f = cols[cur.key], dir = cur.dir>0 ? 1 : -1;
+  return rows.slice().sort((a,b)=>{
+    const va = f(a), vb = f(b);
+    const ea = (va==null || va==='' || (typeof va==='number' && isNaN(va)));
+    const eb = (vb==null || vb==='' || (typeof vb==='number' && isNaN(vb)));
+    if(ea && eb) return 0;
+    if(ea) return 1;
+    if(eb) return -1;
+    if(typeof va==='number' && typeof vb==='number') return (va-vb)*dir;
+    return String(va).localeCompare(String(vb), undefined, {numeric:true}) * dir;
+  });
+}
+ACT.sortBy = (d)=>{
+  ui.tmp.sorts = ui.tmp.sorts || {};
+  const cur = ui.tmp.sorts[d.t];
+  ui.tmp.sorts[d.t] = (cur && cur.key===d.k) ? {key:d.k, dir:-(cur.dir||1)} : {key:d.k, dir:1};
+  render();
+};
 function teamSelect(name, sel, opts){
   return '<select '+(opts&&opts.attrs||'')+' '+(name?'data-set="'+name+'"':'')+'>'+
     (opts&&opts.blank?'<option value="">'+esc(opts.blank)+'</option>':'')+
@@ -2208,10 +2247,16 @@ VIEWS.teams = function(){
     ${sub==='roster' ? `<div class="panel"><div class="ph"><h3>Contracts</h3><div class="spacer"></div>
       <button class="btn sm" data-a="signFree">Sign a free agent</button></div>
       <div class="pb tight scrollx"><table>
-      <thead><tr><th>Player</th><th>Pos</th><th class="hide-xs">Age</th><th>Structure</th><th class="right">Yrs left</th>
-        ${yrs.map(yy=>'<th class="right">'+yy+'</th>').join('')}<th class="right">Total</th><th></th></tr></thead>
+      <thead><tr>${sortTh('ros','name','Player')}${sortTh('ros','pos','Pos')}${sortTh('ros','age','Age','hide-xs')}
+        ${sortTh('ros','struct','Structure')}${sortTh('ros','left','Yrs left','right')}
+        ${yrs.map(yy=>sortTh('ros','y'+yy, String(yy), 'right')).join('')}${sortTh('ros','total','Total','right')}<th></th></tr></thead>
       <tbody>
-      ${roster.map(p=>{
+      ${sortRows('ros', roster, Object.assign({
+          name:p=>p.name, pos:p=>p.pos, age:p=>+p.age||0,
+          struct:p=>structById(p.contract.structId).name,
+          left:p=>yearsLeft(p.contract), total:p=>p.contract.total
+        }, yrs.reduce((m,yy)=>{ m['y'+yy] = p=> capHit(p,yy); return m; },{})),
+        {key:'name',dir:1}).map(p=>{
         const c=p.contract, st=structById(c.structId);
         return `<tr>
           <td><a href="#" data-a="playerCard" data-id="${p.id}" style="font-weight:500;color:inherit">${esc(p.name)}</a>
@@ -2238,7 +2283,10 @@ VIEWS.teams = function(){
 
     ${sub==='squads' ? (()=>{
       const R = S.settings.roster;
-      const rows = (list, actions)=> list.length ? list.map(p=>`<tr>
+      const rows = (list, actions, tid2)=> list.length ? sortRows(tid2||'sq', list, {
+          name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', yrs:p=>p.contract.years,
+          hit:p=>capHit(p,S.league.season), gross:p=>grossHit(p,S.league.season)
+        }, {key:'hit',dir:-1}).map(p=>`<tr>
           <td>${esc(p.name)} ${posTag(p.pos)} ${waiverTag(p)}</td>
           <td class="tiny muted hide-xs">${esc(p.nfl||'')} · ${p.contract.years}yr</td>
           <td class="right num">${money(capHit(p,S.league.season))}${offCap(p)?'<div class="tiny dim">'+money(grossHit(p,S.league.season))+' parked</div>':''}
@@ -2279,35 +2327,47 @@ VIEWS.teams = function(){
       <div class="grid g2">
         <div class="panel"><div class="ph"><h3>Active roster</h3><div class="spacer"></div>
           <span class="tiny dim">${activeCount(tid)} of ${R.maxRoster}</span></div>
-          <div class="pb tight scrollx"><table><tbody>${rows(slotPlayers(tid,'active'), p=>
+          <div class="pb tight scrollx"><table>
+          <thead><tr>${sortTh('sqA','name','Player')}${sortTh('sqA','nfl','Deal','hide-xs')}
+            ${sortTh('sqA','hit','Cap hit','right')}<th></th></tr></thead>
+          <tbody>${rows(slotPlayers(tid,'active'), p=>
             '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="taxi">Taxi</button>'+
             '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="ir">IR</button>'+
-            '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'">Season IR</button>')}
+            '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'">Season IR</button>', 'sqA')}
           </tbody></table></div></div>
 
         <div class="panel"><div class="ph"><h3>Taxi squad</h3><div class="spacer"></div>
           <span class="tiny dim">off the cap until promoted</span></div>
-          <div class="pb tight scrollx"><table><tbody>${rows(slotPlayers(tid,'taxi'), p=>{
+          <div class="pb tight scrollx"><table>
+          <thead><tr>${sortTh('sqT','name','Player')}${sortTh('sqT','nfl','Deal','hide-xs')}
+            ${sortTh('sqT','gross','Parked','right')}<th></th></tr></thead>
+          <tbody>${rows(slotPlayers(tid,'taxi'), p=>{
             const c = openClaimFor(p.id);
             return (c?'<span class="pill live">claimed</span> ':'')+
               '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Promote</button>';
-          })}</tbody></table></div>
+          }, 'sqT')}</tbody></table></div>
           <div class="pb"><div class="hint">Their salary sits at zero while they are here, but the deals still count against
             your contract length limits. Promote one and the money lands immediately.</div></div></div>
 
         <div class="panel"><div class="ph"><h3>Injured reserve</h3></div>
-          <div class="pb tight scrollx"><table><tbody>${rows(slotPlayers(tid,'ir'), p=>
+          <div class="pb tight scrollx"><table>
+          <thead><tr>${sortTh('sqI','name','Player')}${sortTh('sqI','nfl','Deal','hide-xs')}
+            ${sortTh('sqI','hit','Cap hit','right')}<th></th></tr></thead>
+          <tbody>${rows(slotPlayers(tid,'ir'), p=>
             (p.ir&&p.ir.seasonEnding
               ? '<span class="pill">out until '+(S.league.season+1)+'</span>'+(isCommish()?' <button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="active">Override</button>':'')
-              : '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>'))}
+              : '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>'), 'sqI')}
           </tbody></table></div>
           <div class="pb"><div class="hint">A plain IR spot frees a roster place but the salary still counts. Season-ending
             gives back the share of the year he will not play — right now that would be ${pct(weeksLeft()/seasonWeeks()*100)}
             with ${weeksLeft()} of ${seasonWeeks()} weeks left.</div></div></div>
 
         <div class="panel"><div class="ph"><h3>Practice squad</h3></div>
-          <div class="pb tight scrollx"><table><tbody>${rows(slotPlayers(tid,'practice'), p=>
-            '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Promote</button>')}
+          <div class="pb tight scrollx"><table>
+          <thead><tr>${sortTh('sqP','name','Player')}${sortTh('sqP','nfl','Deal','hide-xs')}
+            ${sortTh('sqP','gross','Parked','right')}<th></th></tr></thead>
+          <tbody>${rows(slotPlayers(tid,'practice'), p=>
+            '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Promote</button>', 'sqP')}
           </tbody></table></div>
           <div class="pb"><div class="hint">Commissioner-granted. Off the cap like the taxi squad, but nobody can claim them.</div></div></div>
       </div>
@@ -2336,8 +2396,12 @@ VIEWS.teams = function(){
             </div></div>`).join('')}
           </div>`:''}
           <div class="scrollx"><table>
-          <thead><tr><th>Player</th><th>Pos</th><th>Held by</th><th class="right">Tag price</th><th class="right">Going rate</th><th></th></tr></thead><tbody>
-          ${tagged.map(p=>{
+          <thead><tr>${sortTh('tg','name','Player')}${sortTh('tg','pos','Pos')}${sortTh('tg','held','Held by')}
+            ${sortTh('tg','price','Tag price','right')}${sortTh('tg','going','Going rate','right')}<th></th></tr></thead><tbody>
+          ${sortRows('tg', tagged, {
+              name:p=>p.name, pos:p=>p.pos, held:p=>teamName(p.contract.teamId),
+              price:p=>p.tag.price, going:p=>tagPrice(p.pos)
+            }, {key:'price',dir:-1}).map(p=>{
             const open = (S.tagOffers||[]).some(o=> o.playerId===p.id && o.status==='open');
             return `<tr><td>${esc(p.name)}</td><td>${posTag(p.pos)}</td>
               <td class="tiny muted">${esc(teamName(p.contract.teamId))}</td>
@@ -2376,8 +2440,13 @@ VIEWS.teams = function(){
         <div class="ph"><h3>Taxi squads around the league</h3><div class="spacer"></div>
           <span class="tiny dim">${S.settings.taxi.windowHours}-hour window</span></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>Player</th><th>Pos</th><th>Sitting with</th><th class="right">Salary</th><th class="right">Yrs</th><th></th></tr></thead><tbody>
-        ${board.map(p=>{
+        <thead><tr>${sortTh('tx','name','Player')}${sortTh('tx','pos','Pos')}${sortTh('tx','with','Sitting with')}
+          ${sortTh('tx','sal','Salary','right')}${sortTh('tx','yrs','Yrs','right')}<th></th></tr></thead><tbody>
+        ${sortRows('tx', board, {
+            name:p=>p.name, pos:p=>p.pos, with:p=>teamName(p.contract.teamId),
+            sal:p=> fixInc(Math.max(0, grossHit(p,S.league.season)-retainedOn(p,S.league.season))),
+            yrs:p=>p.contract.years
+          }, {key:'sal',dir:-1}).map(p=>{
           const c = openClaimFor(p.id);
           const hit = fixInc(Math.max(0, grossHit(p,S.league.season)-retainedOn(p,S.league.season)));
           return `<tr><td>${esc(p.name)} ${waiverTag(p)}</td><td>${posTag(p.pos)}</td>
@@ -2400,17 +2469,25 @@ VIEWS.teams = function(){
     })() : ''}
 
     ${sub==='values' ? (()=>{
-      const list = roster.slice().sort((a,b)=> marketPrice(b,0)-marketPrice(a,0));
+      const list = roster.slice();
       const lim = limitNote(tid);
       return `
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What the model sees</h3><div class="spacer"></div>
         <span class="tiny muted">${S.settings.value.realWeight}% real production · ${100-S.settings.value.realWeight}% fantasy points</span>
         <button class="btn ghost sm" data-a="go" data-r="settings" data-s="value">Tune it</button></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>Player</th><th>Pos</th><th class="right hide-xs">Age</th><th class="right hide-xs">GP</th>
-          <th class="right">Real</th><th class="right">Fantasy</th><th class="right">Index</th>
-          ${yrs.map(yy=>'<th class="right">'+yy+'</th>').join('')}<th class="right">On the books</th><th></th></tr></thead><tbody>
-        ${list.map(p=>{
+        <thead><tr>${sortTh('val','name','Player')}${sortTh('val','pos','Pos')}
+          ${sortTh('val','age','Age','right hide-xs')}${sortTh('val','gp','GP','right hide-xs')}
+          ${sortTh('val','real','Real','right')}${sortTh('val','fant','Fantasy','right')}${sortTh('val','idx','Index','right')}
+          ${yrs.map((yy,i)=>sortTh('val','m'+i, String(yy), 'right')).join('')}
+          ${sortTh('val','now','On the books','right')}<th></th></tr></thead><tbody>
+        ${sortRows('val', list, Object.assign({
+            name:p=>p.name, pos:p=>p.pos, age:p=>+p.age||0,
+            gp:p=>(seasonLine(p.id)||{}).gp||0,
+            real:p=>realPPG(p), fant:p=>fantasyPPG(p), idx:p=>formIndex(p),
+            now:p=>capHit(p,S.league.season)
+          }, yrs.reduce((m,_,i)=>{ m['m'+i] = p=> marketPrice(p,i); return m; },{})),
+          {key:'m0',dir:-1}).map(p=>{
           const b = valueBreakdown(p), now = capHit(p, S.league.season);
           const q = marketPrice(p,0);
           return `<tr>
@@ -2437,9 +2514,13 @@ VIEWS.teams = function(){
     })() : ''}
 
     ${sub==='dead' ? `<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Salary you are still eating</h3></div>
-      <div class="pb tight scrollx"><table><thead><tr><th>Player</th><th>Now with</th><th>Deal</th>
-        ${yrs.map(yy=>'<th class="right">'+yy+'</th>').join('')}<th></th></tr></thead><tbody>
-      ${retainedList(tid).length ? retainedList(tid).map((x,i)=>`<tr>
+      <div class="pb tight scrollx"><table><thead><tr>${sortTh('ret','name','Player')}${sortTh('ret','with','Now with')}
+        ${sortTh('ret','deal','Deal')}${yrs.map((yy,i)=>sortTh('ret','r'+i, String(yy), 'right')).join('')}<th></th></tr></thead><tbody>
+      ${retainedList(tid).length ? sortRows('ret', retainedList(tid), Object.assign({
+          name:x=>x.player.name, with:x=>teamName(x.player.contract.teamId),
+          deal:x=> x.r.mode==='amt' ? 0 : (+x.r.pct||0)
+        }, yrs.reduce((m,yy,i)=>{ m['r'+i] = x=> +((x.r.amounts||{})[yy])||0; return m; },{})),
+        {key:'name',dir:1}).map((x,i)=>`<tr>
         <td>${esc(x.player.name)} ${posTag(x.player.pos)}</td>
         <td class="tiny muted">${esc(teamName(x.player.contract.teamId))}</td>
         <td class="tiny dim">${x.r.mode==='amt'?money(x.r.amounts[S.league.season]||0)+' flat':(x.r.pct+'% through '+x.r.through)}</td>
@@ -2450,15 +2531,21 @@ VIEWS.teams = function(){
         ${yrs.map(yy=>'<td class="right money">'+money(teamRetained(tid,yy))+'</td>').join('')}<td></td></tr></tfoot></table></div></div>
     <div class="grid g2">
       <div class="panel"><div class="ph"><h3>Dead cap</h3></div><div class="pb tight scrollx"><table>
-        <thead><tr><th>Player</th><th class="right">Year</th><th class="right">Charge</th><th></th></tr></thead><tbody>
-        ${(t.dead||[]).length?(t.dead||[]).sort((a,b)=>a.year-b.year).map((d,i)=>`<tr><td>${esc(d.name||'—')}</td><td class="right num">${d.year}</td>
+        <thead><tr>${sortTh('dc','name','Player')}${sortTh('dc','year','Year','right')}
+          ${sortTh('dc','amt','Charge','right')}<th></th></tr></thead><tbody>
+        ${(t.dead||[]).length?sortRows('dc', (t.dead||[]),
+          {name:d=>d.name||'', year:d=>+d.year||0, amt:d=>+d.amt||0}, {key:'year',dir:1})
+          .map((d,i)=>`<tr><td>${esc(d.name||'—')}</td><td class="right num">${d.year}</td>
           <td class="right num bad">${money(d.amount)}</td><td class="right"><button class="btn sm ghost" data-a="rmDead" data-i="${i}">Remove</button></td></tr>`).join('')
           :'<tr><td colspan="4" class="dim center" style="padding:20px">No dead money. Nice.</td></tr>'}
         </tbody></table></div></div>
       <div class="panel"><div class="ph"><h3>Manual adjustments</h3><div class="spacer"></div>
         <button class="btn sm" data-a="addAdj">Add</button></div><div class="pb tight scrollx"><table>
-        <thead><tr><th>Note</th><th class="right">Year</th><th class="right">Amount</th><th></th></tr></thead><tbody>
-        ${(t.adj||[]).length?(t.adj||[]).map((d,i)=>`<tr><td>${esc(d.note||'Adjustment')}</td><td class="right num">${d.year}</td>
+        <thead><tr>${sortTh('adj','note','Note')}${sortTh('adj','year','Year','right')}
+          ${sortTh('adj','amt','Amount','right')}<th></th></tr></thead><tbody>
+        ${(t.adj||[]).length?sortRows('adj', (t.adj||[]),
+          {note:d=>d.note||'', year:d=>+d.year||0, amt:d=>+d.amount||0}, {key:'year',dir:1})
+          .map((d,i)=>`<tr><td>${esc(d.note||'Adjustment')}</td><td class="right num">${d.year}</td>
           <td class="right num">${money(d.amount,{plus:true})}</td><td class="right"><button class="btn sm ghost" data-a="rmAdj" data-i="${i}">Remove</button></td></tr>`).join('')
           :'<tr><td colspan="4" class="dim center" style="padding:20px">Use these for penalties, rollover, or cash trades.</td></tr>'}
         </tbody></table></div></div></div>` : ''}
@@ -2467,12 +2554,15 @@ VIEWS.teams = function(){
       <input type="text" placeholder="Search" data-k="fasearch" data-oninput="faSearch" value="${esc(ui.tmp.faq||'')}" style="max-width:220px"></div>
       ${waiverDeadlinePassed()?'<div class="pb" style="padding-bottom:0"><div class="hint bad">The waiver deadline of '+dayOnly(S.settings.waivers.deadline)+
         ' has passed. Anyone claimed now comes in at '+money(S.settings.waivers.salary)+' for this season only, cannot be extended, and carries the W tag until the year turns over.</div></div>':''}
-      <div class="pb tight scrollx"><table><thead><tr><th>Player</th><th>Pos</th><th class="hide-xs">NFL</th><th class="right">Age</th><th class="right">${waiverDeadlinePassed()?'Claim price':'Market'}</th><th></th></tr></thead>
+      <div class="pb tight scrollx"><table><thead><tr>${sortTh('fa','name','Player')}${sortTh('fa','pos','Pos')}
+        ${sortTh('fa','nfl','NFL','hide-xs')}${sortTh('fa','age','Age','right')}
+        ${sortTh('fa','price', waiverDeadlinePassed()?'Claim price':'Market', 'right')}<th></th></tr></thead>
       <tbody id="faBody">${faRows(fa)}</tbody></table></div></div>` : ''}
 
     ${sub==='picks' ? (()=>{
       const nextY = S.league.season+1;
       const held = S.picks.filter(p=>p.ownerTeamId===tid).sort((a,b)=>a.year-b.year||a.round-b.round||pickSlot(a)-pickSlot(b));
+      const compRows = [];
       const nextYear = held.filter(k=> k.year===nextY);
       const bill = rookieBill(tid, nextY);
       const space = capSpace(tid, nextY);
@@ -2493,9 +2583,15 @@ VIEWS.teams = function(){
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Picks you hold</h3><div class="spacer"></div>
         <span class="tiny dim">priced off today's standings</span></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>Year</th><th>Round</th><th class="right">Slot</th><th>Originally</th>
-          <th class="right">Per year</th><th class="right">Years</th><th class="right">Year one</th><th class="right">Total</th></tr></thead><tbody>
-        ${held.map(k=>{
+        <thead><tr>${sortTh('pk','year','Year')}${sortTh('pk','round','Round')}${sortTh('pk','slot','Slot','right')}
+          ${sortTh('pk','from','Originally')}${sortTh('pk','aav','Per year','right')}${sortTh('pk','yrs','Years','right')}
+          ${sortTh('pk','y1','Year one','right')}${sortTh('pk','tot','Total','right')}</tr></thead><tbody>
+        ${sortRows('pk', held, {
+            year:k=>k.year, round:k=>k.round, slot:k=>pickSlot(k),
+            from:k=> isComp(k)?'comp':teamName(k.originTeamId),
+            aav:k=>pickCost(k), yrs:k=> k.round<=rookieRounds()?rookieYears(k.round):0,
+            y1:k=>pickFirstYearOf(k), tot:k=> pickCost(k)*(k.round<=rookieRounds()?rookieYears(k.round):0)
+          }, {key:'year',dir:1}).map(k=>{
           const inScale = k.round <= rookieRounds();
           const aav = pickCost(k), yrs = inScale ? rookieYears(k.round) : 0;
           return `<tr><td class="num">${k.year}</td>
@@ -2571,12 +2667,17 @@ VIEWS.teams = function(){
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Standings</h3><div class="spacer"></div>
         <span class="tiny dim">through week ${Math.max(0,(+S.live.week||1)-1)}</span></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>#</th><th>Team</th><th class="right">W</th><th class="right">L</th><th class="right">T</th>
-          <th class="right">Pct</th><th class="right hide-xs">PF</th><th class="right hide-xs">PA</th>
-          <th class="right hide-xs" title="combined record of everyone you have played">Opp pts</th>
-          <th class="right hide-xs" title="share of your own best possible score">Eff</th>
-          <th class="right">Draft slot</th><th class="right">${nextY} picks</th></tr></thead><tbody>
-        ${table.map((t,i)=>{
+        <thead><tr><th>#</th>${sortTh('std','name','Team')}${sortTh('std','w','W','right')}${sortTh('std','l','L','right')}
+          ${sortTh('std','t','T','right')}${sortTh('std','pct','Pct','right')}
+          ${sortTh('std','pf','PF','right hide-xs')}${sortTh('std','pa','PA','right hide-xs')}
+          ${sortTh('std','opp','Opp pts','right hide-xs')}${sortTh('std','eff','Eff','right hide-xs')}
+          ${sortTh('std','slot','Draft slot','right')}${sortTh('std','bill', nextY+' picks', 'right')}</tr></thead><tbody>
+        ${sortRows('std', table, {
+            name:t=>t.name, w:t=>teamRecord(t).w, l:t=>teamRecord(t).l, t:t=>teamRecord(t).t,
+            pct:t=>winPct(t), pf:t=>teamRecord(t).pf||0, pa:t=>teamRecord(t).pa||0,
+            opp:t=>oppPoints(t), eff:t=>efficiency(t), slot:t=>draftSlot(t.id),
+            bill:t=>rookieBill(t.id, nextY)
+          }).map((t,i)=>{
           const r = teamRecord(t), seed = inField[t.id];
           return `<tr class="${t.id===tid?'me':''}">
             <td class="num">${seed?'<span class="pill ok">'+seed+'</span>':'<span class="dim">'+(i+1)+'</span>'}</td>
@@ -2615,8 +2716,11 @@ VIEWS.teams = function(){
             ${P.thirdPlace?' A third place game is played.':''}${P.consolation?' Everyone else plays a consolation bracket.':''}</div></div>
         </div>
         <div class="panel"><div class="ph"><h3>Cap standings</h3></div><div class="pb tight scrollx"><table>
-          <thead><tr><th>Team</th><th class="right">Players</th>${yrs.slice(0,3).map(yy=>'<th class="right">'+yy+'</th>').join('')}</tr></thead><tbody>
-          ${S.teams.map(x=>`<tr><td><b style="font-weight:500">${esc(x.name)}</b><div class="tiny muted">${esc(x.owner||'')}</div></td>
+          <thead><tr>${sortTh('cst','name','Team')}${sortTh('cst','n','Players','right')}
+            ${yrs.slice(0,3).map((yy,i)=>sortTh('cst','s'+i, String(yy), 'right')).join('')}</tr></thead><tbody>
+          ${sortRows('cst', S.teams, Object.assign({name:t=>t.name, n:t=>teamPlayers(t.id).length},
+            yrs.slice(0,3).reduce((m,yy,i)=>{ m['s'+i] = t=> capSpace(t.id,yy); return m; },{})),
+            {key:'name',dir:1}).map(x=>`<tr><td><b style="font-weight:500">${esc(x.name)}</b><div class="tiny muted">${esc(x.owner||'')}</div></td>
             <td class="right num">${teamPlayers(x.id).length}</td>
             ${yrs.slice(0,3).map(yy=>{const sp=capSpace(x.id,yy);return '<td class="right num '+(sp<0?'bad':'')+'">'+money(sp,{plus:true})+'</td>';}).join('')}</tr>`).join('')}
           </tbody></table></div></div>
@@ -2628,7 +2732,10 @@ function faRows(list){
   const q = (ui.tmp.faq||'').toLowerCase();
   const f = list.filter(p=> !q || p.name.toLowerCase().includes(q) || p.pos.toLowerCase()===q || (p.nfl||'').toLowerCase()===q).slice(0,60);
   const wv = waiverDeadlinePassed();
-  return f.map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
+  return sortRows('fa', f, {
+    name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', age:p=>+p.age||0,
+    price:p=> wv ? (+S.settings.waivers.salary||0) : marketPrice(p,0)
+  }, {key:'price',dir:-1}).map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
     ${injuryTag(p)} ${waiverTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
     <td class="right num">${p.age||'—'}</td><td class="right money">${wv?money(S.settings.waivers.salary):money(marketPrice(p,0))}</td>
     <td class="right"><button class="btn sm" data-a="editContract" data-id="${p.id}">${wv?'Claim':'Sign'}</button></td></tr>`).join('')
@@ -7843,6 +7950,10 @@ async function openLobby(name){
   ui.tmp.lobby = {name:name||'', teams:[], team:'', pw:'', loading:true, err:''};
   lobbyModal();
   try{
+    // The link may have arrived before the client finished loading.
+    if(!Supa.client) await Supa.init(true);
+    if(!Supa.client) throw new Error('Could not reach the league — the connection is not open yet.');
+    if(!Supa.cfg().leagueId) throw new Error('This link is missing the league it belongs to. Ask for a fresh one.');
     const {data, error} = await Supa.client.rpc('league_lobby', {p_league:Supa.cfg().leagueId});
     if(error) throw error;
     const t = ui.tmp.lobby;
@@ -7860,10 +7971,22 @@ function lobbyModal(){
   const t = ui.tmp.lobby || {};
   if(t.loading) return modal('Joining…', '<div class="hint">Fetching the league…</div>',
     '<button class="btn ghost" data-a="closeModal">Cancel</button>');
-  if(t.err) return modal('That did not work',
-    '<div class="hint bad">'+esc(t.err)+'</div>'+
-    '<div class="hint">If it mentions a missing function, the commissioner needs to run the newest setup SQL in Supabase.</div>',
-    '<button class="btn ghost" data-a="closeModal">Close</button>');
+  if(t.err){
+    const e = String(t.err);
+    const why = /rpc|connection is not open|Failed to fetch|NetworkError/i.test(e)
+        ? 'The app had not finished connecting. Pressing try again almost always sorts it.'
+      : /league_lobby|function .*does not exist|schema cache/i.test(e)
+        ? 'Your commissioner needs to run the newest setup SQL in Supabase — the file has three functions on the end that are not there yet.'
+      : /missing the league/i.test(e)
+        ? 'Ask your commissioner for a fresh link from Settings › Server.'
+      : /Invalid API key|JWT/i.test(e)
+        ? 'The key in the link is not right. Ask for a fresh link.'
+      : 'Show this to your commissioner if trying again does not help.';
+    return modal('That did not work',
+      '<div class="hint bad">'+esc(e)+'</div><div class="hint">'+esc(why)+'</div>',
+      '<button class="btn ghost" data-a="closeModal">Close</button>'+
+      '<button class="btn pri" data-a="lobbyRetry">Try again</button>');
+  }
 
   const free = t.teams.filter(x=> !x.taken);
   const gone = t.teams.filter(x=> x.taken);
@@ -7890,6 +8013,7 @@ function lobbyModal(){
     '<button class="btn ghost" data-a="closeModal">Later</button>'+
     '<button class="btn pri" data-a="lobbyGo">Take my team</button>');
 }
+ACT.lobbyRetry = ()=>{ openLobby((ui.tmp.lobby||{}).name); };
 ACT.lobbyPick = (d)=>{
   const t = ui.tmp.lobby;
   const pw = $('#lobbyPw'), em = $('#lobbyEmail'), p2 = $('#lobbyPw2');
@@ -8365,11 +8489,19 @@ const Supa = {
   boss(){ return !!(this.member && this.member.role==='commish'); },
   set(st,msg){ this.status=st; this.msg=msg||''; renderShell(); },
 
-  async init(loud){
+  /* Two things can ask for the client at once — the page opening and an
+     invitation link arriving. Whoever asks second must wait for the first
+     attempt rather than being told "no" while it is still loading. */
+  init(loud){
+    if(this.client) return Promise.resolve(true);
+    if(!this.configured()) return Promise.resolve(false);
+    if(this._boot) return this._boot;
+    this._boot = this._connect(loud).then(ok=>{ this._boot = null; return ok; },
+                                          err=>{ this._boot = null; return false; });
+    return this._boot;
+  },
+  async _connect(loud){
     const c = this.cfg();
-    if(!this.configured()) return false;
-    if(this.client) return true;
-    if(this.booting) return false;
     this.booting = true;
     try{
       const mod = await import('https://esm.sh/@supabase/supabase-js@2');
@@ -8801,8 +8933,8 @@ async function init(){
   const h = location.hash.slice(1);
   route = VIEWS[h] ? h : 'dash';
   render();
-  if(S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(), 300);
   greetInvites();
+  if(!ui.tmp.skipBootInit && S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(), 300);
 }
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
@@ -8816,7 +8948,8 @@ function greetInvites(){
       S.settings.supa = Object.assign({}, S.settings.supa, {on:true, url:inv.u, anonKey:inv.k, leagueId:inv.l});
       save(true);
       history.replaceState(null,'',location.pathname);
-      setTimeout(()=> Supa.init().then(()=> openLobby(inv.n)), 350);
+      ui.tmp.skipBootInit = true;          // this path does the connecting itself
+      setTimeout(()=> openLobby(inv.n), 300);
       return;
     }
   }
