@@ -294,34 +294,178 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .arena svg{display:block;width:100%;height:auto}
 .arena .floor{fill:#0B131B}
 .fo-anim{transform-box:fill-box;transform-origin:50% 100%}
-.fo-idle{animation:foBob 2.6s ease-in-out infinite}
-.fo-win{animation:foBob 2.6s ease-in-out infinite, foLunge 3.2s ease-in-out infinite}
-.fo-lose{animation:foBob 3.4s ease-in-out infinite, foReel 3.2s ease-in-out infinite}
-.fo-out{animation:foSag 4s ease-in-out infinite}
-@keyframes foBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
-@keyframes foLunge{0%,66%,100%{transform:translateX(0)}78%{transform:translateX(26px)}}
-@keyframes foReel{0%,66%,100%{transform:translateX(0) rotate(0)}80%{transform:translateX(-15px) rotate(-10deg)}}
-@keyframes foSag{0%,100%{transform:translateY(3px) rotate(-6deg)}50%{transform:translateY(6px) rotate(-9deg)}}
-.fo-t-flex{animation:tFlex 1.1s ease-in-out infinite}
-.fo-t-point{animation:tPoint 1.3s ease-in-out infinite}
-.fo-t-roar{animation:tRoar .5s ease-in-out infinite}
-.fo-t-beckon{animation:tBeckon .9s ease-in-out infinite}
-.fo-t-dance{animation:tDance .7s ease-in-out infinite}
-.fo-t-bow{animation:tBow 2s ease-in-out infinite}
-.fo-t-facepalm{animation:tFacepalm 2.2s ease-in-out infinite}
-.fo-t-shrug{animation:tShrug 1.6s ease-in-out infinite}
-.fo-t-spike{animation:tSpike 1s ease-in-out infinite}
-.fo-t-nap{animation:tNap 3.4s ease-in-out infinite}
-@keyframes tFlex{0%,100%{transform:scale(1)}50%{transform:scale(1.14,.92)}}
-@keyframes tPoint{0%,100%{transform:translateX(0) rotate(0)}50%{transform:translateX(16px) rotate(6deg)}}
-@keyframes tRoar{0%,100%{transform:scale(1) translateY(0)}50%{transform:scale(1.07) translateY(-5px)}}
-@keyframes tBeckon{0%,100%{transform:translateX(0)}50%{transform:translateX(9px) rotate(-4deg)}}
-@keyframes tDance{0%,100%{transform:translateX(-8px) rotate(-7deg)}50%{transform:translateX(8px) rotate(7deg)}}
-@keyframes tBow{0%,100%{transform:rotate(0) translateY(0)}45%,60%{transform:rotate(28deg) translateY(12px)}}
-@keyframes tFacepalm{0%,100%{transform:rotate(0)}40%,70%{transform:rotate(-16deg) translateY(6px)}}
-@keyframes tShrug{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-7px) rotate(3deg)}}
-@keyframes tSpike{0%,60%,100%{transform:translateY(0) rotate(0)}30%{transform:translateY(-16px) rotate(-12deg)}}
-@keyframes tNap{0%,100%{transform:rotate(-14deg) translateY(8px)}50%{transform:rotate(-18deg) translateY(11px)}}
+/* The parent only carries the weight shift. Everything with character in it
+   happens at the joints below, so the two never fight each other. */
+.fo-idle{animation:foBob 3.4s ease-in-out infinite}
+.fo-win{animation:foStrut 1.6s ease-in-out infinite}
+.fo-lose{animation:foTrudge 4s ease-in-out infinite}
+.fo-out{animation:foSag 4.5s ease-in-out infinite}
+@keyframes foBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes foStrut{0%,100%{transform:translate(0,0)}25%{transform:translate(4px,-3px)}75%{transform:translate(-3px,-1px)}}
+@keyframes foTrudge{0%,100%{transform:translateY(1px)}50%{transform:translateY(3px)}}
+@keyframes foSag{0%,100%{transform:translateY(4px)}50%{transform:translateY(6px)}}
+/* Joints. Arms swing from the shoulder, legs from the hip, the torso folds at
+   the waist and the head turns on the neck. */
+.m-armL,.m-armR,.m-legL,.m-legR,.m-torso,.m-head{transform-box:fill-box}
+.m-armL{transform-origin:100% 42%}
+.m-armR{transform-origin:0% 42%}
+.m-legL,.m-legR{transform-origin:50% 4%}
+.m-torso{transform-origin:50% 100%}
+.m-head{transform-origin:50% 96%}
+
+/* breathing, so nobody stands like a shop dummy */
+.fo-idle .m-torso{animation:brTorso 3.4s ease-in-out infinite}
+.fo-idle .m-armL{animation:brArmL 3.4s ease-in-out infinite}
+.fo-idle .m-armR{animation:brArmR 3.4s ease-in-out infinite}
+.fo-idle .m-head{animation:brHead 5.2s ease-in-out infinite}
+@keyframes brTorso{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.025)}}
+@keyframes brArmL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(4deg)}}
+@keyframes brArmR{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-4deg)}}
+@keyframes brHead{0%,100%{transform:rotate(0deg)}30%{transform:rotate(-3deg)}70%{transform:rotate(3deg)}}
+
+/* winning: a bit of a strut, arms pumping */
+.fo-win .m-armL{animation:winArmL 1.6s ease-in-out infinite}
+.fo-win .m-armR{animation:winArmR 1.6s ease-in-out infinite}
+.fo-win .m-legL{animation:winLegL 1.6s ease-in-out infinite}
+.fo-win .m-legR{animation:winLegR 1.6s ease-in-out infinite}
+.fo-win .m-head{animation:winHead 1.6s ease-in-out infinite}
+@keyframes winArmL{0%,100%{transform:rotate(6deg)}50%{transform:rotate(-42deg)}}
+@keyframes winArmR{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(42deg)}}
+@keyframes winLegL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-9deg)}}
+@keyframes winLegR{0%,100%{transform:rotate(0deg)}50%{transform:rotate(9deg)}}
+@keyframes winHead{0%,100%{transform:rotate(0deg) translateY(0)}50%{transform:rotate(-5deg) translateY(-3px)}}
+
+/* losing: shoulders drop, head hangs */
+.fo-lose .m-torso{animation:loseTorso 4s ease-in-out infinite}
+.fo-lose .m-head{animation:loseHead 4s ease-in-out infinite}
+.fo-lose .m-armL{animation:loseArmL 4s ease-in-out infinite}
+.fo-lose .m-armR{animation:loseArmR 4s ease-in-out infinite}
+@keyframes loseTorso{0%,100%{transform:rotate(0deg)}50%{transform:rotate(4deg) translateY(2px)}}
+@keyframes loseHead{0%,100%{transform:rotate(6deg) translateY(2px)}50%{transform:rotate(10deg) translateY(4px)}}
+@keyframes loseArmL{0%,100%{transform:rotate(14deg)}50%{transform:rotate(18deg)}}
+@keyframes loseArmR{0%,100%{transform:rotate(-14deg)}50%{transform:rotate(-18deg)}}
+
+/* out on his feet */
+.fo-out .m-torso{animation:outTorso 4.5s ease-in-out infinite}
+.fo-out .m-head{animation:outHead 4.5s ease-in-out infinite}
+.fo-out .m-armL{transform:rotate(26deg)}
+.fo-out .m-armR{transform:rotate(-26deg)}
+.fo-out .m-legL{transform:rotate(-7deg)}
+.fo-out .m-legR{transform:rotate(7deg)}
+@keyframes outTorso{0%,100%{transform:rotate(-7deg)}50%{transform:rotate(-11deg) translateY(3px)}}
+@keyframes outHead{0%,100%{transform:rotate(14deg) translateY(3px)}50%{transform:rotate(19deg) translateY(5px)}}
+
+/* ── taunts, joint by joint ───────────────────────────────────────────── */
+
+/* flex — both arms curl up, chest out, weight settles */
+.fo-t-flex .m-armL{animation:flexAL 1.5s ease-in-out infinite}
+.fo-t-flex .m-armR{animation:flexAR 1.5s ease-in-out infinite}
+.fo-t-flex .m-torso{animation:flexT 1.5s ease-in-out infinite}
+.fo-t-flex .m-head{animation:flexH 1.5s ease-in-out infinite}
+@keyframes flexAL{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(-128deg) translateX(6px)}}
+@keyframes flexAR{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(128deg) translateX(-6px)}}
+@keyframes flexT{0%,100%{transform:scale(1,1)}35%,80%{transform:scale(1.1,.95)}}
+@keyframes flexH{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(-4deg) translateY(2px)}}
+
+/* point — right arm out straight, body turns behind it */
+.fo-t-point .m-armR{animation:ptAR 1.7s ease-in-out infinite}
+.fo-t-point .m-armL{animation:ptAL 1.7s ease-in-out infinite}
+.fo-t-point .m-torso{animation:ptT 1.7s ease-in-out infinite}
+.fo-t-point .m-head{animation:ptH 1.7s ease-in-out infinite}
+@keyframes ptAR{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-16deg) translateX(9px) scaleX(1.16)}}
+@keyframes ptAL{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(34deg)}}
+@keyframes ptT{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-5deg) translateX(4px)}}
+@keyframes ptH{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-7deg) translateX(3px)}}
+
+/* roar — head back, arms flung wide, chest heaving */
+.fo-t-roar .m-head{animation:roarH .7s ease-in-out infinite}
+.fo-t-roar .m-armL{animation:roarAL .7s ease-in-out infinite}
+.fo-t-roar .m-armR{animation:roarAR .7s ease-in-out infinite}
+.fo-t-roar .m-torso{animation:roarT .7s ease-in-out infinite}
+@keyframes roarH{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-15deg) translateY(-3px)}}
+@keyframes roarAL{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(-58deg) translateX(-5px)}}
+@keyframes roarAR{0%,100%{transform:rotate(10deg)}50%{transform:rotate(58deg) translateX(5px)}}
+@keyframes roarT{0%,100%{transform:scale(1)}50%{transform:scale(1.07,1.04)}}
+
+/* beckon — the come-here curl, twice a cycle */
+.fo-t-beckon .m-armR{animation:bkAR .85s ease-in-out infinite}
+.fo-t-beckon .m-torso{animation:bkT 1.7s ease-in-out infinite}
+.fo-t-beckon .m-head{animation:bkH 1.7s ease-in-out infinite}
+@keyframes bkAR{0%,100%{transform:rotate(-52deg) translateX(2px)}50%{transform:rotate(-96deg) translateX(-6px)}}
+@keyframes bkT{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-3deg)}}
+@keyframes bkH{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(2deg)}}
+
+/* dance — hips and shoulders out of phase, feet keeping time */
+.fo-t-dance .m-torso{animation:dnT .62s ease-in-out infinite}
+.fo-t-dance .m-armL{animation:dnAL .62s ease-in-out infinite}
+.fo-t-dance .m-armR{animation:dnAR .62s ease-in-out infinite}
+.fo-t-dance .m-legL{animation:dnLL .62s ease-in-out infinite}
+.fo-t-dance .m-legR{animation:dnLR .62s ease-in-out infinite}
+.fo-t-dance .m-head{animation:dnH .62s ease-in-out infinite}
+@keyframes dnT{0%,100%{transform:rotate(-7deg) translateX(-3px)}50%{transform:rotate(7deg) translateX(3px)}}
+@keyframes dnAL{0%,100%{transform:rotate(-64deg)}50%{transform:rotate(22deg)}}
+@keyframes dnAR{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(64deg)}}
+@keyframes dnLL{0%,100%{transform:rotate(11deg)}50%{transform:rotate(-6deg)}}
+@keyframes dnLR{0%,100%{transform:rotate(-11deg)}50%{transform:rotate(6deg)}}
+@keyframes dnH{0%,100%{transform:rotate(7deg)}50%{transform:rotate(-7deg)}}
+
+/* bow — folds at the waist, arms swing forward under gravity */
+.fo-t-bow .m-torso{animation:bwT 2.4s ease-in-out infinite}
+.fo-t-bow .m-head{animation:bwH 2.4s ease-in-out infinite}
+.fo-t-bow .m-armL{animation:bwAL 2.4s ease-in-out infinite}
+.fo-t-bow .m-armR{animation:bwAR 2.4s ease-in-out infinite}
+@keyframes bwT{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(34deg) translateY(4px)}}
+@keyframes bwH{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(22deg) translateY(3px)}}
+@keyframes bwAL{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(-46deg) translateY(6px)}}
+@keyframes bwAR{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(46deg) translateY(6px)}}
+
+/* facepalm — hand up to the face, head sinks into it */
+.fo-t-facepalm .m-armR{animation:fpAR 2.6s ease-in-out infinite}
+.fo-t-facepalm .m-head{animation:fpH 2.6s ease-in-out infinite}
+.fo-t-facepalm .m-torso{animation:fpT 2.6s ease-in-out infinite}
+@keyframes fpAR{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(-152deg) translate(-14px,4px)}}
+@keyframes fpH{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(11deg) translateY(4px)}}
+@keyframes fpT{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(3deg) translateY(2px)}}
+
+/* shrug — shoulders up, palms out, head tucked between them */
+.fo-t-shrug .m-armL{animation:shAL 2s ease-in-out infinite}
+.fo-t-shrug .m-armR{animation:shAR 2s ease-in-out infinite}
+.fo-t-shrug .m-head{animation:shH 2s ease-in-out infinite}
+.fo-t-shrug .m-torso{animation:shT 2s ease-in-out infinite}
+@keyframes shAL{0%,100%{transform:rotate(0deg)}35%,70%{transform:rotate(-40deg) translateY(-5px)}}
+@keyframes shAR{0%,100%{transform:rotate(0deg)}35%,70%{transform:rotate(40deg) translateY(-5px)}}
+@keyframes shH{0%,100%{transform:translateY(0)}35%,70%{transform:translateY(5px) scaleY(.94)}}
+@keyframes shT{0%,100%{transform:translateY(0)}35%,70%{transform:translateY(-2px)}}
+
+/* spike — arm up, then everything comes down through the ball */
+.fo-t-spike .m-armR{animation:spAR 1.3s cubic-bezier(.3,0,.2,1) infinite}
+.fo-t-spike .m-torso{animation:spT 1.3s cubic-bezier(.3,0,.2,1) infinite}
+.fo-t-spike .m-head{animation:spH 1.3s cubic-bezier(.3,0,.2,1) infinite}
+.fo-t-spike .m-legL{animation:spLL 1.3s cubic-bezier(.3,0,.2,1) infinite}
+.fo-t-spike .m-legR{animation:spLR 1.3s cubic-bezier(.3,0,.2,1) infinite}
+@keyframes spAR{0%{transform:rotate(0deg)}30%{transform:rotate(148deg) translateY(-6px)}
+  46%{transform:rotate(-34deg) translateY(8px)}70%,100%{transform:rotate(0deg)}}
+@keyframes spT{0%{transform:rotate(0deg)}30%{transform:rotate(-8deg) translateY(-4px)}
+  46%{transform:rotate(15deg) translateY(4px)}70%,100%{transform:rotate(0deg)}}
+@keyframes spH{0%{transform:rotate(0deg)}30%{transform:rotate(-11deg)}46%{transform:rotate(17deg)}70%,100%{transform:rotate(0deg)}}
+@keyframes spLL{0%{transform:rotate(0deg)}30%{transform:rotate(-13deg)}46%{transform:rotate(6deg)}70%,100%{transform:rotate(0deg)}}
+@keyframes spLR{0%{transform:rotate(0deg)}30%{transform:rotate(9deg)}46%{transform:rotate(-6deg)}70%,100%{transform:rotate(0deg)}}
+
+/* nap — knees give, torso sags, head lolls, arms dangle */
+.fo-t-nap .m-torso{animation:npT 4.4s ease-in-out infinite}
+.fo-t-nap .m-head{animation:npH 4.4s ease-in-out infinite}
+.fo-t-nap .m-armL{animation:npAL 4.4s ease-in-out infinite}
+.fo-t-nap .m-armR{animation:npAR 4.4s ease-in-out infinite}
+.fo-t-nap .m-legL{transform:rotate(-5deg)}
+.fo-t-nap .m-legR{transform:rotate(5deg)}
+@keyframes npT{0%,100%{transform:rotate(-9deg) translateY(3px)}50%{transform:rotate(-12deg) translateY(6px)}}
+@keyframes npH{0%,100%{transform:rotate(19deg) translateY(3px)}50%{transform:rotate(25deg) translateY(6px)}}
+@keyframes npAL{0%,100%{transform:rotate(22deg)}50%{transform:rotate(28deg)}}
+@keyframes npAR{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(-28deg)}}
+
+@media (prefers-reduced-motion:reduce){
+  .fo-anim *{animation:none !important}
+}
 .pow{animation:foPow 3.2s ease-in-out infinite;transform-box:fill-box;transform-origin:center}
 @keyframes foPow{0%,62%{opacity:0;transform:scale(.4)}74%{opacity:1;transform:scale(1.1)}86%{opacity:.9;transform:scale(1.2)}100%{opacity:0;transform:scale(1.35)}}
 .stars{animation:foSpin 2.4s linear infinite;transform-box:fill-box;transform-origin:center}
@@ -654,7 +798,7 @@ function defaultState(){
       fa:{ on:true, budgetMode:'amount', budget:60, clockHours:24, minBid:1, minIncrement:1,
            blind:false, maxYears:3, resetEachSeason:true },
       bbd:{ on:true, roundHours:24, minBid:1, maxPerRound:0, tiebreak:'earliest',
-            separateBudget:false, budget:120, maxYears:4, maxRounds:0 },
+            budgetMode:'fa', separateBudget:false, budget:120, maxYears:4, maxRounds:0 },
       trades:{
         reviewHours:24, auctionHours:48,
         antiSnipeOn:true, antiSnipeWithinMin:15, antiSnipeExtendMin:30, antiSnipeUnit:'min',
@@ -1341,6 +1485,20 @@ VIEWS.dash = function(){
         }).join('')}
         </tbody></table></div></div>`:''}
 
+      ${(()=>{
+        const supaSet = S.settings.supa && S.settings.supa.on && S.settings.supa.url;
+        const waiting = supaSet && (!Supa.user || !S.settings.supa.leagueId);
+        if(!waiting) return '';
+        return `<div class="panel" style="border-color:#5C4526"><div class="ph"><h3>This is not your league yet</h3></div>
+          <div class="pb">
+          <p class="muted" style="margin:0">${!Supa.user
+            ? 'You are looking at the practice league because nobody is signed in on this device.'
+            : 'Signed in, but this device has not been pointed at a league yet.'}</p>
+          <button class="btn pri wide" data-a="go" data-r="settings" data-s="server" style="margin-top:10px">
+            ${!Supa.user?'Sign in':'Pick the league'}</button>
+        </div></div>`;
+      })()}
+
       <div class="panel"><div class="ph"><h3>Around the league</h3><div class="spacer"></div>
         <button class="btn ghost sm" data-a="pullNews">Refresh</button></div>
         <div class="pb">${(S.news.items||[]).length
@@ -1643,14 +1801,25 @@ function foDamage(stage){
       '<ellipse cx="60" cy="30" rx="9" ry="5" fill="#0D141B" opacity=".45"/>';
   return o;
 }
-function foBody(c){
-  return '<rect x="45" y="72" width="13" height="34" rx="6" fill="'+c.dark+'"/>'+
-    '<rect x="62" y="72" width="13" height="34" rx="6" fill="'+c.dark+'"/>'+
-    '<path d="M33 104h25v7H33z" fill="#16232F"/><path d="M62 104h25v7H62z" fill="#16232F"/>'+
-    '<rect x="37" y="40" width="46" height="40" rx="15" fill="'+c.main+'"/>'+
-    '<rect x="47" y="47" width="26" height="21" rx="8" fill="'+c.light+'" opacity=".32"/>'+
-    '<rect x="22" y="45" width="18" height="12" rx="6" fill="'+c.accent+'"/><circle cx="22" cy="51" r="9.5" fill="'+c.dark+'"/>'+
-    '<rect x="80" y="45" width="18" height="12" rx="6" fill="'+c.accent+'"/><circle cx="98" cy="51" r="9.5" fill="'+c.dark+'"/>';
+/* Each limb is its own group so it can swing from a joint rather than the
+   whole figure sliding about like a sticker. */
+function foLegs(c){
+  return '<g class="m-legL"><rect x="45" y="72" width="13" height="34" rx="6" fill="'+c.dark+'"/>'+
+         '<path d="M33 104h25v7H33z" fill="#16232F"/></g>'+
+         '<g class="m-legR"><rect x="62" y="72" width="13" height="34" rx="6" fill="'+c.dark+'"/>'+
+         '<path d="M62 104h25v7H62z" fill="#16232F"/></g>';
+}
+function foTorso(c, kit){
+  return '<g class="m-torso"><rect x="37" y="40" width="46" height="40" rx="15" fill="'+c.main+'"/>'+
+         '<rect x="47" y="47" width="26" height="21" rx="8" fill="'+c.light+'" opacity=".32"/>'+ (kit||'') +'</g>';
+}
+function foArmL(c){
+  return '<g class="m-armL"><rect x="22" y="45" width="18" height="12" rx="6" fill="'+c.accent+'"/>'+
+         '<circle cx="22" cy="51" r="9.5" fill="'+c.dark+'"/></g>';
+}
+function foArmR(c){
+  return '<g class="m-armR"><rect x="80" y="45" width="18" height="12" rx="6" fill="'+c.accent+'"/>'+
+         '<circle cx="98" cy="51" r="9.5" fill="'+c.dark+'"/></g>';
 }
 const MASCOTS = {
   wolf:   {name:'Wolf',    head:c=>'<path d="M43 16 46 1l13 9h2l13-9 3 15z" fill="'+c.dark+'"/><circle cx="60" cy="26" r="19" fill="'+c.main+'"/><ellipse cx="60" cy="33" rx="10" ry="7" fill="'+c.light+'"/><circle cx="60" cy="31" r="3" fill="#0D141B"/>'},
@@ -1665,12 +1834,12 @@ const MASCOTS = {
   serpent:{name:'Serpent', head:c=>'<path d="M60 6c-18 0-26 10-26 20h52c0-10-8-20-26-20z" fill="'+c.dark+'"/><ellipse cx="60" cy="28" rx="15" ry="17" fill="'+c.main+'"/><path d="M60 42l-5 10h10z" fill="'+c.light+'"/>'}
 };
 const KIT = {
-  headband:{name:'Headband',  back:false, draw:c=>'<rect x="41" y="12" width="38" height="6" rx="3" fill="'+c.light+'"/><rect x="74" y="9" width="11" height="4" rx="2" fill="'+c.light+'"/>'},
-  shades:  {name:'Shades',    back:false, draw:c=>'<path d="M44 20h32v3.5H44z" fill="#0D141B"/><rect x="43" y="19" width="15" height="11" rx="4.5" fill="#12202C"/><rect x="62" y="19" width="15" height="11" rx="4.5" fill="#12202C"/>'},
-  guard:   {name:'Mouthguard',back:false, draw:c=>'<rect x="52" y="37" width="16" height="5" rx="2.5" fill="#E9EFF4"/>'},
-  belt:    {name:'Title belt', back:false,draw:c=>'<rect x="36" y="65" width="48" height="10" rx="3" fill="#22384A"/><ellipse cx="60" cy="70" rx="9" ry="6.5" fill="'+c.light+'"/>'},
-  cape:    {name:'Cape',      back:true,  draw:c=>'<path d="M40 40c-15 12-19 42-15 62h70c4-20 0-50-15-62z" fill="'+c.dark+'" opacity=".8"/>'},
-  paint:   {name:'War paint', back:false, draw:c=>'<path d="M48 30l-6 11M72 30l6 11" stroke="'+c.light+'" stroke-width="3.5" stroke-linecap="round"/>'}
+  headband:{name:'Headband',  part:'head',  draw:c=>'<rect x="41" y="12" width="38" height="6" rx="3" fill="'+c.light+'"/><rect x="74" y="9" width="11" height="4" rx="2" fill="'+c.light+'"/>'},
+  shades:  {name:'Shades',    part:'head',  draw:c=>'<path d="M44 20h32v3.5H44z" fill="#0D141B"/><rect x="43" y="19" width="15" height="11" rx="4.5" fill="#12202C"/><rect x="62" y="19" width="15" height="11" rx="4.5" fill="#12202C"/>'},
+  guard:   {name:'Mouthguard',part:'head',  draw:c=>'<rect x="52" y="37" width="16" height="5" rx="2.5" fill="#E9EFF4"/>'},
+  belt:    {name:'Title belt',part:'torso', draw:c=>'<rect x="36" y="65" width="48" height="10" rx="3" fill="#22384A"/><ellipse cx="60" cy="70" rx="9" ry="6.5" fill="'+c.light+'"/>'},
+  cape:    {name:'Cape',      part:'back',  draw:c=>'<path d="M40 40c-15 12-19 42-15 62h70c4-20 0-50-15-62z" fill="'+c.dark+'" opacity=".8"/>'},
+  paint:   {name:'War paint', part:'head',  draw:c=>'<path d="M48 30l-6 11M72 30l6 11" stroke="'+c.light+'" stroke-width="3.5" stroke-linecap="round"/>'}
 };
 const TAUNTS = {
   flex:     {name:'Flex',     line:'Look at this.'},
@@ -1693,9 +1862,18 @@ function activeTaunt(teamId){
 function mascotSVG(key, paint, stage, cls, kit){
   const m = MASCOTS[key] || MASCOTS.wolf;
   const k = kit || {};
-  const back  = Object.keys(KIT).filter(x=> k[x] &&  KIT[x].back).map(x=> KIT[x].draw(paint)).join('');
-  const front = Object.keys(KIT).filter(x=> k[x] && !KIT[x].back).map(x=> KIT[x].draw(paint)).join('');
-  return '<g class="fo-anim '+(cls||'')+'">'+back+foBody(paint)+m.head(paint)+foEyes(stage)+front+foDamage(stage)+'</g>';
+  const part = (which)=> Object.keys(KIT)
+    .filter(x=> k[x] && (KIT[x].part||'head')===which)
+    .map(x=> KIT[x].draw(paint)).join('');
+  return '<g class="fo-anim '+(cls||'')+'">'+
+    part('back')+
+    foLegs(paint)+
+    foArmL(paint)+
+    foTorso(paint, part('torso'))+
+    '<g class="m-head">'+m.head(paint)+foEyes(stage)+part('head')+'</g>'+
+    foArmR(paint)+
+    foDamage(stage)+
+  '</g>';
 }
 /* Damage is read off the deficit, not the health bar, so the steps land where
    a fantasy manager expects them: a touchdown behind stings, five is a mauling. */
@@ -2757,9 +2935,10 @@ ACT.editContract = (d)=>{
       (isCommish()?'<button class="btn" data-a="liftWaiver" data-id="'+p.id+'">Lift the tag</button>':'')+
       '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Drop him</button>');
   }
-  ui.tmp.cd = { pid:p.id, teamId: c? c.teamId : currentTeamId(), total: c? c.total : Math.max(1, p.value||1),
+  if(!d.keep) ui.tmp.cd = { pid:p.id, teamId: c? c.teamId : currentTeamId(), total: c? c.total : Math.max(1, p.value||1),
                 years: c? c.years : 1, structId: c? c.structId : S.settings.contracts.defaultStruct,
-                startYear: c? c.startYear : S.league.season };
+                startYear: c? c.startYear : S.league.season,
+                byYear: (c && c.byYear) ? c.salaries.slice() : null };
   const cc = S.settings.contracts;
   modal((c?'Edit contract — ':'Sign — ')+p.name, `
     <div class="grid g2">
@@ -2769,7 +2948,12 @@ ACT.editContract = (d)=>{
         <input type="number" min="${cc.minYears}" max="${cc.maxYears}" value="${ui.tmp.cd.years}" data-oninput="cdField" data-f="years" data-k="cdyears"></label>
       <label class="f"><span>First year</span><input type="number" value="${ui.tmp.cd.startYear}" data-oninput="cdField" data-f="startYear" data-k="cdstart"></label>
       <label class="f" style="grid-column:1/-1"><span>Structure</span>
-        <select data-oninput="cdField" data-f="structId">${cc.structures.map(s=>'<option value="'+s.id+'"'+(s.id===ui.tmp.cd.structId?' selected':'')+'>'+esc(s.name)+'</option>').join('')}</select></label>
+        <select data-oninput="cdField" data-f="structId" ${ui.tmp.cd.byYear?'disabled':''}>${cc.structures.map(s=>'<option value="'+s.id+'"'+(s.id===ui.tmp.cd.structId?' selected':'')+'>'+esc(s.name)+'</option>').join('')}</select></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn sm ${ui.tmp.cd.byYear?'':'on'}" data-a="cdMode" data-m="shape">Shape it with a structure</button>
+      <button class="btn sm ${ui.tmp.cd.byYear?'on':''}" data-a="cdMode" data-m="exact">Type each year</button>
+      <span class="tiny dim">${ui.tmp.cd.byYear?'the total follows what you type':'the total is split by the structure'}</span>
     </div>
     <div class="hr"></div>
     <div id="cdPreview">${contractPreview()}</div>`,
@@ -2778,25 +2962,72 @@ ACT.editContract = (d)=>{
     '<button class="btn pri" data-a="saveContract">Save contract</button>');
 };
 ACT.cdField = (d, el)=>{
-  const f = d.f;
+  const cd = ui.tmp.cd, f = d.f;
   let v = el.value;
   if(f==='total') v = +v||0;
   if(f==='years') v = clamp(+v||1, S.settings.contracts.minYears, S.settings.contracts.maxYears);
   if(f==='startYear') v = +v || S.league.season;
-  ui.tmp.cd[f] = v;
+  cd[f] = v;
+  if(f==='years' && cd.byYear){
+    while(cd.byYear.length < cd.years) cd.byYear.push(cd.byYear[cd.byYear.length-1] || 0);
+    cd.byYear.length = cd.years;
+    cd.total = fixInc(sum(cd.byYear));
+  }
   const el2 = $('#cdPreview'); if(el2) el2.innerHTML = contractPreview();
 };
+ACT.cdMode = (d)=>{
+  const cd = ui.tmp.cd;
+  cd.byYear = d.m==='exact' ? salariesFor(cd.total, cd.years, cd.structId) : null;
+  ACT.editContract({id:cd.pid, keep:1});
+};
+ACT.cdYear = (d, el)=>{
+  const cd = ui.tmp.cd, i = +d.i;
+  cd.byYear[i] = Math.max(0, +el.value||0);
+  cd.total = fixInc(sum(cd.byYear));
+  const t = $('[data-k="cdtotal"]'); if(t) t.value = cd.total;
+  const el2 = $('#cdPreview'); if(el2) el2.innerHTML = contractPreview();
+};
+ACT.impYearCols = (d,el)=>{ ui.tmp.imp.useYearCols = !ui.tmp.imp.useYearCols; render(); };
+ACT.cdFlat = ()=>{
+  const cd = ui.tmp.cd;
+  const each = roundInc(cd.total / cd.years);
+  cd.byYear = Array.from({length:cd.years}, ()=> each);
+  cd.total = fixInc(sum(cd.byYear));
+  const el2 = $('#cdPreview'); if(el2) el2.innerHTML = contractPreview();
+};
+/* What the deal actually pays, whichever way it was built. */
+function cdSalaries(){
+  const cd = ui.tmp.cd;
+  if(cd.byYear){
+    const out = cd.byYear.slice(0, cd.years);
+    while(out.length < cd.years) out.push(0);
+    return out.map(v=> roundInc(+v||0));
+  }
+  return salariesFor(cd.total, cd.years, cd.structId);
+}
 function contractPreview(){
-  const cd = ui.tmp.cd, sal = salariesFor(cd.total, cd.years, cd.structId), st = structById(cd.structId);
+  const cd = ui.tmp.cd, sal = cdSalaries(), st = structById(cd.structId);
   const p = byId(S.players, cd.pid);
   const mx = Math.max.apply(null, sal.concat([1]));
   const other = S.players.filter(x=> x.contract && x.contract.teamId===cd.teamId && x.id!==cd.pid);
+  const total = cd.byYear ? fixInc(sum(sal)) : cd.total;
   return `
-    <div class="row" style="margin-bottom:10px">${sparkFor(cd.structId, cd.years)}
-      <span class="muted tiny">${esc(st.name)} · ${cd.years} yr · ${money(fixInc(cd.total/cd.years))} average</span></div>
+    ${cd.byYear?`<div class="flabel">Type what he is paid each year</div>
+      <div class="scrollx" style="margin-bottom:10px"><table><tbody><tr>
+      ${sal.map((v,i)=>`<td style="padding:2px 3px"><div class="tiny dim" style="text-align:center">${cd.startYear+i}</div>
+        <input type="number" step="${S.settings.cap.increment}" min="0" value="${v}" style="width:82px;text-align:right"
+          data-oninput="cdYear" data-i="${i}" data-k="cdy${i}"></td>`).join('')}
+      </tr></tbody></table></div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="muted tiny">Total ${money(total)} · ${money(fixInc(total/cd.years))} average</span>
+        <div class="spacer"></div>
+        <button class="btn sm ghost" data-a="cdFlat">Even it out</button>
+      </div>`
+    :`<div class="row" style="margin-bottom:10px">${sparkFor(cd.structId, cd.years)}
+      <span class="muted tiny">${esc(st.name)} · ${cd.years} yr · ${money(fixInc(cd.total/cd.years))} average</span></div>`}
     <div class="scrollx"><table><thead><tr><th>Year</th>${sal.map((_,i)=>'<th class="right">'+(cd.startYear+i)+'</th>').join('')}</tr></thead>
       <tbody><tr><td class="dim">Salary</td>${sal.map(s=>'<td class="right money">'+money(s)+'</td>').join('')}</tr>
-      <tr><td class="dim">Share</td>${structPct(st,cd.years).map(x=>'<td class="right num dim">'+pct(x)+'</td>').join('')}</tr>
+      ${cd.byYear?'':'<tr><td class="dim">Share</td>'+structPct(st,cd.years).map(x=>'<td class="right num dim">'+pct(x)+'</td>').join('')+'</tr>'}
       <tr><td class="dim">Space after</td>${sal.map((s,i)=>{
         const yy=cd.startYear+i;
         if(yy<S.league.season) return '<td class="right dim">—</td>';
@@ -2804,7 +3035,9 @@ function contractPreview(){
         const sp = teamCapForYear(cd.teamId,yy)-committed;
         return '<td class="right num '+(sp<0?'bad':'good')+'">'+money(sp,{plus:true})+'</td>';
       }).join('')}</tr></tbody></table></div>
-    <div class="hint">Bars show the shape of the deal. Change the structure to move money between years — the total never changes.</div>
+    <div class="hint">${cd.byYear
+      ? 'Every figure is yours to set, so an existing league can be copied across exactly. Change the length and the row grows or shrinks.'
+      : 'Bars show the shape of the deal. Change the structure to move money between years — the total never changes.'}</div>
     ${Math.min.apply(null, sal) < (+S.settings.contracts.minSalary||0)
       ? '<div class="hint bad">At least one year falls under the league minimum of '+money(S.settings.contracts.minSalary)+'. Raise the total or shorten the deal.</div>' : ''}`;
 }
@@ -2829,12 +3062,18 @@ ACT.saveContract = ()=>{
   const lp = limitProblem(cd.teamId, cd.years, p.id);
   if(lp) return toast(teamName(cd.teamId)+' already has '+lp.have+' deals of '+lp.length+' years or longer and is allowed '+lp.allow,'bad');
   const c = makeContract(cd.teamId, cd.total, cd.years, cd.structId, cd.startYear);
+  if(cd.byYear){                       // exact figures beat any structure
+    c.salaries = cdSalaries();
+    c.total = fixInc(sum(c.salaries));
+    c.byYear = true;
+  }
   const before = p.contract; p.contract = c;
   if(S.settings.trades.capMustBeLegal){
     const bad = projYears().find(y=> capSpace(cd.teamId,y) < 0);
     if(bad){ p.contract = before; return toast('That puts '+teamName(cd.teamId)+' over the cap in '+bad,'bad'); }
   }
-  logIt(teamName(cd.teamId)+' signed '+p.name+' — '+money(c.total)+' over '+c.years+' yr ('+structById(c.structId).name+')',
+  logIt(teamName(cd.teamId)+' signed '+p.name+' — '+money(c.total)+' over '+c.years+' yr ('+
+    (c.byYear?'set year by year':structById(c.structId).name)+')',
     {type: before?'admin':'add', teams:[cd.teamId], players:[p.id]});
   closeModal(); save(); render(); toast('Contract saved','good');
 };
@@ -3400,8 +3639,11 @@ document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setA
    A bid is not play money. Whatever you win at becomes the man's salary,
    it comes off your cap, and it comes out of the budget you get for the year.
    ============================================================ */
+/* 'cap' means there is no separate pot at all — you bid against the room you
+   actually have, and winning simply spends it. */
 function faBudget(teamId){
   const f = S.settings.fa;
+  if(f.budgetMode==='cap') return fixInc(Math.max(0, capSpace(teamId, S.league.season)));
   return f.budgetMode==='pct'
     ? roundInc(capForYear(S.league.season) * (+f.budget||0)/100)
     : fixInc(+f.budget||0);
@@ -3421,6 +3663,10 @@ function faCommitted(teamId, exceptId){
     .map(a=> faYearOne(a.leading))));
 }
 function faLeft(teamId, exceptId){
+  // Bidding on the cap, what has already been spent is off the books — taking
+  // it off again would charge for the same signing twice.
+  if(S.settings.fa.budgetMode==='cap')
+    return fixInc(faBudget(teamId) - faCommitted(teamId, exceptId));
   return fixInc(faBudget(teamId) - faSpent(teamId) - faCommitted(teamId, exceptId));
 }
 function faOpenFor(playerId){ return (S.faAuctions||[]).find(a=> a.playerId===playerId && a.status==='open'); }
@@ -3575,12 +3821,20 @@ ACT.faSettleNow = (d)=>{ const a=byId(S.faAuctions,d.id); a.clock.remain=0; sett
    Everyone bids at once and nobody sees anything. When the round closes it
    all reveals together and the board settles in one pass.
    ============================================================ */
-function bbdBudget(teamId){
+function bbdMode(){
   const b = S.settings.bbd;
-  return b.separateBudget ? fixInc(+b.budget||0) : faBudget(teamId);
+  if(b.budgetMode) return b.budgetMode;
+  return b.separateBudget ? 'own' : 'fa';        // older leagues used a tickbox
+}
+function bbdBudget(teamId){
+  const m = bbdMode();
+  if(m==='cap') return fixInc(Math.max(0, capSpace(teamId, S.league.season)));
+  if(m==='own') return fixInc(+S.settings.bbd.budget||0);
+  return faBudget(teamId);
 }
 function bbdSpent(teamId){
-  if(!S.settings.bbd.separateBudget) return faSpent(teamId);
+  if(bbdMode()==='cap') return 0;                // the cap has already taken it
+  if(bbdMode()==='fa') return faSpent(teamId);
   return fixInc(sum((S.bbd.rounds||[]).map(r=>
     sum((r.awards||[]).filter(a=> a.teamId===teamId).map(a=> +a.yearOne||0)))));
 }
@@ -3736,7 +3990,7 @@ function bbdBidModal(){
       <div class="grid g3" style="margin-top:10px">
         <div class="tile"><div class="k">Costs you now</div><div class="v" style="font-size:19px">${money(y1)}</div>
           <div class="s">if you win him</div></div>
-        <div class="tile"><div class="k">Budget left</div><div class="v" style="font-size:19px">${money(left)}</div>
+        <div class="tile"><div class="k">${bbdMode()==='cap'?'Room left':'Budget left'}</div><div class="v" style="font-size:19px">${money(left)}</div>
           <div class="s">${money(exposure)} already out on other bids</div></div>
         <div class="tile"><div class="k">If everything landed</div>
           <div class="v ${exposure+y1>left?'bad':''}" style="font-size:19px">${money(left-exposure-y1,{plus:true})}</div>
@@ -3893,8 +4147,8 @@ function bbdSection(me){
   <div class="grid g4 keep2" style="margin-bottom:14px">
     <div class="tile"><div class="k">Round</div><div class="v">${b.round}</div>
       <div class="s">${b.status==='open'?'bidding is open':b.status==='revealed'?'settled — waiting on the next':'not started'}</div></div>
-    <div class="tile"><div class="k">Budget left</div><div class="v ${left<=0?'bad':'good'}">${money(left)}</div>
-      <div class="s">of ${money(bbdBudget(me))}${cfg.separateBudget?' for the draft':' shared with free agency'}</div></div>
+    <div class="tile"><div class="k">Left to bid</div><div class="v ${left<=0?'bad':'good'}">${money(left)}</div>
+      <div class="s">of ${money(bbdBudget(me))}${bbdMode()==='own'?' for the draft':bbdMode()==='cap'?' of cap room':' shared with free agency'}</div></div>
     <div class="tile"><div class="k">Out on bids</div><div class="v">${money(exposure)}</div>
       <div class="s">${mine.length} sealed${exposure>left?' · more than you can cover':''}</div></div>
     <div class="tile"><div class="k">${b.status==='open'?'Closes in':'Teams in last round'}</div>
@@ -3996,10 +4250,11 @@ function faSection(me){
       money(S.settings.waivers.salary)+' waiver claim from the free agent list.</span></div></div>':''}
 
     <div class="grid g4 keep2" style="margin-bottom:14px">
-      <div class="tile"><div class="k">Your budget</div><div class="v">${money(budget)}</div>
-        ${meter(budget-left, budget)}<div class="s">${money(faSpent(me))} spent · ${money(committed)} tied up in bids</div></div>
-      <div class="tile"><div class="k">Left to spend</div><div class="v ${left<=0?'bad':'good'}">${money(left)}</div>
-        <div class="s">on free agents this season</div></div>
+      <div class="tile"><div class="k">${S.settings.fa.budgetMode==='cap'?'Your cap room':'Your budget'}</div><div class="v">${money(budget)}</div>
+        ${meter(budget-left, budget||1)}<div class="s">${S.settings.fa.budgetMode==='cap'
+          ? money(committed)+' tied up in bids' : money(faSpent(me))+' spent · '+money(committed)+' tied up in bids'}</div></div>
+      <div class="tile"><div class="k">Left to bid</div><div class="v ${left<=0?'bad':'good'}">${money(left)}</div>
+        <div class="s">${S.settings.fa.budgetMode==='cap'?'after what is already out there':'on free agents this season'}</div></div>
       <div class="tile"><div class="k">Cap room</div><div class="v">${money(capSpace(me,S.league.season),{plus:true})}</div>
         <div class="s">a bid has to clear both</div></div>
       <div class="tile"><div class="k">Roster</div><div class="v">${teamPlayers(me).length}<span class="dim" style="font-size:15px">/${S.settings.roster.maxRoster}</span></div>
@@ -5898,10 +6153,21 @@ function autoMap(headers){
   MAP_FIELDS.forEach(([k,,re])=>{ const h = headers.find(x=> re.test(String(x).trim())); if(h) m[k]=h; });
   return m;
 }
+/* A spreadsheet exported from another league usually has a column per season.
+   If those are there, use them verbatim rather than guessing at a shape. */
+function yearColumns(headers){
+  const now = S.league.season;
+  return (headers||[]).map((h,i)=>{
+    const m = /(20\d\d)/.exec(String(h||''));
+    if(!m) return null;
+    const y = +m[1];
+    return (y >= now-1 && y <= now+15) ? {i, year:y, head:h} : null;
+  }).filter(Boolean).sort((a,b)=> a.year-b.year);
+}
 function impDefault(){
   return { text:'', headers:[], rows:[], map:{}, replace:true,
     salaryIs:'annual', yearsMode:'file', yearsFixed:1, structId:S.settings.contracts.defaultStruct,
-    priceMode:'file', flat:5, targetPct:80, ready:false };
+    priceMode:'file', flat:5, targetPct:80, ready:false, useYearCols:true };
 }
 /* ============================================================
    SLEEPER IMPORT
@@ -6123,7 +6389,20 @@ VIEWS.import = function(){
       </div></div>
     </div>`:''}
 
-    ${sub==='map'?`<div class="panel"><div class="ph"><h3>Match the columns</h3><div class="spacer"></div>
+    ${sub==='map'?`
+      ${(()=>{ const cols = yearColumns(im.headers);
+        return cols.length ? `<div class="panel" style="margin-bottom:14px;border-color:#5C4526">
+          <div class="ph"><h3>Your file has a column per season</h3></div><div class="pb">
+          <label class="check"><input type="checkbox" data-a="impYearCols" ${im.useYearCols?'checked':''}>
+            <span>Copy those figures across exactly</span></label>
+          <div class="row" style="margin-top:8px">
+            ${cols.map(c=>'<span class="chip">'+esc(c.head)+' <span class="dim">→ '+c.year+'</span></span>').join('')}
+          </div>
+          <div class="hint">${im.useYearCols
+            ? 'Each player gets the salary you have written for each of those years, and the deal ends at the last one with a figure in it. The salary and length columns below are ignored for anybody the year columns cover.'
+            : 'Switched off — everyone will be priced from the salary and length columns instead.'}</div>
+        </div></div>` : '';
+      })()}<div class="panel"><div class="ph"><h3>Match the columns</h3><div class="spacer"></div>
       <button class="btn pri" data-a="impCommit">Import ${im.rows.length} rows</button></div>
       <div class="pb">
         <div class="grid g4 keep2">
@@ -6261,6 +6540,7 @@ ACT.impCommit = ()=>{
     S.teams.push(t); teamByName[key]=t; return t;
   };
   let added=0;
+  let exact = 0;
   im.rows.forEach(r=>{
     const name = get(r,'name'); if(!name) return;
     const posRaw = (get(r,'pos')||'').toUpperCase().replace(/[^A-Z/]/g,'');
@@ -6273,16 +6553,36 @@ ACT.impCommit = ()=>{
     let annual = !isNaN(sal) ? (im.salaryIs==='total' ? sal/years : sal) : (im.priceMode==='flat' ? im.flat : 1);
     const p = {id:uid('p'), name, pos, nfl:(get(r,'nfl')||'').toUpperCase().slice(0,4), age:parseInt(get(r,'age'),10)||0,
       value:Math.max(1, Math.round(annual)), contract:null};
-    if(t) p.contract = makeContract(t.id, Math.max(1, roundInc(annual*years)), years, im.structId, S.league.season);
+    if(t){
+      const cols = im.useYearCols ? yearColumns(im.headers) : [];
+      const perYear = cols.map(cc=>{
+        const v = parseFloat(String(r[cc.i]==null?'':r[cc.i]).replace(/[^0-9.\-]/g,''));
+        return isNaN(v) ? 0 : v;
+      });
+      // Trailing blanks mean the deal simply ends there.
+      while(perYear.length && !perYear[perYear.length-1]) perYear.pop();
+      if(perYear.length){
+        const startY = cols[0].year;
+        p.contract = makeContract(t.id, Math.max(1, roundInc(sum(perYear))), perYear.length, im.structId, startY);
+        p.contract.salaries = perYear.map(v=> roundInc(v));
+        p.contract.total = fixInc(sum(p.contract.salaries));
+        p.contract.byYear = true;
+        p.value = Math.max(1, Math.round(p.contract.total / p.contract.years));
+        exact++;
+      } else {
+        p.contract = makeContract(t.id, Math.max(1, roundInc(annual*years)), years, im.structId, S.league.season);
+      }
+    }
     S.players.push(p); added++;
   });
   if(!S.league.myTeamId && S.teams[0]) { S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
   if(!S.picks.length) for(let y=S.league.season+1; y<=S.league.season+3; y++) for(let rd=1; rd<=4; rd++)
     S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
   if(im.priceMode==='target') fitToCap(im.targetPct);
-  logIt('Imported '+added+' players across '+S.teams.length+' teams', {type:'admin'});
+  logIt('Imported '+added+' players across '+S.teams.length+' teams'+
+    (exact?', '+exact+' with salaries taken year by year':''), {type:'admin'});
   ui.sub='price'; ui.tmp.imp = impDefault(); save(true); render();
-  toast('Imported '+added+' players','good');
+  toast('Imported '+added+' players'+(exact?' — '+exact+' contracts copied exactly':''),'good');
 };
 function fitToCap(target){
   const y = S.league.season;
@@ -6555,11 +6855,14 @@ VIEWS.settings = function(){
             <label class="check"><input type="checkbox" data-set="settings.fa.on" ${S.settings.fa.on?'checked':''}>
               <span>Run free agent auctions</span></label>
             <div class="grid g2">
-              <label class="f"><span>Budget is</span><select data-set="settings.fa.budgetMode">
+              <label class="f"><span>Teams bid against</span><select data-set="settings.fa.budgetMode">
+                <option value="cap"${S.settings.fa.budgetMode==='cap'?' selected':''}>whatever cap room they have</option>
                 <option value="amount"${S.settings.fa.budgetMode==='amount'?' selected':''}>a flat amount</option>
                 <option value="pct"${S.settings.fa.budgetMode==='pct'?' selected':''}>a share of the cap</option></select></label>
-              <label class="f"><span>${S.settings.fa.budgetMode==='pct'?'Percent of the cap':'Amount per team'}</span>
-                <input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.budget" value="${S.settings.fa.budget}"></label>
+              ${S.settings.fa.budgetMode==='cap'
+                ? '<div class="hint" style="align-self:end">No separate pot to keep track of — a bid is cap space, and winning spends it.</div>'
+                : `<label class="f"><span>${S.settings.fa.budgetMode==='pct'?'Percent of the cap':'Amount per team'}</span>
+                    <input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.budget" value="${S.settings.fa.budget}"></label>`}
               <label class="f"><span>Auction clock (hours)</span><input type="number" min="1" data-set="settings.fa.clockHours" value="${S.settings.fa.clockHours}"></label>
               <label class="f"><span>Longest deal from an auction</span><input type="number" min="1" max="${ct.maxYears}" data-set="settings.fa.maxYears" value="${S.settings.fa.maxYears}"></label>
               <label class="f"><span>Opening bid</span><input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.minBid" value="${S.settings.fa.minBid}"></label>
@@ -6585,10 +6888,14 @@ VIEWS.settings = function(){
               <select data-set="settings.bbd.tiebreak">
                 <option value="earliest"${S.settings.bbd.tiebreak==='earliest'?' selected':''}>Whoever sealed it first</option>
                 <option value="leastSpent"${S.settings.bbd.tiebreak==='leastSpent'?' selected':''}>Whoever has spent least so far</option></select></label>
-            <label class="check"><input type="checkbox" data-set="settings.bbd.separateBudget" ${S.settings.bbd.separateBudget?'checked':''}>
-              <span>Give the draft its own budget instead of sharing the free agent one</span></label>
-            ${S.settings.bbd.separateBudget?`<label class="f"><span>Draft budget per team</span>
+            <label class="f"><span>Teams bid against</span>
+              <select data-set="settings.bbd.budgetMode">
+                <option value="cap"${bbdMode()==='cap'?' selected':''}>whatever cap room they have</option>
+                <option value="fa"${bbdMode()==='fa'?' selected':''}>the free agent budget</option>
+                <option value="own"${bbdMode()==='own'?' selected':''}>a budget just for the draft</option></select></label>
+            ${bbdMode()==='own'?`<label class="f"><span>Draft budget per team</span>
               <input type="number" min="0" step="${c.cap.increment}" data-set="settings.bbd.budget" value="${S.settings.bbd.budget}"></label>`:''}
+            ${bbdMode()==='cap'?'<div class="hint">Nothing to keep track of — a bid is simply cap space.</div>':''}
             <div class="hint">Zero means no limit, for both the per-round cap and the number of rounds — run it until the
               pool is empty if you like. Everything else is the same money as a real contract, landing on the cap for as
               long as the deal runs.</div>
@@ -7439,6 +7746,8 @@ ACT.supaCreate = async ()=>{
     save(true);
     await Supa.loadMember();
     Supa.listen();
+    // Push once more so the copy on the server carries the league code too.
+    await Supa.push(false, 'league code recorded');
     render(); toast('League created and you are the commissioner','good');
   }catch(e){ toast(e.message,'bad'); }
 };
@@ -7448,15 +7757,21 @@ ACT.supaInvite = async (d)=>{
     const {data, error} = await Supa.client.rpc('make_invite', {
       p_league:Supa.cfg().leagueId, p_team:d.team || null });
     if(error) throw error;
-    const link = location.origin + location.pathname + '#code=' + encodeURIComponent(data);
+    // The link carries the project details too, so somebody opening it on a
+    // phone for the first time has nothing to type in. The key is public by
+    // design; it is the row level security that protects the league.
+    const c = Supa.cfg();
+    const bundle = btoa(JSON.stringify({c:data, u:c.url, k:c.anonKey, l:c.leagueId, n:S.league.name}));
+    const link = location.origin + location.pathname + '#join2=' + encodeURIComponent(bundle);
     ui.tmp.invite = {code:data, team:d.team, link};
     modal('Invitation for '+(d.team?teamName(d.team):'whoever you send it to'),
       '<p>One invitation, one person. It stops working once it is used.</p>'+
       '<label class="f"><span>Their link</span><input type="text" readonly value="'+esc(link)+'" onclick="this.select()"></label>'+
       '<label class="f"><span>Or the code on its own</span><input type="text" readonly value="'+esc(data)+'" onclick="this.select()"></label>'+
-      '<div class="hint">They open the link, sign in with their email, and they are '+
-      (d.team?'put straight into '+esc(teamName(d.team)):'added to the league')+
-      '. No password to pass around, and nothing for you to approve afterwards.</div>',
+      '<div class="hint">The link carries the project details as well as the code, so on a fresh phone there is '+
+      'nothing to type in beyond an email and a password. They land '+
+      (d.team?'straight in '+esc(teamName(d.team)):'in the league')+
+      '. Nothing for you to approve afterwards.</div>',
       '<button class="btn ghost" data-a="closeModal">Close</button>'+
       '<button class="btn pri" data-a="copyInvite">Copy the link</button>');
   }catch(e){ toast(e.message,'bad'); }
@@ -7464,9 +7779,36 @@ ACT.supaInvite = async (d)=>{
 ACT.copyInvite = ()=>{
   const t = ui.tmp.invite; if(!t) return;
   const text = 'Join the '+S.league.name+' front office.\n\n'+t.link+
-    '\n\nOpen it, put in your email, and click the link they send you. That is the whole thing.';
+    '\n\nOpen it on whatever you will actually use — phone is fine. Pick an email and a password, '+
+    'press the button, and you are in your team. Nothing else to set up.';
   if(navigator.clipboard) navigator.clipboard.writeText(text).then(()=>toast('Copied','good'));
 };
+/* The one screen an invited owner ever has to look at. */
+function joinModal(leagueName){
+  const code = ui.tmp.pendingCode || '';
+  if(Supa.user && Supa.member && Supa.member.team_id){
+    return modal('You are in',
+      '<p>Signed in as <b>'+esc(Supa.user.email)+'</b>, sitting in <b>'+esc(teamName(Supa.member.team_id))+'</b>.</p>',
+      '<button class="btn pri" data-a="closeModal">Get on with it</button>');
+  }
+  modal('Join '+(leagueName || 'the league'),
+    (Supa.user
+      ? '<p>Signed in as <b>'+esc(Supa.user.email)+'</b>. One press and you are in.</p>'
+      : '<p>Everything except who you are is already filled in. Pick a password and press the button — '+
+        'no email to wait for.</p>'+
+        '<div class="grid g2" style="margin:10px 0">'+
+        '<label class="f"><span>Email</span><input type="email" id="supaEmail2" placeholder="you@example.com"></label>'+
+        '<label class="f"><span>Password</span><input type="password" id="supaPw" placeholder="six or more"></label>'+
+        '</div>'+
+        '<div class="row"><button class="btn pri" data-a="supaPw" data-mk="1">Make my account</button>'+
+        '<button class="btn" data-a="supaPw" data-mk="0">I already have one</button></div>'+
+        '<div class="hint">If it says the account needs confirming, ask your commissioner to switch off '+
+        '<b>Confirm email</b> under Authentication → Sign In / Providers → Email.</div>')+
+    '<label class="f" style="margin-top:10px"><span>Invitation code</span>'+
+    '<input type="text" id="supaCode" value="'+esc(code)+'"></label>',
+    '<button class="btn ghost" data-a="closeModal">Later</button>'+
+    (Supa.user?'<button class="btn pri" data-a="supaJoin">Take my team</button>':''));
+}
 ACT.supaJoin = async ()=>{
   if(!Supa.client || !Supa.user) return toast('Sign in first','bad');
   const code = String(($('#supaCode')||{}).value||'').trim();
@@ -7478,9 +7820,17 @@ ACT.supaJoin = async ()=>{
     save(true);
     await Supa.loadMember();
     await Supa.pull(true);
+    // The pull replaces the whole league, so put the seat back afterwards.
+    if(Supa.member && Supa.member.team_id){
+      S.league.myTeamId = Supa.member.team_id;
+      Store.set(KEY, S);
+    }
     Supa.listen();
-    render();
-    toast(data.already ? 'You were already in — welcome back' : 'You are in','good');
+    ui.tmp.pendingCode = null;
+    closeModal(); render();
+    toast(Supa.member && Supa.member.team_id
+      ? 'You are in — welcome to '+teamName(Supa.member.team_id)
+      : 'You are in','good');
   }catch(e){ toast(e.message,'bad'); }
 };
 ACT.supaSetMember = async (d)=>{
@@ -7816,11 +8166,18 @@ const Sync = {
   }
 };
 /* The server holds the league; the seat at the table is local to each device. */
+/* Everything about *how this device connects* is local and must survive a pull.
+   Adopting somebody else's copy of those would wipe the league code off this
+   phone, and then there would be nothing to pull next time it opened. */
 function adoptRemote(state, rev){
-  const keepSync = deep(S.settings.sync||{}), keepMe = S.league.myTeamId, keepLive = deep(S.settings.live||{});
+  const keepSync = deep(S.settings.sync||{});
+  const keepSupa = deep(S.settings.supa||{});
+  const keepLive = deep(S.settings.live||{});
+  const keepMe   = S.league.myTeamId;
   S = migrate(state);
   S.rev = rev;
   S.settings.sync = keepSync;
+  if(keepSupa && (keepSupa.url || keepSupa.leagueId)) S.settings.supa = keepSupa;
   S.settings.live = Object.assign({}, S.settings.live, keepLive);
   if(keepMe && byId(S.teams, keepMe)) S.league.myTeamId = keepMe;
   Store.set(KEY, S);
@@ -8016,6 +8373,7 @@ const Supa = {
       this.set('ok','Signed in as '+(this.user? this.user.email : email));
       await this.afterSignIn();
       toast('Signed in','good');
+      if(ui.tmp.pendingCode && !this.member) setTimeout(()=> joinModal(), 200);
     }catch(e){
       this.set('bad', e.message);
       toast(e.message,'bad');
@@ -8296,6 +8654,20 @@ async function init(){
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
 function greetInvites(){
+  // The full invitation: project, key, league and code, all in one link.
+  const full = /[#&]join2=([^&]+)/.exec(location.hash||'');
+  if(full){
+    let inv = null;
+    try{ inv = JSON.parse(atob(decodeURIComponent(full[1]))); }catch(e){}
+    if(inv && inv.u && inv.k && inv.c){
+      S.settings.supa = Object.assign({}, S.settings.supa, {on:true, url:inv.u, anonKey:inv.k, leagueId:inv.l||''});
+      save(true);
+      ui.tmp.pendingCode = inv.c;
+      history.replaceState(null,'',location.pathname);
+      setTimeout(()=> Supa.init().then(()=> joinModal(inv.n)), 350);
+      return;
+    }
+  }
   const codeIn = /[#&]code=([^&]+)/.exec(location.hash||'');
   if(codeIn){
     ui.tmp.pendingCode = decodeURIComponent(codeIn[1]);
