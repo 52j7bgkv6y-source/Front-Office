@@ -1727,7 +1727,10 @@ VIEWS.dash = function(){
                   : (hits.length?'<div class="nm dim">'+esc(hits[0].name)+' · free agent</div>':''))+
                 '</a>';
             }).join('')+'</div>'
-          : '<div class="empty-state" style="padding:18px"><p class="tiny">No news loaded. Press refresh to pull the wire.</p></div>'}
+          : '<div class="empty-state" style="padding:18px"><p class="tiny">'+
+            (S.meta.newsTrouble
+              ? 'The wire did not answer. '+esc(String(S.meta.newsTrouble).split(' · ')[0])
+              : 'No news loaded. Press refresh to pull the wire.')+'</p></div>'}
         </div></div>
 
       <div class="panel"><div class="ph"><h3>Notices</h3><div class="spacer"></div>
@@ -6574,22 +6577,67 @@ function newsUrl(){
   if(b) return b + '/news';
   return 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50';
 }
+const ESPN_NEWS = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50';
+function newsShape(raw){
+  return (raw||[]).slice(0,80).map(a=>({
+    headline: a.headline || a.title || '',
+    description: a.description || (a.story ? String(a.story).slice(0,300) : ''),
+    published: a.published || a.lastModified || '',
+    link: (a.links && a.links.web && a.links.web.href) || a.link || ''
+  })).filter(x=> x.headline);
+}
+/* Try the league server first, since that is where a key would live, then ESPN
+   direct. A server that is unwell should not mean no news at all. */
 async function pullNews(loud){
-  try{
-    const r = await fetch(newsUrl(), {headers:{accept:'application/json'}});
-    if(!r.ok) throw new Error('news came back '+r.status);
-    const j = await r.json();
-    const raw = j.items || j.articles || [];
-    S.news = { at: Date.now(), items: raw.slice(0,80).map(a=>({
-      headline: a.headline || a.title || '',
-      description: a.description || (a.story ? String(a.story).slice(0,300) : ''),
-      published: a.published || a.lastModified || '',
-      link: (a.links && a.links.web && a.links.web.href) || a.link || ''
-    })).filter(x=> x.headline) };
-    save(); render();
-    if(loud) toast(S.news.items.length+' stories in','good');
-  }catch(e){
-    if(loud) toast('Could not reach the news feed — '+e.message,'bad');
+  const tries = [];
+  const viaServer = newsUrl();
+  if(viaServer) tries.push({url:viaServer, what:'your league server'});
+  if(viaServer !== ESPN_NEWS) tries.push({url:ESPN_NEWS, what:'ESPN directly'});
+
+  const trouble = [];
+  for(const t of tries){
+    try{
+      const r = await fetch(t.url, {headers:{accept:'application/json'}});
+      const text = await r.text();
+      let j = null;
+      try{ j = JSON.parse(text); }catch(e){}
+
+      if(!r.ok){
+        // The server says why in the body; use that rather than a bare number.
+        const why = (j && (j.error || j.note)) || (text||'').slice(0,120) || ('it answered '+r.status);
+        trouble.push(t.what+': '+why);
+        continue;
+      }
+      if(j && j.ok === false && !(j.items||[]).length){
+        trouble.push(t.what+': '+(j.note || 'nothing came back'));
+        continue;
+      }
+      const items = newsShape(j && (j.items || j.articles));
+      if(!items.length){ trouble.push(t.what+': no stories in the answer'); continue; }
+
+      S.news = {at:Date.now(), items, from:t.what};
+      S.meta.newsTrouble = null;
+      save(); render();
+      if(loud) toast(items.length+' stories in','good');
+      return;
+    }catch(e){
+      trouble.push(t.what+': '+(e.message||'could not be reached'));
+    }
+  }
+
+  S.meta.newsTrouble = trouble.join(' · ');
+  render();
+  if(loud){
+    modal('No news came through',
+      '<div class="hint bad">'+esc(trouble.join('<br>')||'nothing to report')+'</div>'+
+      '<div class="hint">The wire is public and unofficial, so it does go quiet sometimes. '+
+      'The rest of the app does not depend on it.</div>'+
+      (viaServer && viaServer!==ESPN_NEWS
+        ? '<div class="hint">It tried your league server first and then ESPN directly. If only the server failed, '+
+          'its <span class="num">/news</span> route may need redeploying — the newest league-server.js answers '+
+          'politely instead of erroring.</div>' : ''),
+      '<button class="btn ghost" data-a="closeModal">Close</button>'+
+      '<button class="btn pri" data-a="pullNews">Try again</button>');
   }
 }
 /* Headline matching, not a per-player feed. Surname plus first initial keeps
@@ -6941,6 +6989,83 @@ function yearColumns(headers){
     return (y >= now-1 && y <= now+15) ? {i, year:y, head:h} : null;
   }).filter(Boolean).sort((a,b)=> a.year-b.year);
 }
+/* ============================================================
+   MATCHING A PRICE LIST AGAINST THE LEAGUE YOU ALREADY HAVE
+   Spreadsheets spell names every which way, so matching is done on a
+   flattened form and then, failing that, on initial-plus-surname.
+   ============================================================ */
+const NAME_SUFFIX = /\b(jr|sr|ii|iii|iv|v)\b/g;
+function flatName(n){
+  return String(n||'').toLowerCase()
+    .replace(/[.'`’]/g,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(NAME_SUFFIX,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function initialKey(n){
+  const parts = flatName(n).split(' ').filter(Boolean);
+  if(parts.length < 2) return '';
+  return parts[0][0] + ' ' + parts[parts.length-1];
+}
+/* Build the lookup once per run rather than per row. */
+function nameIndex(){
+  const full = {}, init = {};
+  S.players.forEach(p=>{
+    const f = flatName(p.name);
+    if(f){ (full[f] = full[f] || []).push(p); }
+    const i = initialKey(p.name);
+    if(i){ (init[i] = init[i] || []).push(p); }
+  });
+  return {full, init};
+}
+function matchOne(idx, name, pos){
+  const f = flatName(name);
+  let hits = idx.full[f] || [];
+  let how = 'name';
+  if(!hits.length){ hits = idx.init[initialKey(name)] || []; how = 'initial'; }
+  if(!hits.length) return {p:null, how:'none', ambiguous:false};
+  if(hits.length > 1 && pos){
+    const byPos = hits.filter(x=> x.pos === String(pos).toUpperCase());
+    if(byPos.length === 1) return {p:byPos[0], how:how+' and position', ambiguous:false};
+  }
+  return {p:hits[0], how, ambiguous:hits.length>1};
+}
+/* Work out what the file is proposing for everyone, without changing anything. */
+function pricePlan(){
+  const m = ui.tmp.match; if(!m || !m.rows.length) return null;
+  // map holds column positions, not header names, so index straight in.
+  const H = m.headers, get = (r,k)=> m.map[k]!=null ? String(r[m.map[k]]||'').trim() : '';
+  const idx = nameIndex();
+  const cols = m.useYearCols ? yearColumns(H) : [];
+  const rows = [], missed = [], seen = {};
+
+  m.rows.forEach(r=>{
+    const nm = get(r,'name'); if(!nm) return;
+    const money = parseFloat(String(get(r,'price')).replace(/[^0-9.\-]/g,''));
+    const perYear = cols.map(c=>{
+      const v = parseFloat(String(r[c.i]==null?'':r[c.i]).replace(/[^0-9.\-]/g,''));
+      return isNaN(v) ? 0 : v;
+    });
+    while(perYear.length && !perYear[perYear.length-1]) perYear.pop();
+    if(isNaN(money) && !perYear.length) return;
+
+    const hit = matchOne(idx, nm, get(r,'pos'));
+    if(!hit.p){ missed.push(nm); return; }
+    if(seen[hit.p.id]) return;                 // first mention of a player wins
+    seen[hit.p.id] = 1;
+
+    const now = hit.p.contract ? capHit(hit.p, S.league.season) : null;
+    rows.push({
+      p:hit.p, file:nm, how:hit.how, ambiguous:hit.ambiguous,
+      want: isNaN(money) ? (perYear.length ? perYear[0] : 0) : money,
+      perYear, now
+    });
+  });
+
+  const untouched = S.players.filter(x=> x.contract && !seen[x.id]);
+  return {rows, missed, untouched};
+}
 function impDefault(){
   return { text:'', headers:[], rows:[], map:{}, replace:true,
     salaryIs:'annual', yearsMode:'file', yearsFixed:1, structId:S.settings.contracts.defaultStruct,
@@ -7093,6 +7218,7 @@ VIEWS.import = function(){
 
     <div class="tabs">
       <button class="${sub==='sleeper'?'on':''}" data-a="sub" data-s="sleeper">Sleeper</button>
+      <button class="${sub==='match'?'on':''}" data-a="sub" data-s="match">Match a price list</button>
       <button class="${sub==='load'?'on':''}" data-a="sub" data-s="load">1 · Load a file</button>
       <button class="${sub==='map'?'on':''}" data-a="sub" data-s="map" ${im.rows.length?'':'disabled'}>2 · Match the columns</button>
       <button class="${sub==='price'?'on':''}" data-a="sub" data-s="price">3 · Set the prices</button>
@@ -7145,6 +7271,104 @@ VIEWS.import = function(){
             reason for moving here. The player list is a five megabyte download the first time, then it is cached.</div>`}
       </div></div>
     </div>`;
+    })():''}
+
+    ${sub==='match'?(()=>{
+      const m = ui.tmp.match;
+      if(!m) return `<div class="panel"><div class="ph"><h3>Match a price list to your league</h3></div><div class="pb">
+        <p class="muted" style="margin-top:0">This does not import anybody. It takes a list of names and prices, finds
+          those players on the teams you already have, and puts the money right.</p>
+        <div class="flabel" style="margin-top:14px">What the file needs</div>
+        <p class="muted tiny">One row per player, a column of names, and a column of prices. A header row on top.
+          Anything else in the file is ignored. If you have a column per season — headed
+          <span class="num">${S.league.season}</span>, <span class="num">${S.league.season+1}</span> and so on —
+          those are used instead and the contract is set year by year.</p>
+        <div class="hr"></div>
+        <label class="f"><span>Choose a CSV file</span><input type="file" accept=".csv,.tsv,.txt" data-a="matchFile"></label>
+        <div class="or" style="margin:10px 0"><span>or paste it</span></div>
+        <label class="f"><span>Paste rows</span><textarea rows="7" id="matchPaste"
+          placeholder="Player,Price&#10;Josh Allen,44&#10;Bijan Robinson,38"></textarea></label>
+        <button class="btn pri" data-a="matchPaste">Read it</button>
+        <div class="hint">From Google Sheets: <b>File → Download → Comma-separated values</b>. A Google
+          <i>Doc</i> will not work — it has to be a Sheet, or a table copied out of the doc and pasted above.</div>
+      </div></div>`;
+
+      const plan = pricePlan();
+      const changed = plan ? plan.rows.filter(r=> r.now==null || Math.abs(r.want - r.now) > 0.004) : [];
+      return `
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Which column is which</h3><div class="spacer"></div>
+        <button class="btn ghost sm" data-a="matchReset">Start again</button></div>
+        <div class="pb grid g3">
+          ${[['name','Player name'],['pos','Position <span class="dim">(optional)</span>'],
+             ['price','Price']].map(([k,label])=>`<label class="f"><span>${label}</span>
+            <select data-a="matchMap" data-k="${k}">
+              <option value="">— none —</option>
+              ${m.headers.map((h,i)=>'<option value="'+i+'"'+(m.map[k]===i?' selected':'')+'>'+esc(h)+'</option>').join('')}
+            </select></label>`).join('')}
+        </div>
+        ${yearColumns(m.headers).length?`<div class="pb" style="padding-top:0">
+          <label class="check"><input type="checkbox" data-a="matchYearCols" ${m.useYearCols?'checked':''}>
+            <span>Use the season columns and set each year exactly</span></label>
+          <div class="row" style="margin-top:6px">${yearColumns(m.headers).map(c=>'<span class="chip">'+esc(c.head)+
+            ' <span class="dim">→ '+c.year+'</span></span>').join('')}</div>
+        </div>`:''}
+      </div>
+
+      <div class="grid g3" style="margin-bottom:14px">
+        <div class="tile"><div class="k">Found in your league</div><div class="v good">${plan?plan.rows.length:0}</div>
+          <div class="s">of ${m.rows.length} rows</div></div>
+        <div class="tile"><div class="k">Prices that change</div><div class="v">${changed.length}</div>
+          <div class="s">the rest already match</div></div>
+        <div class="tile"><div class="k">Not recognised</div><div class="v ${plan&&plan.missed.length?'bad':''}">${plan?plan.missed.length:0}</div>
+          <div class="s">nobody by that name</div></div>
+      </div>
+
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What would change</h3><div class="spacer"></div>
+        <label class="check"><input type="checkbox" data-a="matchOnlyDiff" ${m.onlyDiff?'checked':''}>
+          <span class="tiny">only show changes</span></label></div>
+        <div class="pb tight scrollx" style="max-height:46vh;overflow:auto"><table>
+        <thead><tr><th>In the file</th><th>Matched to</th><th class="right">Now</th><th class="right">Becomes</th><th></th></tr></thead>
+        <tbody>${(m.onlyDiff?changed:(plan?plan.rows:[])).slice(0,400).map(r=>`<tr>
+          <td class="tiny">${esc(r.file)}</td>
+          <td>${esc(r.p.name)} ${posTag(r.p.pos)}
+            ${r.how!=='name'?'<span class="pill warn" title="matched on '+esc(r.how)+'">loose</span>':''}
+            ${r.ambiguous?'<span class="pill live" title="more than one player fits that name">check</span>':''}
+            <div class="tiny dim">${r.p.contract?esc(teamName(r.p.contract.teamId)):'free agent'}</div></td>
+          <td class="right num dim">${r.now==null?'—':money(r.now)}</td>
+          <td class="right money">${money(r.want)}${r.perYear.length>1?'<div class="tiny dim">'+r.perYear.length+' years set</div>':''}</td>
+          <td class="right tiny ${r.now!=null && r.want>r.now?'bad':r.now!=null && r.want<r.now?'good':'dim'}">
+            ${r.now==null?'new':money(r.want-r.now,{plus:true})}</td>
+        </tr>`).join('') || '<tr><td colspan="5" class="dim center" style="padding:18px">Nothing to show.</td></tr>'}
+        </tbody></table></div>
+      </div>
+
+      ${plan && plan.missed.length?`<div class="panel" style="margin-bottom:14px"><div class="ph">
+        <h3>Not recognised</h3></div><div class="pb">
+        <p class="muted tiny" style="margin-top:0">These names are in the file but nobody in your league answers to them.
+          Usually a spelling difference, or somebody you do not have.</p>
+        <div class="row">${plan.missed.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')}
+          ${plan.missed.length>60?'<span class="tiny dim">and '+(plan.missed.length-60)+' more</span>':''}</div>
+      </div></div>`:''}
+
+      <div class="panel"><div class="ph"><h3>How to apply it</h3></div><div class="pb stack">
+        <label class="f"><span>What the price means</span>
+          <select data-a="matchMode">
+            <option value="aav"${m.mode==='aav'?' selected':''}>a yearly salary — keep everyone's current length</option>
+            <option value="total"${m.mode==='total'?' selected':''}>the whole contract — keep everyone's current length</option>
+            <option value="value"${m.mode==='value'?' selected':''}>what he is worth — do not touch any contracts</option>
+          </select></label>
+        <label class="check"><input type="checkbox" data-a="matchFA" ${m.doFA?'checked':''}>
+          <span>Set the asking price on free agents too</span></label>
+        <div class="hint">${m.mode==='value'
+          ? 'Nothing under contract is altered — this only moves the model\'s idea of what each man is worth.'
+          : 'Contracts keep their length and shape; only the money changes. '+
+            (m.useYearCols && yearColumns(m.headers).length ? 'Season columns override that and set each year exactly.' : '')}</div>
+        <div class="hint">A copy of the league is kept first, so this can be undone from Settings › Data › Saved copies.</div>
+        <div class="row">
+          <button class="btn pri" data-a="matchApply">Apply to ${changed.length} player${changed.length===1?'':'s'}</button>
+          <button class="btn ghost" data-a="matchReset">Cancel</button>
+        </div>
+      </div></div>`;
     })():''}
 
     ${sub==='load'?`<div class="grid g2">
@@ -7299,9 +7523,107 @@ ACT.impParse = ()=>{
 };
 document.addEventListener('change', e=>{
   const t = e.target.closest('[data-a="impMap"]'); if(t){ ui.tmp.imp.map[t.dataset.f] = t.value; render(); }
+  const mf = e.target.closest('[data-a="matchFile"]');
+  if(mf && mf.files && mf.files[0]){
+    const fr = new FileReader();
+    fr.onload = ()=>{
+      const m = matchDefault(String(fr.result||''));
+      if(!m) return toast('Could not read that file','bad');
+      ui.tmp.match = m; render();
+      if(m.map.name==null) toast('Point at the name column below','warn');
+    };
+    fr.readAsText(mf.files[0]);
+    return;
+  }
+  const mm = e.target.closest('[data-a="matchMap"]');
+  if(mm) return ACT.matchMap(mm.dataset, mm);
+  const md = e.target.closest('[data-a="matchMode"]');
+  if(md) return ACT.matchMode(md.dataset, md);
   const g = e.target.closest('[data-a="impFlag"]');
   if(g){ ui.tmp.imp[g.dataset.f] = g.type==='checkbox' ? g.checked : (g.type==='number' ? +g.value : g.value); render(); }
 });
+/* ---------- the price-matching handlers ---------- */
+function matchDefault(text){
+  let parsed;
+  try{ parsed = parseAny(text); }catch(e){ return null; }
+  const headers = (parsed.headers||[]).map(h=> String(h||'').trim());
+  const body = (parsed.rows||[]).filter(r=> r.some(c=> String(c||'').trim()));
+  if(!headers.length || !body.length) return null;
+  const find = (...words)=>{
+    for(let i=0;i<headers.length;i++){
+      const h = headers[i].toLowerCase();
+      if(words.some(w=> h.includes(w))) return i;
+    }
+    return null;
+  };
+  return {
+    headers, rows:body, onlyDiff:true, mode:'aav', doFA:true,
+    useYearCols: yearColumns(headers).length>0,
+    map:{ name:find('player','name'), pos:find('pos'),
+          price:find('price','salary','cap','value','aav','cost','$') }
+  };
+}
+ACT.matchPaste = ()=>{
+  const t = String(($('#matchPaste')||{}).value||'').trim();
+  if(!t) return toast('Paste the rows first','bad');
+  const m = matchDefault(t);
+  if(!m) return toast('Could not read that — is there a header row?','bad');
+  ui.tmp.match = m; render();
+  if(m.map.name==null) toast('Point at the name column below','warn');
+};
+ACT.matchMap = (d, el)=>{
+  ui.tmp.match.map[d.k] = el.value==='' ? null : +el.value;
+  render();
+};
+ACT.matchYearCols = ()=>{ ui.tmp.match.useYearCols = !ui.tmp.match.useYearCols; render(); };
+ACT.matchOnlyDiff = ()=>{ ui.tmp.match.onlyDiff = !ui.tmp.match.onlyDiff; render(); };
+ACT.matchMode = (d, el)=>{ ui.tmp.match.mode = el.value; render(); };
+ACT.matchFA = ()=>{ ui.tmp.match.doFA = !ui.tmp.match.doFA; render(); };
+ACT.matchReset = ()=>{ ui.tmp.match = null; render(); };
+ACT.matchApply = ()=>{
+  const m = ui.tmp.match, plan = pricePlan();
+  if(!plan) return toast('Nothing to apply','bad');
+  keepBackup(S, 'before matching a price list');
+
+  let touched = 0, skipped = 0;
+  plan.rows.forEach(r=>{
+    const p = r.p, want = fixInc(Math.max(0, r.want));
+    if(m.mode==='value'){
+      p.value = Math.max(1, Math.round(want));
+      touched++; return;
+    }
+    if(!p.contract){
+      p.value = Math.max(1, Math.round(want));
+      if(m.doFA) touched++; else skipped++;
+      return;
+    }
+    if(m.useYearCols && r.perYear.length){
+      // Season columns win: set each year exactly as written.
+      const cols = yearColumns(m.headers);
+      const startY = cols[0].year;
+      p.contract.startYear = startY;
+      p.contract.years = r.perYear.length;
+      p.contract.salaries = r.perYear.map(v=> roundInc(v));
+      p.contract.total = fixInc(sum(p.contract.salaries));
+      p.contract.byYear = true;
+    } else {
+      const yrs = Math.max(1, +p.contract.years||1);
+      const total = m.mode==='total' ? want : fixInc(want * yrs);
+      p.contract.total = total;
+      p.contract.salaries = salariesFor(total, yrs, p.contract.structId);
+      delete p.contract.byYear;
+    }
+    p.value = Math.max(1, Math.round(fixInc(p.contract.total / Math.max(1,p.contract.years))));
+    touched++;
+  });
+
+  clearCapCache();
+  logIt('Matched a price list — '+touched+' player'+(touched===1?'':'s')+' repriced'+
+    (plan.missed.length?', '+plan.missed.length+' not recognised':''), {type:'admin'});
+  ui.tmp.match = null;
+  save(); render();
+  toast(touched+' repriced'+(skipped?', '+skipped+' free agents left alone':''),'good');
+};
 ACT.impCommit = ()=>{
   const im = ui.tmp.imp, H = im.headers, get = (r,k)=> im.map[k] ? String(r[H.indexOf(im.map[k])]||'').trim() : '';
   if(!im.map.name) return toast('Point at the column with player names','bad');
