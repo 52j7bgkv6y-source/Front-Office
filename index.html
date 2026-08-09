@@ -493,6 +493,16 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 @media (max-width:860px){ .bub{max-width:60%} }
 
 /* news list */
+.pwwrap{position:relative;display:block}
+.pwwrap input{width:100%;padding-right:42px}
+.eyeball{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:30px;
+  display:flex;align-items:center;justify-content:center;background:none;border:0;cursor:pointer;
+  color:var(--mute);border-radius:6px}
+.eyeball:hover{color:var(--ink-0);background:var(--ink-3)}
+.eyeball svg{width:19px;height:19px;display:block}
+.codebox input{font:700 22px/1 var(--mono,monospace);letter-spacing:.42em;text-align:center;
+  text-transform:uppercase;padding:14px 10px}
+
 th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
 th.sortable:hover{color:var(--ink-0)}
 th.sortable.sorted{color:var(--brass)}
@@ -587,17 +597,66 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 /* ---------- storage adapter (artifact host → localStorage → memory) ---------- */
 const MEM = {};
 const Store = {
-  async get(k){
-    try{ if(window.storage && window.storage.get){ const r = await window.storage.get(k); if(r && r.value) return JSON.parse(r.value); return null; } }catch(e){}
-    try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : (MEM[k] ?? null); }catch(e){ return MEM[k] ?? null; }
+  /* Returns {ok, value}. "Nothing saved" and "could not read" are different
+     things, and confusing them is how a league gets replaced by the demo. */
+  async read(k){
+    try{
+      if(window.storage && window.storage.get){
+        const r = await window.storage.get(k);
+        return {ok:true, value: (r && r.value) ? JSON.parse(r.value) : null};
+      }
+    }catch(e){ return {ok:false, value:null, err:e.message}; }
+    try{
+      const v = localStorage.getItem(k);
+      if(v!=null) return {ok:true, value: JSON.parse(v)};
+      return {ok:true, value: (MEM[k] ?? null)};
+    }catch(e){ return {ok:false, value: (MEM[k] ?? null), err:e.message}; }
   },
+  async get(k){ const r = await this.read(k); return r.value; },
   async set(k,v){
     const s = JSON.stringify(v); MEM[k]=v;
     try{ if(window.storage && window.storage.set){ await window.storage.set(k,s); return true; } }catch(e){}
     try{ localStorage.setItem(k,s); return true; }catch(e){ return false; }
+  },
+  async del(k){
+    delete MEM[k];
+    try{ if(window.storage && window.storage.delete){ await window.storage.delete(k); return true; } }catch(e){}
+    try{ localStorage.removeItem(k); return true; }catch(e){ return false; }
   }
 };
 const KEY = 'frontoffice.league.v1';
+const BAKS = 5;
+const bakKey = (i)=> KEY + '.bak' + i;
+
+/* A rolling set of copies, kept every time the league is loaded and whenever
+   anything drastic is about to happen. Nothing here is ever overwritten by an
+   update, because updating only replaces the page, never the stored league. */
+async function keepBackup(state, why){
+  if(!state || !(state.teams||[]).length) return;
+  try{
+    for(let i=BAKS-1; i>=1; i--){
+      const prev = await Store.get(bakKey(i));
+      if(prev) await Store.set(bakKey(i+1), prev);
+    }
+    await Store.set(bakKey(1), {at:Date.now(), why:why||'', rev:state.rev||0, state});
+  }catch(e){}
+}
+async function listBackups(){
+  const out = [];
+  for(let i=1;i<=BAKS;i++){
+    try{
+      const b = await Store.get(bakKey(i));
+      if(b && b.state && (b.state.teams||[]).length){
+        out.push({slot:i, at:b.at, why:b.why||'',
+          league:(b.state.league||{}).name || '—',
+          teams:(b.state.teams||[]).length,
+          players:(b.state.players||[]).filter(p=>p.contract).length,
+          season:(b.state.league||{}).season});
+      }
+    }catch(e){}
+  }
+  return out;
+}
 
 /* ---------- tiny utils ---------- */
 const $  = (s,r)=> (r||document).querySelector(s);
@@ -774,13 +833,15 @@ function defaultState(){
       cap:{
         base:250, growthMode:'pct', growthValue:5, overrides:{}, increment:1, symbol:'$',
         deadCapPct:50, deadCapSpread:true, floorPct:0, projectYears:10,
-        rollover:{ on:false, mode:'pct', value:10, max:'' }
+        rollover:{ on:false, mode:'pct', value:10, max:'' },
+        backload:{ on:true, pct:100, credit:false, when:'now' }
       },
       contracts:{
         minYears:1, maxYears:10, structures:defaultStructures(), defaultStruct:'ev',
         minSalary:1, allowRestructure:true, tagPct:120, rookieScale:false,
         limits:{}, extendExtra:2, decideHours:0, defaultYears:1,
-        minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null }
+        minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null },
+        limitEnforce:{ signings:true, extensions:true, auctions:true, draft:true, rookies:true, trades:false }
       },
       players:{ on:true, firmness:60, showAsk:'range', termBonusPct:6, loyalty:8 },
       tag:{ on:true, counts:{QB:5, RB:10, WR:10, TE:5, K:5, DEF:5, DL:5, LB:5, DB:5},
@@ -886,6 +947,15 @@ function onIR(p){ return playerSlot(p)==='ir'; }
 function onPractice(p){ return playerSlot(p)==='practice'; }
 function offCap(p){ return onTaxi(p) || onPractice(p); }
 function isRetired(p){ return !!(p && p.retired); }
+/* Cut free, but the deal survives the season: whoever picks him up takes it
+   as it stands. Nobody does, and it dies at the turn of the year. */
+function isOrphan(p){ return !!(p && p.contract && !p.contract.teamId); }
+function orphanTag(p){
+  if(!isOrphan(p)) return '';
+  const y = S.league.season;
+  return '<span class="pill warn" title="cut free — his deal runs to the end of '+y+
+    ' and whoever signs him takes it as it is">on his deal</span>';
+}
 const SLOT_LABEL = {active:'Active', taxi:'Taxi', ir:'IR', practice:'Practice squad'};
 function slotTag(p){
   const sl = playerSlot(p);
@@ -948,6 +1018,31 @@ function applyRetention(playerId, payerTeamId, pctOrAmt, throughYear, mode){
   if(!Object.keys(amounts).length) return;
   c.retained = (c.retained||[]).filter(r=> r.teamId!==payerTeamId);
   c.retained.push({teamId:payerTeamId, pct:(mode==='amt'?null:+pctOrAmt), mode:mode||'pct', through:throughYear, amounts, at:Date.now()});
+}
+/* Pick the years yourself: {2027:4, 2029:2}. Anything not listed is untouched,
+   so you can eat a lump in one season and nothing in the next. */
+function applyRetentionYears(playerId, payerTeamId, byYear){
+  const p = byId(S.players, playerId), c = p && p.contract;
+  if(!c || !byYear) return;
+  const amounts = {};
+  for(let i=0;i<c.years;i++){
+    const y = c.startYear+i;
+    const want = +byYear[y]||0;
+    if(want>0) amounts[y] = fixInc(Math.min(+c.salaries[i]||0, want));
+  }
+  c.retained = (c.retained||[]).filter(r=> r.teamId!==payerTeamId);
+  if(!Object.keys(amounts).length) return;
+  c.retained.push({teamId:payerTeamId, pct:null, mode:'years', through:null, amounts, at:Date.now()});
+}
+/* Every remaining year of a deal, for the retention editor. */
+function contractYears(p){
+  const c = p && p.contract; if(!c) return [];
+  const out = [];
+  for(let i=0;i<c.years;i++){
+    const y = c.startYear+i;
+    if(y >= S.league.season) out.push({year:y, salary:+c.salaries[i]||0});
+  }
+  return out;
 }
 function capForYear(year){
   const c = S.settings.cap;
@@ -1108,6 +1203,7 @@ function notify(title, body, kind){
 let saveT=null;
 function save(now){
   S.meta.savedAt = Date.now();
+  if(S.meta.demo) delete S.meta.demo;      // the moment you change it, it is yours
   if(typeof clearCapCache==='function'){ clearCapCache(); dppCache = null; }
   if(typeof Supa==='object' && Supa.ready()) supaPush();
   else if(typeof syncPush==='function') syncPush();
@@ -1257,7 +1353,7 @@ function teamName(id){ const t=byId(S.teams,id); return t? t.name : '—'; }
 function playerName(id){ const p=byId(S.players,id); return p? p.name : '—'; }
 function pickLabel(pk){ return pk.year+' R'+pk.round + (pk.originTeamId!==pk.ownerTeamId ? ' ('+(byId(S.teams,pk.originTeamId)||{abbr:'?'}).abbr+')' : ''); }
 function badgeCounts(){
-  const t = S.trades.filter(x=> x.status==='review' || (x.status==='proposed' && x.b.teamId===S.league.myTeamId)).length;
+  const t = S.trades.filter(x=> x.status==='review' || tradeAwaits(x, S.league.myTeamId)).length;
   const b = S.auctions.filter(x=> x.status==='open' || x.status==='running').length;
   return {trades:t, block:b, dues:S.teams.filter(x=>!x.dues.paid).length};
 }
@@ -1292,6 +1388,8 @@ function renderShell(){
     (isQuietNow() ? '<span class="pauseflag hide-xs">⏸ Clocks paused · resume '+fmtHM(S.settings.trades.quiet.to)+'</span>' : '')+
     (Sync.ready() ? '<span class="pill hide-xs '+(Sync.status==='bad'?'live':Sync.status==='warn'?'warn':'ok')+'" title="'+esc(Sync.msg)+'">'+
       (Sync.status==='bad'?'Offline':'Synced')+'</span>' : '')+
+    ((S.settings.supa && S.settings.supa.on && S.settings.supa.url && !Supa.user)
+      ? '<button class="btn sm pri" data-a="openJoin">I have a code</button>' : '')+
     '<div class="capchip"><span class="k">'+y+' cap</span><span class="v">'+money(t?teamCapForYear(t.id,y):capForYear(y))+'</span></div>'+
     '<div class="capchip"><span class="k">Space</span><span class="v '+(space<0?'bad':'good')+'">'+money(space,{plus:true})+'</span></div>';
 
@@ -1395,6 +1493,50 @@ window.addEventListener('hashchange', ()=>{ const h=location.hash.slice(1); if(h
 /* small shared bits ------------------------------------------------------- */
 function posTag(p){ return '<span class="pos '+p+'">'+p+'</span>'; }
 
+/* A password box with an eye you can open and shut. */
+const EYE_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+
+  '<path d="M1.6 12S5.3 5 12 5s10.4 7 10.4 7-3.7 7-10.4 7S1.6 12 1.6 12z"/><circle cx="12" cy="12" r="3.2"/></svg>';
+const EYE_SHUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'+
+  '<path d="M9.9 5.2A9.6 9.6 0 0112 5c6.7 0 10.4 7 10.4 7a17 17 0 01-3.2 4.1M6.3 6.4A17 17 0 001.6 12s3.7 7 10.4 7a9.5 9.5 0 004.3-1"/>'+
+  '<path d="M9.8 9.9a3.2 3.2 0 004.5 4.5"/><path d="M2 2l20 20"/></svg>';
+function pwField(id, placeholder){
+  const shown = !!(ui.tmp.pwShown||{})[id];
+  return '<span class="pwwrap"><input type="'+(shown?'text':'password')+'" id="'+id+'" '+
+    'autocomplete="current-password" placeholder="'+esc(placeholder||'')+'">'+
+    '<button type="button" class="eyeball" data-a="pwPeek" data-id="'+id+'" '+
+    'title="'+(shown?'hide it':'show it')+'" aria-label="'+(shown?'hide the password':'show the password')+'">'+
+    (shown?EYE_OPEN:EYE_SHUT)+'</button></span>';
+}
+ACT.pwPeek = (d)=>{
+  ui.tmp.pwShown = ui.tmp.pwShown || {};
+  const was = $('#'+d.id), keep = was ? was.value : '';
+  ui.tmp.pwShown[d.id] = !ui.tmp.pwShown[d.id];
+  ui.tmp.pwKeep = ui.tmp.pwKeep || {};
+  ui.tmp.pwKeep[d.id] = keep;
+  redrawAuth();
+};
+/* Whatever screen is showing the password redraws itself. */
+function redrawAuth(){
+  if(ui.tmp.joinScreen) return joinModal2();
+  render();
+  ui.tmp.pwShown = ui.tmp.pwShown || {};
+  Object.keys(ui.tmp.pwKeep||{}).forEach(id=>{ const el=$('#'+id); if(el) el.value = ui.tmp.pwKeep[id]; });
+}
+
+/* What to call somebody: the name they chose, or their email until they do. */
+function memberName(m){
+  if(!m) return '';
+  const lbl = m.label && String(m.label).trim();
+  return lbl || m.email || '';
+}
+function myName(){
+  const lbl = Supa.member && Supa.member.label && String(Supa.member.label).trim();
+  if(lbl) return lbl;
+  const me = (Supa.roster||[]).find(x=> Supa.user && x.user_id===Supa.user.id);
+  const rl = me && me.label && String(me.label).trim();
+  return rl || (Supa.user && Supa.user.email) || '';
+}
+
 /* ============================================================
    SORTABLE COLUMNS
    Every table names its columns once; clicking a heading sorts by it and
@@ -1453,7 +1595,7 @@ VIEWS.dash = function(){
   const roster = teamPlayers(t.id);
   const open = S.auctions.filter(a=> a.status==='open'||a.status==='running');
   const pend = S.trades.filter(x=> x.status==='review');
-  const mine = S.trades.filter(x=> x.status==='proposed' && x.b.teamId===t.id);
+  const mine = S.trades.filter(x=> tradeAwaits(x, t.id));
   const unpaid = S.teams.filter(x=> !x.dues.paid);
   const space = capSpace(t.id,y);
 
@@ -1486,10 +1628,12 @@ VIEWS.dash = function(){
   <div class="section"><header><h2>Needs your attention</h2></header>
     <div class="panel"><div class="pb tight">
       ${mine.map(tr=>`<div style="padding:12px 14px;border-bottom:1px solid var(--rule-soft)" class="row">
-        <div style="flex:1;min-width:200px"><b>${esc(teamName(tr.a.teamId))}</b> <span class="dim">offered you a trade</span><div class="tiny muted">${tradeLine(tr)}</div></div>
+        <div style="flex:1;min-width:200px"><b>${esc(tr.type==='multi'?(tr.teams||[]).length+'-team deal':teamName(tr.a.teamId))}</b>
+          <span class="dim">${tr.type==='multi'?'needs your word':'offered you a trade'}</span><div class="tiny muted">${tradeLine(tr)}</div></div>
         <button class="btn sm" data-a="openTrade" data-id="${tr.id}">Review</button></div>`).join('')}
       ${pend.map(tr=>`<div style="padding:12px 14px;border-bottom:1px solid var(--rule-soft)" class="row">
-        <div style="flex:1;min-width:200px"><span class="pill warn">In review</span> <b>${esc(teamName(tr.a.teamId))}</b> ⇄ <b>${esc(teamName(tr.b.teamId))}</b><div class="tiny muted">${tradeLine(tr)}</div></div>
+        <div style="flex:1;min-width:200px"><span class="pill warn">In review</span>
+          <b>${esc(tradeTeams(tr).map(teamName).join(' ⇄ '))}</b><div class="tiny muted">${tradeLine(tr)}</div></div>
         <span class="clock calm" style="font-size:17px" data-clock="trade:${tr.id}">${hhmm(tr.clock.remain)}</span>
         <button class="btn sm" data-a="openTrade" data-id="${tr.id}">Counter</button></div>`).join('')}
     </div></div>
@@ -1523,6 +1667,37 @@ VIEWS.dash = function(){
             <td class="right"><button class="btn sm pri" data-a="decideTerms" data-id="${q.id}">Decide</button></td></tr>`;
         }).join('')}
         </tbody></table></div></div>`:''}
+
+      ${Supa.missing?`<div class="panel" style="border-color:#5C4526">
+        <div class="ph"><h3>Your league is not on the server</h3><div class="spacer"></div>
+          <button class="btn pri" data-a="supaRestore">Put it back up</button></div>
+        <div class="pb">
+          <p class="muted" style="margin:0">Everything is still here in this browser —
+            ${(S.teams||[]).length} teams and ${(S.players||[]).filter(p=>p.contract).length} contracts.
+            The shared copy is what went missing, most likely because the project was rebuilt.</p>
+          <div class="hint">Nobody else can see the league until it goes back up, and they will each need a fresh code
+            once it does.</div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" data-a="exportJSON">Download a copy first</button>
+            <button class="btn ghost" data-a="openBackups">Saved copies</button>
+          </div>
+        </div></div>`:''}
+
+      ${(S.meta.demo || (S.settings.supa.on && S.settings.supa.url && !Supa.user))?`<div class="panel" style="border-color:#5C4526">
+        <div class="ph"><h3>${S.meta.demo?'This is the practice league':'You are not signed in'}</h3><div class="spacer"></div>
+        <button class="btn pri" data-a="openJoin">I have a code</button></div>
+        <div class="pb">
+        <p class="muted" style="margin:0">${S.meta.demo
+          ? 'Nothing was found saved at this address, so a demo is on screen. <b>Nothing has been written over</b> — if your league is somewhere else, it is still there.'
+          : 'Sign in, or put in the code your commissioner sent you.'}</p>
+        <div class="hint">A browser keeps its storage per web address. If the app has moved to a new address, or you are
+          on a different device, load your league from a downloaded file under Settings › Data — or sign in, if you are
+          using accounts.</div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" data-a="go" data-r="import">Import a league</button>
+          <button class="btn ghost" data-a="openBackups">Look for saved copies</button>
+        </div>
+      </div></div>`:''}
 
       ${(()=>{
         const supaSet = S.settings.supa && S.settings.supa.on && S.settings.supa.url;
@@ -2260,7 +2435,7 @@ VIEWS.teams = function(){
         const c=p.contract, st=structById(c.structId);
         return `<tr>
           <td><a href="#" data-a="playerCard" data-id="${p.id}" style="font-weight:500;color:inherit">${esc(p.name)}</a>
-            ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${pendingTag(p)} ${tagTag(p)} <span class="dim tiny">${esc(p.nfl)}</span></td>
+            ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${pendingTag(p)} ${tagTag(p)} ${orphanTag(p)} <span class="dim tiny">${esc(p.nfl)}</span></td>
           <td>${posTag(p.pos)}</td><td class="hide-xs num">${p.age||'—'}</td>
           <td class="tiny">${sparkFor(c.structId,c.years)} <span class="muted">${esc(st.name.replace(' — ',' '))}</span></td>
           <td class="right num">${yearsLeft(c)}</td>
@@ -2736,9 +2911,13 @@ function faRows(list){
     name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', age:p=>+p.age||0,
     price:p=> wv ? (+S.settings.waivers.salary||0) : marketPrice(p,0)
   }, {key:'price',dir:-1}).map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
-    ${injuryTag(p)} ${waiverTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
-    <td class="right num">${p.age||'—'}</td><td class="right money">${wv?money(S.settings.waivers.salary):money(marketPrice(p,0))}</td>
-    <td class="right"><button class="btn sm" data-a="editContract" data-id="${p.id}">${wv?'Claim':'Sign'}</button></td></tr>`).join('')
+    ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
+    <td class="right num">${p.age||'—'}</td>
+    <td class="right money">${isOrphan(p) ? money(grossHit(p,S.league.season))
+      : wv ? money(S.settings.waivers.salary) : money(marketPrice(p,0))}
+      ${isOrphan(p)?'<div class="tiny dim">'+p.contract.years+'yr, fixed</div>':''}</td>
+    <td class="right"><button class="btn sm" data-a="editContract" data-id="${p.id}">${
+      isOrphan(p)?'Take him on' : wv?'Claim':'Sign'}</button></td></tr>`).join('')
     || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.</td></tr>';
 }
 ACT.sub = (d)=>{ ui.sub=d.s; render(); };
@@ -2761,7 +2940,7 @@ ACT.rmRetain = (d)=>{
   logIt(teamName(tid)+' stopped paying retained salary on '+p.name, {type:'cap', teams:[tid], players:[d.pid]});
   save(); render();
 };
-function freeAgents(){ return S.players.filter(p=> !p.contract && !isRetired(p)); }
+function freeAgents(){ return S.players.filter(p=> (!p.contract || isOrphan(p)) && !isRetired(p)); }
 ACT.setSlot = (d)=>{
   const p = byId(S.players, d.id), slot = d.s;
   if(!p || !p.contract) return;
@@ -2833,13 +3012,37 @@ ACT.release = (d)=>{
       '<div class="flabel">Commissioner — cut him free, no dead cap</div>'+
       '<div class="stack">'+
       '<div class="assetbox"><div class="row"><div style="flex:1"><b>Free agent</b>'+
-        '<div class="tiny muted">Contract torn up, straight back into the pool for anyone to sign.</div></div>'+
+        '<div class="tiny muted">Off your books with no dead money, but the deal is not torn up — it goes with him, '+
+        'and whoever picks him up takes it as it stands. Nobody does by '+(S.league.season+1)+' and it lapses.'+
+        (gross<=(+S.settings.waivers.salary||1)?' At '+money(gross)+' he would come back as a waiver player.':'')+
+        '</div></div>'+
         '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="free">Do it</button></div></div>'+
-      '<div class="assetbox"><div class="row"><div style="flex:1"><b>Retired</b>'+
-        '<div class="tiny muted">Out of the league. He will not show up in free agency, auctions or the draft until somebody un-retires him.</div></div>'+
-        '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="retired">Do it</button></div></div>'+
+      (function(){ const b = backloadOwed(p);
+        return '<div class="assetbox"><div class="row"><div style="flex:1"><b>Retired</b>'+
+        '<div class="tiny muted">Out of the league. He will not show in free agency, auctions or the draft until '+
+        'somebody un-retires him.'+
+        (S.settings.cap.backload.on && b.years
+          ? (b.owed>0
+              ? ' <b class="bad">'+money(b.owed)+' comes back to the cap</b> — the deal was shaped to charge light early, '+
+                'and '+b.years+' year'+(b.years===1?'':'s')+' of that has to be settled.'
+              : b.raw<0
+                ? ' You paid more early than an even deal would have. '+
+                  (S.settings.cap.backload.credit ? 'The league credits that back: '+money(-b.owed)+'.' : 'Nothing is owed either way.')
+                : ' The deal was level, so nothing is owed.')
+          : '')+
+        '</div></div>'+
+        '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="retired">Do it</button></div>'+
+        (S.settings.cap.backload.on && backloadOwed(p).years
+          ? '<div class="scrollx" style="margin-top:8px"><table><thead><tr><th>Year</th>'+
+            backloadOwed(p).rows.map(r=>'<th class="right">'+r.year+'</th>').join('')+'</tr></thead><tbody>'+
+            '<tr><td class="dim">Charged</td>'+backloadOwed(p).rows.map(r=>'<td class="right num">'+money(r.paid)+'</td>').join('')+'</tr>'+
+            '<tr><td class="dim">Level deal</td>'+backloadOwed(p).rows.map(r=>'<td class="right num dim">'+money(r.even)+'</td>').join('')+'</tr>'+
+            '<tr><td class="dim">Owed</td>'+backloadOwed(p).rows.map(r=>'<td class="right num '+(r.diff>0?'bad':'good')+'">'+money(r.diff,{plus:true})+'</td>').join('')+'</tr>'+
+            '</tbody></table></div>'
+          : '')+'</div>'; })()+
       '<div class="assetbox"><div class="row"><div style="flex:1"><b>Practice squad</b>'+
-        '<div class="tiny muted">Stays with '+esc(teamName(p.contract?p.contract.teamId:''))+' on his current deal, off the cap and off the active roster. Not claimable.</div></div>'+
+        '<div class="tiny muted">Same idea, but he stays with '+esc(teamName(p.contract?p.contract.teamId:''))+
+        ' — on his current deal, off the cap, off the active roster and not claimable. No dead money either.</div></div>'+
         '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="practice">Do it</button></div></div>'+
       '</div>' : ''),
     '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
@@ -2852,14 +3055,29 @@ ACT.freeCut = (d)=>{
   if(d.to==='practice'){
     if(slotRoom(from,'practice') <= 0){ closeModal(); return toast('No practice squad room — raise the limit in Settings','bad'); }
     p.slot = 'practice'; delete p.ir;
-    logIt(teamName(from)+' moved '+p.name+' to the practice squad — off the cap, no dead money',
+    logIt(teamName(from)+' moved '+p.name+' to the practice squad — off the cap, no dead money, deal intact',
       {type:'drop', teams:[from], players:[p.id]});
-  } else {
+  } else if(d.to==='retired'){
+    const owed = applyBackload(p, from);
     p.contract = null; p.slot = 'active'; delete p.ir;
-    p.retired = d.to==='retired';
-    logIt(teamName(from)+' cut '+p.name+' free — no dead cap'+(p.retired?', retired':', straight to free agency'),
+    p.retired = true;
+    logIt(teamName(from)+' cut '+p.name+' free and he retired'+
+      (owed?' — '+money(owed)+' owed back on the shape of the deal':' — nothing owed'),
       {type:'drop', teams:[from].filter(Boolean), players:[p.id]});
-    notify(p.retired?'Retired':'Cut free', p.name+' — '+(p.retired?'out of the league':'available to everyone')+'.');
+    notify('Retired', p.name+' is out of the league'+(owed?', and '+teamName(from)+' owes '+money(owed)+'.':'.'));
+  } else {
+    // The deal is not torn up. It comes off your books and follows him about.
+    p.slot = 'active'; delete p.ir; p.retired = false;
+    if(p.contract){
+      p.contract.teamId = null;
+      p.contract.freedBy = from;
+      p.contract.freedAt = Date.now();
+      p.contract.freedYear = S.league.season;
+    }
+    logIt(teamName(from)+' cut '+p.name+' free — no dead cap, and his '+
+      (p.contract?money(grossHit(p,S.league.season))+' deal goes with him to the end of '+S.league.season:'deal is done'),
+      {type:'drop', teams:[from].filter(Boolean), players:[p.id]});
+    notify('Cut free', p.name+' is available, and whoever takes him takes the contract as it stands.');
   }
   closeModal(); save(); render(); toast('Done','good');
 };
@@ -3025,6 +3243,31 @@ ACT.taxiSettleNow = (d)=>{ const c=byId(S.taxiClaims,d.id); c.clock.remain=0; se
 /* contract editor ---------------------------------------------------------- */
 ACT.editContract = (d)=>{
   const p = byId(S.players,d.id), c = p.contract;
+  if(isOrphan(p)){
+    const tid = currentTeamId(), y = S.league.season;
+    const hit = grossHit(p, y);
+    const cheap = hit <= (+S.settings.waivers.salary||1);
+    const left = [];
+    for(let i=0;i<c.years;i++){ const yy=c.startYear+i; if(yy>=y) left.push({y:yy, v:+c.salaries[i]||0}); }
+    return modal('Pick up '+p.name, `
+      <p>${esc(teamName(c.freedBy||''))} cut him free, so there is no dead money and nothing to negotiate —
+        you take the deal exactly as it stands.</p>
+      <div class="scrollx" style="margin:12px 0"><table><thead><tr><th>Year</th>
+        ${left.map(x=>'<th class="right">'+x.y+'</th>').join('')}</tr></thead>
+        <tbody><tr><td class="dim">Salary</td>${left.map(x=>'<td class="right money">'+money(x.v)+'</td>').join('')}</tr></tbody></table></div>
+      <div class="kv">
+        <dt>Costs you in ${y}</dt><dd class="money">${money(hit)}</dd>
+        <dt>Your room</dt><dd>${money(capSpace(tid,y),{plus:true})}</dd>
+        <dt>Room after</dt><dd class="${hit>capSpace(tid,y)?'bad':''}">${money(capSpace(tid,y)-hit,{plus:true})}</dd>
+      </div>
+      ${cheap?'<div class="hint">At '+money(hit)+' he comes in as a <b>waiver player</b> — the W tag, no extensions, '+
+        'and he clears at the turn of the year like any other.</div>'
+        :'<div class="hint">If nobody picks him up before '+(y+1)+' opens, the deal expires and he goes back into the pool at full price.</div>'}
+      ${hit>capSpace(tid,y)&&S.settings.trades.capMustBeLegal?'<div class="hint bad">That does not fit under your cap.</div>':''}`,
+      '<button class="btn ghost" data-a="closeModal">Leave him</button>'+
+      '<button class="btn pri" data-a="claimOrphan" data-id="'+p.id+'"'+
+        ((hit>capSpace(tid,y)&&S.settings.trades.capMustBeLegal)?' disabled':'')+'>Take him on</button>');
+  }
   if(!c && waiverDeadlinePassed() && S.settings.waivers.on){
     const tid = currentTeamId();
     return modal('Claim '+p.name,
@@ -3148,6 +3391,20 @@ function contractPreview(){
     ${Math.min.apply(null, sal) < (+S.settings.contracts.minSalary||0)
       ? '<div class="hint bad">At least one year falls under the league minimum of '+money(S.settings.contracts.minSalary)+'. Raise the total or shorten the deal.</div>' : ''}`;
 }
+ACT.claimOrphan = (d)=>{
+  const p = byId(S.players,d.id), tid = currentTeamId(), y = S.league.season;
+  if(!isOrphan(p)) return;
+  const hit = grossHit(p, y);
+  const cheap = hit <= (+S.settings.waivers.salary||1);
+  p.contract.teamId = tid;
+  delete p.contract.freedBy; delete p.contract.freedAt; delete p.contract.freedYear;
+  if(cheap) p.contract.waiver = true;               // a dollar deal is a waiver deal
+  p.lastTeam = null;
+  logIt(teamName(tid)+' picked up '+p.name+' on his existing deal — '+money(hit)+' for '+y+
+    (cheap?', as a waiver player':''), {type:'add', teams:[tid], players:[p.id]});
+  notify('Picked up', p.name+' goes to '+teamName(tid)+' on the deal he was cut with.','good');
+  closeModal(); save(); render(); toast('Signed','good');
+};
 ACT.claimWaiver = (d)=>{
   const p = byId(S.players,d.id);
   p.contract = makeWaiverContract(d.team);
@@ -3166,7 +3423,7 @@ ACT.liftWaiver = (d)=>{
 ACT.saveContract = ()=>{
   const cd = ui.tmp.cd, p = byId(S.players,cd.pid);
   if(cd.total<=0) return toast('Give the deal a value','bad');
-  const lp = limitProblem(cd.teamId, cd.years, p.id);
+  const lp = limitProblemFor('signings', cd.teamId, cd.years, p.id);
   if(lp) return toast(teamName(cd.teamId)+' already has '+lp.have+' deals of '+lp.length+' years or longer and is allowed '+lp.allow,'bad');
   const c = makeContract(cd.teamId, cd.total, cd.years, cd.structId, cd.startYear);
   if(cd.byYear){                       // exact figures beat any structure
@@ -3229,7 +3486,7 @@ function extModal(){
   const lq = ladderMode() ? ladderQuote(p) : null;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   const roomYears = Math.max(0, maxTotal - c.years);
-  const lp = limitProblem(c.teamId, c.years + e.years, p.id);
+  const lp = limitProblemFor('extensions', c.teamId, c.years + e.years, p.id);
   const firstYear = c.startYear + c.years;
   modal('Extend '+p.name, `
     <div class="grid g2" style="margin-bottom:12px">
@@ -3323,7 +3580,7 @@ ACT.extMeetAsk = ()=>{
 };
 ACT.extGo = ()=>{
   const e = ui.tmp.ext, p = byId(S.players,e.pid), c = p.contract;
-  if(limitProblem(c.teamId, c.years + e.years, p.id)) return toast('That breaks the length limits','bad');
+  if(limitProblemFor('extensions', c.teamId, c.years + e.years, p.id)) return toast('That breaks the length limits','bad');
   const w = willAccept(p, c.teamId, e.aav, e.years);
   if(!w.ok){
     logIt(p.name+' turned down '+money(e.aav)+' a year from '+teamName(c.teamId),
@@ -3501,6 +3758,86 @@ function assetChips(o, opts){
     .filter(Boolean);
   if(+o.cash) bits.push('<span class="chip money">'+money(+o.cash)+' cap</span>');
   return bits.join('') || '<span class="dim tiny">nothing yet</span>';
+}
+/* A trade with more than two teams in it is just a list of hand-overs. */
+function legTeams(tr){
+  const set = {};
+  (tr.legs||[]).forEach(l=>{ if(l.from) set[l.from]=1; if(l.to) set[l.to]=1; });
+  return Object.keys(set);
+}
+function legValue(l){ return assetValue({players:l.players, picks:l.picks, cash:l.cash}); }
+/* What each team gains and loses this year if the whole thing goes through. */
+function tradeCapDelta(tr, teamId, year){
+  let d = 0;
+  (tr.legs||[]).forEach(l=>{
+    (l.players||[]).forEach(pid=>{
+      const p = byId(S.players,pid); if(!p || !p.contract) return;
+      const gross = fixInc(Math.max(0, grossHit(p,year) - retainedOn(p,year)));
+      const keep  = fixInc(+(((l.retain||{})[pid]||{}).byYear||{})[year] || 0);
+      if(l.from===teamId) d -= (gross - keep);   // off your books, less whatever you keep paying
+      if(l.to===teamId)   d += (gross - keep);
+    });
+    const cash = +l.cash||0;
+    if(cash){ if(l.from===teamId) d += cash; if(l.to===teamId) d -= cash; }
+  });
+  return fixInc(d);
+}
+/* Trades are usually let through, but the roster still ought to say plainly
+   that it has gone past what the league would normally allow. */
+function limitAfterTrade(tr){
+  const notes = [];
+  (tr.legs||[]).forEach(l=>{
+    (l.players||[]).forEach(pid=>{
+      const p = byId(S.players,pid); if(!p || !p.contract) return;
+      const lp = limitProblem(l.to, p.contract.years, null);
+      if(lp) notes.push({team:l.to, player:p.name, length:lp.length, have:lp.have, allow:lp.allow});
+    });
+  });
+  return notes;
+}
+function multiLegal(tr){
+  const bad = [];
+  legTeams(tr).forEach(t=>{
+    projYears().forEach(y=>{
+      const after = capSpace(t, y) + tradeCapDelta(tr, t, y);
+      if(after < 0) bad.push({team:t, year:y, over:fixInc(-after)});
+    });
+  });
+  return bad;
+}
+function processMulti(tr){
+  if(tr.status!=='review') return;
+  if(limitBinds('trades')){
+    const lim = limitAfterTrade(tr);
+    if(lim.length){
+      tr.status='rejected';
+      tr.log.unshift({at:Date.now(), text:'Blocked — '+teamName(lim[0].team)+' would be past the contract length limits'});
+      notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad');
+      return;
+    }
+  }
+  tr.undo = tradeSnapshot(tr);
+  (tr.legs||[]).forEach(l=>{
+    (l.players||[]).forEach(pid=>{
+      const p = byId(S.players,pid); if(!p || !p.contract) return;
+      p.contract.teamId = l.to;
+      const r = (l.retain||{})[pid];
+      if(r && r.byYear && Object.keys(r.byYear).length) applyRetentionYears(pid, l.from, r.byYear);
+    });
+    (l.picks||[]).forEach(kid=>{ const k = byId(S.picks,kid); if(k) k.ownerTeamId = l.to; });
+    const cash = +l.cash||0;
+    if(cash){
+      const f = byId(S.teams,l.from), t = byId(S.teams,l.to);
+      if(f){ f.adj=f.adj||[]; f.adj.push({year:S.league.season, amount:cash, note:'Cap sent to '+teamName(l.to)}); }
+      if(t){ t.adj=t.adj||[]; t.adj.push({year:S.league.season, amount:-cash, note:'Cap from '+teamName(l.from)}); }
+    }
+  });
+  tr.status='approved'; tr.processedAt=Date.now();
+  tr.log.unshift({at:Date.now(), text:'Processed'});
+  logIt('Multi-team trade processed — '+legTeams(tr).map(teamName).join(', '),
+    {type:'trade', teams:legTeams(tr), players:[].concat.apply([], (tr.legs||[]).map(l=>l.players||[]))});
+  notify('Trade processed', legTeams(tr).length+' teams, '+
+    (tr.legs||[]).reduce((a,l)=>a+(l.players||[]).length+(l.picks||[]).length,0)+' assets.','good');
 }
 function moveAssets(fromTeam, toTeam, o){
   (o.players||[]).forEach(id=>{
@@ -4447,12 +4784,25 @@ ACT.pickToBlock = ()=>{
    STANDARD TRADES + THIRD-PARTY COUNTERS
    ============================================================ */
 function txMeta(tr){
+  if(tr.type==='multi') return {type:'trade', teams:tr.teams||[],
+    players:[].concat.apply([], (tr.legs||[]).map(l=>l.players||[]))};
   const cash = (+tr.a.cash||0) + (+tr.b.cash||0);
   const players = [].concat(tr.a.players||[], tr.b.players||[]);
   return { type: (cash && !players.length) ? 'cap' : 'trade',
            teams:[tr.a.teamId, tr.b.teamId], players, cash: cash>0 };
 }
+/* Trades come in two shapes now, so nothing may reach for .a or .b directly. */
+function tradeTeams(tr){
+  return tr.type==='multi' ? (tr.teams||[]) : [tr.a && tr.a.teamId, tr.b && tr.b.teamId].filter(Boolean);
+}
+function tradeAwaits(tr, teamId){
+  if(tr.status!=='proposed') return false;
+  return tr.type==='multi'
+    ? (tr.teams||[]).indexOf(teamId)>=0 && (tr.accepted||[]).indexOf(teamId)<0
+    : !!(tr.b && tr.b.teamId===teamId);
+}
 function tradeLine(tr){
+  if(tr.type==='multi') return (tr.teams||[]).map(teamName).join(' ⇄ ');
   const l = (o)=> ((o.players||[]).map(playerName).concat((o.picks||[]).map(id=>{const k=byId(S.picks,id);return k?pickLabel(k):'';})).filter(Boolean).join(', ') || 'nothing') + ((+o.cash)?' + '+money(o.cash):'');
   return esc(teamName(tr.a.teamId)+' sends '+l(tr.a)+' · '+teamName(tr.b.teamId)+' sends '+l(tr.b));
 }
@@ -4473,6 +4823,9 @@ function sideAssetsAfter(tr, side){
 function tradeSnapshot(tr){
   const ids = {}, kids = {};
   const ct = (tr.counters||[]).find(c=> c.status==='accepted' || c.status==='processed');
+  if(tr.type==='multi'){
+    (tr.legs||[]).forEach(l=>{ (l.players||[]).forEach(i=>ids[i]=1); (l.picks||[]).forEach(i=>kids[i]=1); });
+  } else
   [tr.a, tr.b].forEach(sd=>{ (sd.players||[]).forEach(i=>ids[i]=1); (sd.picks||[]).forEach(i=>kids[i]=1); });
   if(ct) [ct.wants, ct.gives].forEach(sd=>{ (sd.players||[]).forEach(i=>ids[i]=1); (sd.picks||[]).forEach(i=>kids[i]=1); });
   return {
@@ -4494,6 +4847,7 @@ function undoWindowLeft(tr){
   return Math.max(0, tr.processedAt + h*3600000 - Date.now());
 }
 function processTrade(tr){
+  if(tr.type==='multi') return processMulti(tr);
   if(tr.status!=='review') return;
   if(S.settings.trades.capMustBeLegal){
     const test = ()=>{
@@ -4531,6 +4885,7 @@ function processTrade(tr){
 
 ACT.newTrade = ()=>{
   const me = actingTeam(), other = (S.teams.find(t=>t.id!==me)||{}).id;
+  ui.tmp.multi = null;
   ui.tmp.tb = { a:{teamId:me, players:[], picks:[], cash:0, retain:{}}, b:{teamId:other, players:[], picks:[], cash:0, retain:{}} };
   modal('Propose a trade', tradeForm(),
     '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="sendTrade">Send it</button>');
@@ -4570,12 +4925,187 @@ function tbSide(side){
   </div>`;
 }
 function tradeForm(){
+  const m = ui.tmp.multi;
+  if(m) return multiForm();
   return `<div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
+  ${capBoard({legs:[
+    {from:ui.tmp.tb.a.teamId, to:ui.tmp.tb.b.teamId, players:ui.tmp.tb.a.players, picks:ui.tmp.tb.a.picks,
+     cash:ui.tmp.tb.a.cash, retain:retainToYears(ui.tmp.tb.a)},
+    {from:ui.tmp.tb.b.teamId, to:ui.tmp.tb.a.teamId, players:ui.tmp.tb.b.players, picks:ui.tmp.tb.b.picks,
+     cash:ui.tmp.tb.b.cash, retain:retainToYears(ui.tmp.tb.b)}]})}
+  <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>
   <div class="hint">Once the other side accepts, the trade sits in a ${S.settings.trades.reviewHours}-hour review window
   ${S.settings.trades.counters.on?'during which any other team can counter it':''}${S.settings.trades.quiet.on?'. The window stops counting overnight':''}.</div>`;
 }
+/* The old two-sided builder speaks in percentages; the cap board wants years. */
+function retainToYears(side){
+  const out = {};
+  Object.keys(side.retain||{}).forEach(pid=>{
+    const r = side.retain[pid]; if(!r || !+r.pct) return;
+    const p = byId(S.players,pid); if(!p || !p.contract) return;
+    const byYear = {};
+    contractYears(p).forEach(x=>{ if(x.year <= (+r.through||S.league.season)) byYear[x.year] = fixInc(x.salary*(+r.pct||0)/100); });
+    out[pid] = {byYear};
+  });
+  return out;
+}
+/* Everybody's room, before and after, for every year on the board. */
+function capBoard(tr){
+  const teams = legTeams(tr).filter(Boolean);
+  if(!teams.length) return '';
+  const yrs = projYears().slice(0, 5);
+  return `<div class="panel" style="margin-top:12px"><div class="ph"><h3>Where this leaves everyone</h3><div class="spacer"></div>
+    <span class="tiny dim">updates as you build it</span></div>
+    <div class="pb tight scrollx"><table>
+    <thead><tr><th>Team</th>${yrs.map(y=>'<th class="right" colspan="2">'+y+'</th>').join('')}</tr>
+      <tr><th></th>${yrs.map(()=>'<th class="right tiny dim">now</th><th class="right tiny dim">after</th>').join('')}</tr></thead>
+    <tbody>${teams.map(t=>`<tr><td>${esc(teamName(t))}</td>
+      ${yrs.map(y=>{
+        const now = capSpace(t,y), after = fixInc(now + tradeCapDelta(tr,t,y));
+        const moved = Math.abs(after-now) > 0.004;
+        return '<td class="right num dim">'+money(now,{plus:true})+'</td>'+
+               '<td class="right num '+(after<0?'bad':moved?'good':'dim')+'">'+money(after,{plus:true})+'</td>';
+      }).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    ${(()=>{ const bad = multiLegal(tr), lim = limitAfterTrade(tr);
+      return (bad.length
+        ? '<div class="pb"><div class="hint bad">'+bad.slice(0,4).map(b=>
+            esc(teamName(b.team))+' would be '+money(b.over)+' over in '+b.year).join(' · ')+
+            (bad.length>4?' and more':'')+'</div></div>'
+        : '<div class="pb"><div class="hint good">Everybody stays under the cap in every year shown.</div></div>')
+        + (lim.length
+          ? '<div class="pb" style="padding-top:0"><div class="hint '+(limitBinds('trades')?'bad':'')+'">'+
+            lim.slice(0,3).map(x=> esc(teamName(x.team))+' would hold '+x.have+' deals of '+x.length+
+              '+ years, against an allowance of '+x.allow+' — taking on '+esc(x.player)).join(' · ')+
+            (limitBinds('trades')
+              ? '. Trades are held to the limits, so this will not process.'
+              : '. Trades are allowed past the limits, so it goes through — but they cannot then extend or sign anybody until it comes back down.')+
+            '</div></div>'
+          : '');
+    })()}
+  </div>`;
+}
+/* ---------- the multi-team builder ---------- */
+function multiForm(){
+  const m = ui.tmp.multi;
+  return `
+    <div class="row" style="margin-bottom:10px">
+      <span class="eyebrow">Teams in it</span>
+      ${m.teams.map(t=>'<span class="chip">'+esc(teamName(t))+
+        (m.teams.length>2?'<button data-a="mtDropTeam" data-id="'+t+'">×</button>':'')+'</span>').join('')}
+      <select data-a="mtAddTeam" style="width:150px"><option value="">Add a team…</option>
+        ${S.teams.filter(t=> m.teams.indexOf(t.id)<0).map(t=>'<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')}</select>
+    </div>
+    <div class="stack">
+      ${m.legs.map((l,i)=> mtLeg(l,i)).join('') || '<div class="hint">Nothing moving yet — add a hand-over below.</div>'}
+    </div>
+    <button class="btn sm" data-a="mtAddLeg" style="margin-top:8px">Add a hand-over</button>
+    ${capBoard(m)}
+    <div class="hint">Each row is one team giving something to another. Three-way deals are just three rows.
+      Everyone in it has to accept before it goes to review.</div>`;
+}
+function mtLeg(l, i){
+  const m = ui.tmp.multi;
+  const pool = S.teams.filter(t=> m.teams.indexOf(t.id)>=0);
+  return `<div class="assetbox">
+    <div class="row" style="margin-bottom:8px">
+      <select data-a="mtLegField" data-i="${i}" data-f="from" style="flex:1">
+        ${pool.map(t=>'<option value="'+t.id+'"'+(t.id===l.from?' selected':'')+'>'+esc(t.name)+'</option>').join('')}</select>
+      <span class="dim">gives to</span>
+      <select data-a="mtLegField" data-i="${i}" data-f="to" style="flex:1">
+        ${pool.map(t=>'<option value="'+t.id+'"'+(t.id===l.to?' selected':'')+'>'+esc(t.name)+'</option>').join('')}</select>
+      <button class="btn sm ghost danger" data-a="mtRmLeg" data-i="${i}">×</button>
+    </div>
+    <div style="margin-bottom:8px">${assetChips({players:l.players, picks:l.picks, cash:l.cash}, {rm:'mtRm', side:String(i)})}</div>
+    <div class="row">
+      <select id="mtp_${i}" style="flex:1;min-width:130px"><option value="">Player…</option>
+        ${ownedPlayers(l.from).map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+money(capHit(p,S.league.season))+'</option>').join('')}</select>
+      <button class="btn sm" data-a="mtAdd" data-i="${i}" data-kind="players">Add</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <select id="mtk_${i}" style="flex:1;min-width:130px"><option value="">Pick…</option>
+        ${ownedPicks(l.from).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
+      <button class="btn sm" data-a="mtAdd" data-i="${i}" data-kind="picks">Add</button>
+    </div>
+    <label class="f" style="margin-top:8px"><span>Cap dollars sent</span>
+      <input type="number" step="${S.settings.cap.increment}" data-oninput="mtCash" data-i="${i}" value="${l.cash||0}"></label>
+    ${(l.players||[]).length?`<div style="margin-top:9px"><div class="flabel">Salary ${esc(teamName(l.from))} keeps paying</div>
+      ${l.players.map(pid=>{
+        const pl = byId(S.players,pid); if(!pl || !pl.contract) return '';
+        const keep = ((l.retain||{})[pid]||{}).byYear || {};
+        return `<div style="margin-bottom:8px"><div class="tiny" style="margin-bottom:3px">${esc(pl.name)}</div>
+          <div class="scrollx"><table><tbody><tr>
+          ${contractYears(pl).map(x=>`<td style="padding:1px 3px">
+            <div class="tiny dim" style="text-align:center">${x.year}</div>
+            <input type="number" min="0" max="${x.salary}" step="${S.settings.cap.increment}"
+              value="${+keep[x.year]||0}" style="width:70px;text-align:right"
+              data-oninput="mtKeep" data-i="${i}" data-pid="${pid}" data-y="${x.year}" data-k="mk_${i}_${pid}_${x.year}">
+            <div class="tiny dim" style="text-align:center">of ${money(x.salary)}</div></td>`).join('')}
+          </tr></tbody></table></div></div>`;
+      }).join('')}
+      <div class="hint">Any year, any amount — eat a lump in one season and nothing the next.</div></div>`:''}
+  </div>`;
+}
+ACT.tbGoMulti = ()=>{
+  const a = ui.tmp.tb.a, b = ui.tmp.tb.b;
+  ui.tmp.multi = { teams:[a.teamId, b.teamId].filter((v,i,s)=>v&&s.indexOf(v)===i),
+    legs:[ {from:a.teamId, to:b.teamId, players:a.players.slice(), picks:a.picks.slice(), cash:a.cash||0, retain:retainToYears(a)},
+           {from:b.teamId, to:a.teamId, players:b.players.slice(), picks:b.picks.slice(), cash:b.cash||0, retain:retainToYears(b)} ] };
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtAddTeam = (d,el)=>{
+  if(!el.value) return;
+  const m = ui.tmp.multi;
+  if(m.teams.indexOf(el.value)<0) m.teams.push(el.value);
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtDropTeam = (d)=>{
+  const m = ui.tmp.multi;
+  m.teams = m.teams.filter(t=> t!==d.id);
+  m.legs = m.legs.filter(l=> l.from!==d.id && l.to!==d.id);
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtAddLeg = ()=>{
+  const m = ui.tmp.multi;
+  m.legs.push({from:m.teams[0], to:m.teams[1]||m.teams[0], players:[], picks:[], cash:0, retain:{}});
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtRmLeg = (d)=>{ ui.tmp.multi.legs.splice(+d.i,1); $('#modalBox .mb').innerHTML = tradeForm(); };
+ACT.mtLegField = (d,el)=>{
+  const l = ui.tmp.multi.legs[+d.i];
+  l[d.f] = el.value;
+  if(d.f==='from'){ l.players=[]; l.picks=[]; l.retain={}; }
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtAdd = (d)=>{
+  const sel = $('#'+(d.kind==='players'?'mtp_':'mtk_')+d.i);
+  if(!sel || !sel.value) return;
+  const arr = ui.tmp.multi.legs[+d.i][d.kind];
+  if(arr.indexOf(sel.value)<0) arr.push(sel.value);
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtRm = (d)=>{
+  const l = ui.tmp.multi.legs[+d.side];
+  const arr = l[d.kind]; const i = arr.indexOf(d.id);
+  if(i>=0) arr.splice(i,1);
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+ACT.mtCash = (d,el)=>{ ui.tmp.multi.legs[+d.i].cash = +el.value||0; refreshCapBoard(); };
+ACT.mtKeep = (d,el)=>{
+  const l = ui.tmp.multi.legs[+d.i];
+  l.retain = l.retain || {};
+  const r = l.retain[d.pid] = l.retain[d.pid] || {byYear:{}};
+  const v = Math.max(0, +el.value||0);
+  if(v) r.byYear[d.y] = v; else delete r.byYear[d.y];
+  refreshCapBoard();
+};
+function refreshCapBoard(){ $('#modalBox .mb').innerHTML = tradeForm(); }
 ACT.tbTeam = (d,el)=>{ const s=ui.tmp.tb[d.side]; s.teamId=el.value; s.players=[]; s.picks=[]; $('#modalBox .mb').innerHTML=tradeForm(); };
-document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="tbTeam"]'); if(s) ACT.tbTeam(s.dataset, s); });
+document.addEventListener('change', e=>{
+  const s = e.target.closest('[data-a="tbTeam"]'); if(s) return ACT.tbTeam(s.dataset, s);
+  const a = e.target.closest('[data-a="mtAddTeam"]'); if(a) return ACT.mtAddTeam(a.dataset, a);
+  const l = e.target.closest('[data-a="mtLegField"]'); if(l) return ACT.mtLegField(l.dataset, l);
+});
 ACT.tbAdd = (d)=>{
   const sel = $('#'+(d.kind==='players'?'tbp_':'tbk_')+d.side); if(!sel||!sel.value) return;
   const arr = ui.tmp.tb[d.side][d.kind]; if(arr.indexOf(sel.value)<0) arr.push(sel.value);
@@ -4591,6 +5121,24 @@ ACT.tbRetain = (d,el)=>{
   if(d.f==='pct' || d.f==='through') $('#modalBox .mb').innerHTML = tradeForm();
 };
 ACT.sendTrade = ()=>{
+  const m = ui.tmp.multi;
+  if(m){
+    const legs = (m.legs||[]).filter(l=> l.from && l.to && l.from!==l.to &&
+      ((l.players||[]).length || (l.picks||[]).length || +l.cash));
+    if(!legs.length) return toast('Nothing is actually moving','bad');
+    const teams = legTeams({legs});
+    if(teams.length < 2) return toast('A trade needs at least two teams','bad');
+    const tr = {id:uid('tr'), type:'multi', legs:deep(legs), teams, status:'proposed',
+      accepted:[actingTeam()], createdAt:Date.now(), clock:null, counters:[],
+      log:[{at:Date.now(), text:'Proposed by '+teamName(actingTeam())+' — '+teams.length+' teams'}]};
+    S.trades.unshift(tr);
+    notify('Trade offer', teamName(actingTeam())+' put up a '+teams.length+'-team deal.');
+    logIt('Multi-team trade proposed — '+teams.map(teamName).join(', '),
+      {type:'trade', teams, players:[].concat.apply([], legs.map(l=>l.players||[]))});
+    ui.tmp.multi = null;
+    closeModal(); save(); go('trades'); toast('Offer sent','good');
+    return;
+  }
   const tb = ui.tmp.tb;
   if(tb.a.teamId===tb.b.teamId) return toast('Pick two different teams','bad');
   if(!tb.a.players.length && !tb.a.picks.length && !tb.a.cash && !tb.b.players.length && !tb.b.picks.length && !tb.b.cash)
@@ -4603,6 +5151,31 @@ ACT.sendTrade = ()=>{
   closeModal(); save(); go('trades'); toast('Offer sent','good');
 };
 ACT.openTrade = (d)=>{ go('trades'); ui.sub = 'review'; ui.tmp.focusTrade = d.id; render(); };
+function multiAccepted(tr){ return (tr.accepted||[]).length; }
+function multiWaiting(tr){ return (tr.teams||[]).filter(t=> (tr.accepted||[]).indexOf(t)<0); }
+ACT.multiAccept = (d)=>{
+  const tr = byId(S.trades,d.id), me = actingTeam();
+  if((tr.teams||[]).indexOf(me)<0) return toast('You are not in this one','bad');
+  tr.accepted = tr.accepted||[];
+  if(tr.accepted.indexOf(me)<0) tr.accepted.push(me);
+  tr.log.unshift({at:Date.now(), text:teamName(me)+' accepted'});
+  const left = multiWaiting(tr);
+  if(!left.length){
+    tr.status='review'; tr.clock = newClock(S.settings.trades.reviewHours);
+    tr.log.unshift({at:Date.now(), text:'Everybody in — review has started'});
+    notify('Trade in review', tr.teams.map(teamName).join(', ')+' all agreed.','warn');
+  } else {
+    notify('Trade accepted', teamName(me)+' agreed. Waiting on '+left.map(teamName).join(', ')+'.');
+  }
+  save(); render(); toast(left.length? 'Waiting on '+left.length+' more' : 'Off to review','good');
+};
+ACT.multiReject = (d)=>{
+  const tr = byId(S.trades,d.id);
+  tr.status='rejected';
+  tr.log.unshift({at:Date.now(), text:teamName(actingTeam())+' turned it down'});
+  logIt('Multi-team trade rejected', {type:'trade', teams:tr.teams});
+  save(); render();
+};
 ACT.acceptTrade = (d)=>{
   const tr = byId(S.trades,d.id);
   tr.status='review'; tr.acceptedAt=Date.now(); tr.clock=newClock(S.settings.trades.reviewHours);
@@ -4627,7 +5200,7 @@ ACT.undoTradeGo = (d)=>{
   (tr.counters||[]).forEach(c=>{ if(c.status==='processed') c.status='reversed'; });
   tr.log.unshift({at:Date.now(), text:'Reversed inside the '+S.settings.trades.undoHours+'-hour window'});
   logIt('Trade reversed — '+tradeLine(tr), txMeta(tr));
-  notify('Trade reversed', teamName(tr.a.teamId)+' and '+teamName(tr.b.teamId)+' put it back.','warn');
+  notify('Trade reversed', tradeTeams(tr).map(teamName).join(' and ')+' put it back.','warn');
   closeModal(); save(); render(); toast('Trade reversed','good');
 };
 
@@ -4727,7 +5300,42 @@ VIEWS.trades = function(){
   const hist = S.trades.filter(t=> ['approved','rejected','replaced','expired','reversed'].indexOf(t.status)>=0).slice(0,20);
   const c = S.settings.trades;
 
+  const multiCard = (tr)=>{
+    const mine = (tr.teams||[]).indexOf(me)>=0;
+    const said = (tr.accepted||[]).indexOf(me)>=0;
+    const left = multiWaiting(tr);
+    return `<div class="panel" ${ui.tmp.focusTrade===tr.id?'style="border-color:var(--brass)"':''}>
+      <div class="ph"><h3>${(tr.teams||[]).length}-team deal</h3><div class="spacer"></div>
+        <span class="pill ${tr.status==='review'?'warn':tr.status==='approved'?'ok':''}">${esc(tr.status)}</span>
+        ${tr.clock?'<span class="clock" data-clock="tr:'+tr.id+'">'+hhmm(tr.clock.remain)+'</span>':''}</div>
+      <div class="pb">
+        <div class="stack">
+        ${(tr.legs||[]).map(l=>`<div class="assetbox">
+          <div class="tiny muted" style="margin-bottom:5px"><b>${esc(teamName(l.from))}</b> → <b>${esc(teamName(l.to))}</b></div>
+          ${assetChips({players:l.players, picks:l.picks, cash:l.cash})}
+          ${Object.keys(l.retain||{}).length?'<div class="tiny good" style="margin-top:5px">'+
+            Object.keys(l.retain).map(pid=> esc(playerName(pid))+' — '+esc(teamName(l.from))+' keeps '+
+              money(sum(Object.keys(l.retain[pid].byYear||{}).map(y=> +l.retain[pid].byYear[y]||0)))).join(' · ')+'</div>':''}
+        </div>`).join('')}
+        </div>
+        ${capBoard(tr)}
+        ${tr.status==='proposed'?`<div class="row" style="margin-top:10px">
+          <span class="tiny muted">${(tr.accepted||[]).length} of ${(tr.teams||[]).length} in${
+            left.length?' · waiting on '+left.map(teamName).join(', '):''}</span>
+          <div class="spacer"></div>
+          ${mine && !said ? '<button class="btn pri" data-a="multiAccept" data-id="'+tr.id+'">Accept</button>'+
+            '<button class="btn ghost danger" data-a="multiReject" data-id="'+tr.id+'">Turn it down</button>' :
+            said ? '<span class="pill ok">you are in</span>' : ''}
+        </div>`:''}
+        ${tr.status==='review' && isCommish()?'<div class="row" style="margin-top:10px">'+
+          '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button>'+
+          '<button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button></div>':''}
+        ${undoWindowLeft(tr)?'<div class="row" style="margin-top:10px"><button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button></div>':''}
+        <div class="log" style="margin-top:10px">${(tr.log||[]).slice(0,4).map(x=>'<div><span class="dim">'+dstr(x.at)+'</span> '+esc(x.text)+'</div>').join('')}</div>
+      </div></div>`;
+  };
   const card = (tr)=>{
+    if(tr.type==='multi') return multiCard(tr);
     const canCounter = c.counters.on && tr.status==='review' && me!==tr.a.teamId && me!==tr.b.teamId;
     const sides = c.counters.side==='either' ? ['a','b'] : [c.counters.side];
     return `<div class="panel" ${ui.tmp.focusTrade===tr.id?'style="border-color:var(--brass)"':''}>
@@ -5358,6 +5966,60 @@ function settleTagOffer(o){
 }
 
 /* ============================================================
+   BACK-LOADING, SETTLED UP
+   A deal that pays little early and a lot late is a discount taken on credit.
+   If the player goes before the expensive years arrive, the discount has to be
+   handed back: for every year already paid, the gap between what was actually
+   charged and what an even deal would have charged.
+   ============================================================ */
+function backloadOwed(p, atYear){
+  const c = p && p.contract;
+  if(!c || !c.years) return {owed:0, rows:[], even:0, raw:0};
+  const cfg = S.settings.cap.backload || {};
+  const upTo = atYear==null ? S.league.season : atYear;
+  const even = c.total / c.years;
+  const rows = [];
+  let raw = 0;
+  for(let i=0;i<c.years;i++){
+    const y = c.startYear + i;
+    if(y > upTo) break;                       // not paid yet, so nothing owed on it
+    const paid = fixInc(+c.salaries[i]||0);
+    const diff = fixInc(even - paid);         // positive means it was charged light
+    rows.push({year:y, paid, even:fixInc(even), diff});
+    raw += diff;
+  }
+  raw = fixInc(raw);
+  let owed = fixInc(raw * (clamp(+cfg.pct||0, 0, 200)/100));
+  if(owed < 0 && !cfg.credit) owed = 0;       // front-loaded deals earn nothing back unless the league says so
+  return {owed, rows, even:fixInc(even), raw, years:rows.length};
+}
+/* Charge it, either all to this season or spread over what was left to run. */
+function applyBackload(p, teamId){
+  const cfg = S.settings.cap.backload || {};
+  if(!cfg.on) return 0;
+  const b = backloadOwed(p);
+  if(!b.owed) return 0;
+  const t = byId(S.teams, teamId); if(!t) return 0;
+  t.dead = t.dead || [];
+  const c = p.contract;
+  const leftYears = [];
+  for(let i=0;i<c.years;i++){ const y=c.startYear+i; if(y > S.league.season) leftYears.push(y); }
+  if(cfg.when==='spread' && leftYears.length){
+    // Round each year but make the last one carry the remainder, so the pieces
+    // add up to exactly what was owed rather than drifting a dollar.
+    let left = b.owed;
+    leftYears.forEach((y,i)=>{
+      const amt = (i===leftYears.length-1) ? fixInc(left) : fixInc(b.owed/leftYears.length);
+      left = fixInc(left - amt);
+      t.dead.push({name:p.name+' — back-loading settled', year:y, amt});
+    });
+  } else {
+    t.dead.push({name:p.name+' — back-loading settled', year:S.league.season, amt:b.owed});
+  }
+  return b.owed;
+}
+
+/* ============================================================
    CONTRACT LENGTH LIMITS
    Slots are spent from the top down: a long slot can be filled by a shorter
    deal, never the other way round. Anything longer than the league maximum —
@@ -5375,6 +6037,14 @@ function lengthCounts(teamId, excludePid, addYears){
   return out;
 }
 /* Returns null when it fits, or the bucket that overflows. */
+/* The same limit, applied or waived depending on how the deal came about. */
+function limitBinds(where){
+  const e = S.settings.contracts.limitEnforce || {};
+  return e[where] !== false;
+}
+function limitProblemFor(where, teamId, addYears, excludePid){
+  return limitBinds(where) ? limitProblem(teamId, addYears, excludePid) : null;
+}
 function limitProblem(teamId, addYears, excludePid){
   const lim = S.settings.contracts.limits || {};
   if(!Object.keys(lim).some(k=> lim[k]!=='' && lim[k]!=null)) return null;
@@ -5448,7 +6118,7 @@ function applyTerms(q, silent){
   const p = byId(S.players, q.playerId);
   if(!p){ q.status='void'; return; }
   const yrs = clamp(+q.years||1, 1, q.maxYears);
-  const lp = limitProblem(q.teamId, yrs, p.id);
+  const lp = limitProblemFor(q.source==='blind bid draft' ? 'draft' : 'auctions', q.teamId, yrs, p.id);
   const useY = lp ? 1 : yrs;                        // never settle into an illegal roster
   const keepWaiver = p.contract && p.contract.waiver;
   p.contract = makeContract(q.teamId, roundInc(q.aav*useY), useY, q.structId, S.league.season);
@@ -5475,7 +6145,7 @@ ACT.decideTerms = (d)=>{
 function termsModal(){
   const t = ui.tmp.dt, q = byId(S.pending, t.id), p = byId(S.players, q.playerId);
   const sal = salariesFor(roundInc(q.aav*t.years), t.years, t.structId);
-  const lp = limitProblem(q.teamId, t.years, p.id);
+  const lp = limitProblemFor('signings', q.teamId, t.years, p.id);
   const space = capSpace(q.teamId, S.league.season);
   modal('Settle the terms — '+p.name, `
     <div class="row" style="margin-bottom:12px">${posTag(p.pos)}
@@ -6341,6 +7011,7 @@ ACT.sleeperGo = async ()=>{
     const season = parseInt(league.season,10) || S.league.season;
 
     if(o.teams){
+      keepBackup(S, 'before the Sleeper import');
       const byUser = {};
       users.forEach(u=> byUser[u.user_id] = u);
       S.teams=[]; S.players=[]; S.picks=[]; S.auctions=[]; S.faAuctions=[]; S.trades=[];
@@ -6920,7 +7591,20 @@ VIEWS.settings = function(){
               value="${ct.limits&&ct.limits[L]!=null?ct.limits[L]:''}"></td>
             <td class="right num hide-xs dim">${counts[L]||0}</td></tr>`).join(''); })()}
           </tbody></table></div>
-          <div class="pb"><div class="hint">Blank means no limit. Slots are counted from the top down, so a long slot can always be filled with a shorter deal — but you can never carry more long deals than you have long slots.
+          <div class="pb">
+            <div class="flabel">Where the limits actually bite</div>
+            <div class="stack" style="margin-bottom:10px">
+              ${[['signings','Signing a free agent'],['extensions','Extending somebody'],
+                 ['auctions','Winning a free agent auction'],['draft','Winning a blind bid'],
+                 ['rookies','Signing a rookie pick'],['trades','Taking someone in a trade']].map(([k,label])=>
+                `<label class="check"><input type="checkbox" data-set="settings.contracts.limitEnforce.${k}"
+                  ${limitBinds(k)?'checked':''}><span>${esc(label)}</span></label>`).join('')}
+            </div>
+            <div class="hint">${limitBinds('trades')
+              ? 'Trades are held to the limits like everything else.'
+              : 'Trades may push you past the limits — you can take on a long deal you could not have signed. Everything else is held to them, so you cannot then extend or sign your way further over.'}</div>
+            <div class="hr"></div>
+            <div class="hint">Blank means no limit. Slots are counted from the top down, so a long slot can always be filled with a shorter deal — but you can never carry more long deals than you have long slots.
             ${(+ct.extendExtra)?'An extension may run '+ct.extendExtra+' year'+(ct.extendExtra>1?'s':'')+' past the '+ct.maxYears+'-year maximum, and still counts in the '+ct.maxYears+'-year row.':''}</div></div>
         </div>
         <div class="stack">
@@ -7227,12 +7911,12 @@ VIEWS.settings = function(){
               <span style="flex:1">${esc(TIEBREAKS[k].label)}</span>
               <button class="btn sm ghost" data-a="tbMove" data-k="${k}" data-d="-1">↑</button>
               <button class="btn sm ghost" data-a="tbMove" data-k="${k}" data-d="1">↓</button>
-              <button class="btn sm ghost danger" data-a="tbRm" data-k="${k}">×</button>
+              <button class="btn sm ghost danger" data-a="tbChainRm" data-k="${k}">×</button>
             </div>`).join('')}
             ${Object.keys(TIEBREAKS).filter(k=> tiebreakChain().indexOf(k)<0).length?`<div class="row">
               <span class="tiny dim">add:</span>
               ${Object.keys(TIEBREAKS).filter(k=> tiebreakChain().indexOf(k)<0).map(k=>
-                '<button class="btn sm" data-a="tbAdd" data-k="'+k+'">'+esc(TIEBREAKS[k].label)+'</button>').join('')}
+                '<button class="btn sm" data-a="tbChainAdd" data-k="'+k+'">'+esc(TIEBREAKS[k].label)+'</button>').join('')}
             </div>`:''}
             <button class="btn sm ghost" data-a="tbReset">Back to the standard order</button>
           </div>
@@ -7397,6 +8081,23 @@ VIEWS.settings = function(){
             : 'Tick the box above to switch any of this on.'}</div>
         </div>
         <div class="hr"></div>
+        <div class="flabel">Settling up a back-loaded deal</div>
+        <label class="check"><input type="checkbox" data-set="settings.cap.backload.on" ${c.cap.backload.on?'checked':''}>
+          <span>Claw back the discount if a player goes before the deal is done</span></label>
+        <div class="grid g2" style="${c.cap.backload.on?'':'opacity:.5'}">
+          <label class="f"><span>How much of the gap is owed (%)</span>
+            <input type="number" min="0" max="200" data-set="settings.cap.backload.pct" value="${c.cap.backload.pct}"></label>
+          <label class="f"><span>Charged</span>
+            <select data-set="settings.cap.backload.when">
+              <option value="now"${c.cap.backload.when==='now'?' selected':''}>all to ${S.league.season}</option>
+              <option value="spread"${c.cap.backload.when==='spread'?' selected':''}>spread over the years he would have played</option></select></label>
+          <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.backload.credit" ${c.cap.backload.credit?'checked':''}>
+            <span>A front-loaded deal earns money back the same way</span></label>
+        </div>
+        <div class="hint">Paying a man ${money(5)} then ${money(15)} rather than ${money(10)} twice is a discount taken on
+          credit. If he retires after the cheap year, the league takes the difference back. At
+          ${pct(c.cap.backload.pct)} of the gap${c.cap.backload.credit?', and it works both ways':', and front-loading earns nothing back'}.</div>
+        <div class="hr"></div>
         <label class="f"><span>Dead cap when you cut a player (%)</span><input type="number" min="0" max="100" data-set="settings.cap.deadCapPct" value="${c.cap.deadCapPct}"></label>
         <label class="check"><input type="checkbox" data-set="settings.cap.deadCapSpread" ${c.cap.deadCapSpread?'checked':''}>
           <span>Spread the charge over the years left on the deal</span></label>
@@ -7460,7 +8161,12 @@ VIEWS.settings = function(){
 
           ${Supa.client && !Supa.user?`
             <div class="hr"></div>
-            <div class="flabel">Sign in</div>
+            <div class="assetbox" style="border-color:var(--brass);margin-bottom:12px">
+              <div class="row"><div style="flex:1"><b>Been sent a code?</b>
+                <div class="tiny muted">Six characters, and you pick your own username and password.</div></div>
+                <button class="btn pri" data-a="openJoin">Put it in</button></div>
+            </div>
+            <div class="flabel">Or sign in</div>
             <div class="tabs" style="margin-bottom:10px">
               <button class="${(ui.tmp.supaMode||'pw')==='pw'?'on':''}" data-a="supaMode" data-m="pw">With a password</button>
               <button class="${ui.tmp.supaMode==='link'?'on':''}" data-a="supaMode" data-m="link">By email link</button>
@@ -7468,8 +8174,9 @@ VIEWS.settings = function(){
 
             ${(ui.tmp.supaMode||'pw')==='pw'?`
               <div class="grid g2">
-                <label class="f"><span>Email</span><input type="email" id="supaEmail2" placeholder="you@example.com"></label>
-                <label class="f"><span>Password</span><input type="password" id="supaPw" placeholder="at least six characters"></label>
+                <label class="f"><span>Email</span>
+                  <input type="email" id="supaEmail2" placeholder="you@example.com" autocomplete="email" inputmode="email"></label>
+                <label class="f"><span>Password</span>${pwField('supaPw','at least six characters')}</label>
               </div>
               <div class="row">
                 <button class="btn pri" data-a="supaPw" data-mk="1">Make my account</button>
@@ -7503,12 +8210,33 @@ VIEWS.settings = function(){
             <div class="hr"></div>
             <div class="row">
               <div style="flex:1"><div class="flabel">Signed in</div>
-                <b>${esc(Supa.user.email)}</b>
+                <b>${esc(myName() || Supa.user.email)}</b>
+                ${myName() && myName()!==Supa.user.email?'<span class="dim tiny"> · '+esc(Supa.user.email)+'</span>':''}
                 ${Supa.member?' <span class="pill '+(Supa.boss()?'warn':'')+'">'+(Supa.boss()?'commissioner':'owner')+'</span>':''}
                 ${Supa.member&&Supa.member.team_id?'<div class="tiny muted">'+esc(teamName(Supa.member.team_id))+'</div>':''}
               </div>
               <button class="btn ghost sm" data-a="supaSignOut">Sign out</button>
             </div>
+
+            ${Supa.missing?`
+              <div class="assetbox" style="border-color:#5C4526;margin-bottom:12px">
+                <div class="flabel">Nothing is there</div>
+                <p class="muted" style="margin:4px 0">The server has no league under
+                  <span class="num">${esc(S.settings.supa.leagueId)}</span>. Your copy here is untouched —
+                  ${(S.teams||[]).length} teams, ${(S.players||[]).filter(p=>p.contract).length} contracts.</p>
+                <div class="row">
+                  <button class="btn pri" data-a="supaRestore">Put my league back up</button>
+                  <button class="btn ghost" data-a="supaClearLeague">Point at a different league</button>
+                </div>
+              </div>`:''}
+
+            ${Supa.member?`
+              <label class="f"><span>What the league calls you <span class="dim">(optional)</span></span>
+                <div class="row"><input type="text" id="dispName" placeholder="${esc(Supa.user.email)}"
+                  value="${esc(Supa.member.label||'')}" style="flex:1">
+                  <button class="btn sm" data-a="setDisplayName">Set</button></div></label>
+              <div class="hint">Leave it empty and your email is used. Change it whenever you like.</div>
+            `:''}
 
             ${!S.settings.supa.leagueId?`
               <div class="hr"></div>
@@ -7561,7 +8289,39 @@ VIEWS.settings = function(){
               </tbody></table></div>
               ${Supa.boss()?`
                 <div class="hr"></div>
-                <div class="flabel">Invite the whole league at once</div>
+                <div class="flabel">Give somebody a code</div>
+                <div class="grid g2">
+                  <label class="f"><span>Who is it for</span>
+                    <input type="text" id="invWho" placeholder="their name, so you remember"></label>
+                  <label class="f"><span>Email <span class="dim">(optional)</span></span>
+                    <input type="email" id="invTo" placeholder="to open your mail app already addressed"></label>
+                </div>
+                <div class="row">
+                  ${S.teams.map(t=> Supa.roster.some(m=> m.team_id===t.id) ? ''
+                    : '<button class="btn sm" data-a="invitePerson" data-team="'+t.id+'">'+esc(t.name)+'</button>').join('')
+                    || '<span class="tiny dim">every team has somebody in it</span>'}
+                  <button class="btn sm ghost" data-a="invitePerson">No particular team</button>
+                </div>
+                <div class="hint">Fill in the two boxes, then press the team. You get a six-character code and a message
+                  ready to send — by email, by the share sheet on a phone, or just copied.</div>
+
+                ${(Supa.invites||[]).length?`<div class="hr"></div>
+                  <div class="flabel">Codes out there</div>
+                  <div class="scrollx"><table><thead><tr><th>Code</th><th>Team</th><th>Who</th><th></th></tr></thead><tbody>
+                  ${(Supa.invites||[]).map(x=>`<tr>
+                    <td class="num"><b>${esc(x.code)}</b></td>
+                    <td class="tiny">${x.team_id?esc(teamName(x.team_id)):'<span class="dim">any</span>'}</td>
+                    <td class="tiny muted">${esc(x.label||x.sent_to||'—')}</td>
+                    <td class="right nowrap">${x.used
+                      ? '<span class="pill ok">used</span>'
+                      : '<button class="btn sm ghost" data-a="showLastCode" data-code="'+esc(x.code)+'">Send again</button>'+
+                        '<button class="btn sm ghost danger" data-a="dropInvite" data-code="'+esc(x.code)+'">×</button>'}</td>
+                  </tr>`).join('')}
+                  </tbody></table></div>`:''}
+                <button class="btn ghost sm" data-a="refreshInvites" style="margin-top:8px">Refresh the list</button>
+
+                <div class="hr"></div>
+                <div class="flabel">Or one link for the whole league at once</div>
                 <div class="grid g2">
                   <label class="f"><span>League password</span>
                     <div class="row"><input type="text" id="joinPw" value="${esc(ui.tmp.joinPw!=null?ui.tmp.joinPw:'')}"
@@ -7668,6 +8428,7 @@ VIEWS.settings = function(){
         <button class="btn pri" data-a="exportJSON">Download the league file</button>
         <label class="f"><span>Load a league file</span><input type="file" accept=".json" id="jsonFile"></label>
         <div class="hr"></div>
+        <button class="btn" data-a="openBackups">Saved copies</button>
         <button class="btn" data-a="rollSeason">Start the ${S.league.season+1} season</button>
         <button class="btn" data-a="demoLeague">Rebuild the demo league</button>
         <button class="btn danger" data-a="wipe">Erase everything</button>
@@ -7810,11 +8571,11 @@ ACT.supaClearGo = ()=>{
   save(true); closeModal(); render(); toast('Back to create or join');
 };
 ACT.supaPw = (d)=>{
-  const email = String(($('#supaEmail2')||{}).value||'').trim();
+  const who = String(($('#supaEmail2')||{}).value||'').trim().toLowerCase();
   const pw = String(($('#supaPw')||{}).value||'');
-  if(!/.+@.+\..+/.test(email)) return toast('Put in a real email address','bad');
+  if(!/.+@.+\..+/.test(who)) return toast('Put in your email address','bad');
   if(pw.length < 6) return toast('Six characters or more','bad');
-  Supa.signInPassword(email, pw, d.mk==='1');
+  Supa.signInPassword(who, pw, d.mk==='1');
 };
 ACT.supaSignOut = ()=> Supa.signOut();
 ACT.supaCheck = async (d, el, failedWith)=>{
@@ -7855,6 +8616,44 @@ ACT.supaConnect = async ()=>{
 };
 ACT.supaPull = ()=> Supa.pull(true);
 ACT.supaPush = ()=> Supa.push(true, 'manual save');
+/* The project was rebuilt and the league is gone from it, but the browser still
+   has the whole thing. One press puts it back. */
+ACT.supaRestore = ()=>{
+  const id = Supa.cfg().leagueId;
+  const teams = (S.teams||[]).length, deals = (S.players||[]).filter(p=>p.contract).length;
+  modal('Put this league back on the server',
+    '<p>There is nothing on the server under <span class="num">'+esc(id)+'</span>, but the copy in this browser is '+
+    'intact — <b>'+teams+' teams</b> and <b>'+deals+' contracts</b>.</p>'+
+    '<p>This uploads it under the same code and makes you the commissioner again.</p>'+
+    '<div class="hint">Everybody else will need a new code. The old ones went with the old tables.</div>'+
+    '<div class="hint">Nothing is overwritten: if a league did turn up under that code, this stops rather than '+
+    'replacing it.</div>',
+    '<button class="btn ghost" data-a="closeModal">Not now</button>'+
+    '<button class="btn" data-a="exportJSON">Download it first</button>'+
+    '<button class="btn pri" data-a="supaRestoreGo">Put it back</button>');
+};
+ACT.supaRestoreGo = async ()=>{
+  if(!Supa.client || !Supa.user) return toast('Sign in first','bad');
+  const id = Supa.cfg().leagueId;
+  const team = (Supa.member && Supa.member.team_id) || S.league.myTeamId || (S.teams[0]||{}).id;
+  try{
+    const {data, error} = await Supa.client.rpc('create_league', {
+      p_id:id, p_name:S.league.name, p_state:S, p_team:team, p_label:Supa.user.email });
+    if(error) throw error;
+    S.rev = +data.rev||1;
+    Supa.missing = false;
+    save(true);
+    await Supa.loadMember();
+    Supa.listen();
+    await Supa.push(false, 'league restored');
+    closeModal(); render();
+    toast('Back up, and you are the commissioner','good');
+  }catch(e){
+    toast(/taken/i.test(e.message)
+      ? 'There is already a league under that code — pull it down instead, or pick a different code'
+      : e.message, 'bad');
+  }
+};
 ACT.supaCreate = async ()=>{
   if(!Supa.client || !Supa.user) return toast('Sign in first','bad');
   const id = String(($('#supaLeagueId')||{}).value||'').trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
@@ -7874,6 +8673,83 @@ ACT.supaCreate = async ()=>{
     await Supa.push(false, 'league code recorded');
     render(); toast('League created and you are the commissioner','good');
   }catch(e){ toast(e.message,'bad'); }
+};
+ACT.invitePerson = async (d)=>{
+  if(!Supa.boss()) return toast('Commissioners only','bad');
+  const who = String(($('#invWho')||{}).value||'').trim();
+  const to  = String(($('#invTo')||{}).value||'').trim();
+  try{
+    const {data, error} = await Supa.client.rpc('invite_person', {
+      p_league:Supa.cfg().leagueId, p_team:d.team||null, p_label:who||null, p_email:to||null });
+    if(error) throw error;
+    ui.tmp.lastCode = {code:data.code, team:d.team, who, to};
+    await loadInvites();
+    showCode();
+  }catch(e){ toast(e.message,'bad'); }
+};
+function inviteText(c){
+  const where = location.origin + location.pathname;
+  return 'You are in the '+S.league.name+'.\n\n'+
+    'Open this: '+where+'\n'+
+    'Press Join a league, and put in this code:\n\n'+
+    '    '+c.code+'\n\n'+
+    'Then pick any username and password you like — no email needed.'+
+    (c.team ? '\n\nYou are taking over '+teamName(c.team)+'.' : '');
+}
+function showCode(){
+  const c = ui.tmp.lastCode; if(!c) return;
+  const body = inviteText(c);
+  modal('Code for '+(c.who || (c.team?teamName(c.team):'whoever you send it to')),
+    '<div class="codebox" style="margin-bottom:12px"><input type="text" readonly value="'+esc(c.code)+'" onclick="this.select()"></div>'+
+    '<div class="hint">One person, one use. Making another code for the same team replaces this one.</div>'+
+    '<div class="hr"></div>'+
+    '<div class="flabel">The message they get</div>'+
+    '<textarea readonly rows="7" onclick="this.select()">'+esc(body)+'</textarea>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    (c.to ? '<button class="btn" data-a="mailCode">Email it to '+esc(c.to)+'</button>' : '')+
+    '<button class="btn" data-a="shareCode">Send it</button>'+
+    '<button class="btn pri" data-a="copyCode">Copy it</button>');
+}
+ACT.copyCode = ()=>{
+  const c = ui.tmp.lastCode; if(!c) return;
+  if(navigator.clipboard) navigator.clipboard.writeText(inviteText(c)).then(()=> toast('Copied','good'));
+};
+ACT.mailCode = ()=>{
+  const c = ui.tmp.lastCode; if(!c || !c.to) return;
+  const url = 'mailto:'+encodeURIComponent(c.to)+
+    '?subject='+encodeURIComponent('Your '+S.league.name+' code')+
+    '&body='+encodeURIComponent(inviteText(c));
+  location.href = url;
+};
+ACT.shareCode = async ()=>{
+  const c = ui.tmp.lastCode; if(!c) return;
+  const payload = {title:S.league.name, text:inviteText(c)};
+  if(navigator.share){
+    try{ await navigator.share(payload); return; }catch(e){ /* they backed out */ }
+  }
+  ACT.copyCode();
+  toast('Copied — paste it wherever you like','good');
+};
+async function loadInvites(){
+  try{
+    const {data, error} = await Supa.client.rpc('invites_open', {p_league:Supa.cfg().leagueId});
+    if(!error) Supa.invites = data || [];
+  }catch(e){}
+  render();
+}
+ACT.refreshInvites = ()=> loadInvites();
+ACT.dropInvite = async (d)=>{
+  try{
+    const {error} = await Supa.client.rpc('drop_invite', {p_code:d.code});
+    if(error) throw error;
+    await loadInvites(); toast('Code cancelled');
+  }catch(e){ toast(e.message,'bad'); }
+};
+ACT.showLastCode = (d)=>{
+  const inv = (Supa.invites||[]).find(x=> x.code===d.code);
+  if(!inv) return;
+  ui.tmp.lastCode = {code:inv.code, team:inv.team_id, who:inv.label, to:inv.sent_to};
+  showCode();
 };
 ACT.supaInvite = async (d)=>{
   if(!Supa.boss()) return toast('Commissioners only','bad');
@@ -7967,6 +8843,130 @@ async function openLobby(name){
   }
   lobbyModal();
 }
+/* ============================================================
+   JOINING: one code, a name you choose, a password you choose
+   ============================================================ */
+function joinModal2(){
+  const j = ui.tmp.join2 = ui.tmp.join2 || {mode:'new'};
+  ui.tmp.joinScreen = true;
+  const err = j.err ? '<div class="hint bad">'+esc(j.err)+'</div>' : '';
+  modal(j.done ? 'You are in' : 'Join your league',
+    j.done
+      ? '<p>Welcome to <b>'+esc(j.leagueName||'the league')+'</b>'+
+        (j.teamName?', sitting in <b>'+esc(j.teamName)+'</b>':'')+'.</p>'+
+        '<div class="hint">Signed in as <b>'+esc(j.who||'')+'</b>. That email and password get you back in from any '+
+        'device, any time.</div>'+
+        '<div class="hint">You can put a display name on yourself later under Settings › Server, if you want to be '+
+        'called something other than your email.</div>'
+      : `
+      <div class="codebox"><label class="f"><span>Your one-time code</span>
+        <input type="text" id="jCode" maxlength="8" placeholder="ABC123" value="${esc(j.code||'')}"
+          autocomplete="one-time-code" autocapitalize="characters"></label></div>
+      <div class="hint">Six characters, sent to you with the invitation. Upper or lower case, it does not matter.</div>
+      <div class="hr"></div>
+      <div class="tabs" style="margin-bottom:10px">
+        <button class="${j.mode!=='old'?'on':''}" data-a="jMode" data-m="new">Make my account</button>
+        <button class="${j.mode==='old'?'on':''}" data-a="jMode" data-m="old">I already have one</button>
+      </div>
+      <label class="f"><span>Email</span>
+        <input type="email" id="jUser" placeholder="you@example.com" value="${esc(j.user||'')}"
+          autocomplete="email" inputmode="email"></label>
+      <label class="f"><span>Password</span>${pwField('jPw','at least six characters')}</label>
+      ${j.mode!=='old'
+        ? '<div class="hint">Your own email and a password you choose. That is your login from now on — on your phone, '+
+          'your computer, wherever. Nothing is sent to the address; it is how you get back in and how a forgotten '+
+          'password gets reset.</div>'
+        : '<div class="hint">Sign in with the email and password you already made, and the code puts you in this league too.</div>'}
+      ${err}`,
+    j.done
+      ? '<button class="btn pri" data-a="closeJoin">Take me to my team</button>'
+      : '<button class="btn ghost" data-a="closeJoin">Later</button>'+
+        '<button class="btn pri" data-a="jGo">'+(j.mode==='old'?'Sign in and join':'Create it and join')+'</button>');
+}
+ACT.openJoin = ()=>{
+  ui.tmp.join2 = {mode:'new'};
+  if(S.settings.supa && S.settings.supa.on && S.settings.supa.url) Supa.init();
+  joinModal2();
+};
+ACT.jMode = (d)=>{
+  const j = ui.tmp.join2 = ui.tmp.join2 || {};
+  const c=$('#jCode'), u=$('#jUser'), w=$('#jPw');
+  if(c) j.code=c.value; if(u) j.user=u.value; if(w) j.pw=w.value;
+  j.mode = d.m; j.err = null;
+  joinModal2();
+  const c2=$('#jCode'), u2=$('#jUser'), w2=$('#jPw');
+  if(c2) c2.value=j.code||''; if(u2) u2.value=j.user||''; if(w2) w2.value=j.pw||'';
+};
+ACT.closeJoin = ()=>{ ui.tmp.joinScreen = false; ui.tmp.join2 = null; closeModal(); render(); };
+ACT.jGo = async ()=>{
+  const j = ui.tmp.join2 = ui.tmp.join2 || {};
+  j.code = String(($('#jCode')||{}).value || j.code || '').trim().toUpperCase();
+  j.user = String(($('#jUser')||{}).value || j.user || '').trim();
+  j.pw   = String(($('#jPw')||{}).value || j.pw || '');
+  j.err = null;
+
+  if(!j.code) { j.err='Put in the code you were sent.'; return joinModal2(); }
+  if(!/.+@.+\..+/.test(j.user)) { j.err='That does not look like an email address.'; return joinModal2(); }
+  if(j.pw.length < 6) { j.err='Six characters or more for the password.'; return joinModal2(); }
+
+  if(!Supa.client) await Supa.init(true);
+  if(!Supa.client){ j.err='Could not reach the league. Try again in a moment.'; return joinModal2(); }
+
+  const email = j.user.toLowerCase();
+  try{
+    if(!Supa.user){
+      let r;
+      if(j.mode==='old'){
+        r = await Supa.client.auth.signInWithPassword({email, password:j.pw});
+        if(r.error) throw new Error(/Invalid login/i.test(r.error.message)
+          ? 'That email and password do not match. Check them, or make a new account.' : r.error.message);
+      } else {
+        r = await Supa.client.auth.signUp({email, password:j.pw});
+        if(r.error && /already|registered/i.test(r.error.message)){
+          r = await Supa.client.auth.signInWithPassword({email, password:j.pw});
+          if(r.error) throw new Error('There is already an account on that email. '+
+            'Switch to "I already have one" and use its password.');
+        } else if(r.error) throw r.error;
+        if(!r.data.session){
+          j.err = 'Your commissioner needs to switch off "Confirm email" in Supabase under '+
+                  'Authentication → Sign In / Providers → Email. Then try this again.';
+          return joinModal2();
+        }
+      }
+      Supa.user = (r.data.session && r.data.session.user) || r.data.user || null;
+    }
+    const {data, error} = await Supa.client.rpc('redeem_code', {p_code:j.code, p_label:null});
+    if(error) throw error;
+
+    S.settings.supa.leagueId = data.league_id;
+    S.settings.supa.on = true;
+    save(true);
+    await Supa.loadMember();
+    await Supa.pull(true);
+    if(Supa.member && Supa.member.team_id){ S.league.myTeamId = Supa.member.team_id; Store.set(KEY, S); }
+    Supa.listen();
+    j.done = true;
+    j.leagueName = data.league_name || S.league.name;
+    j.teamName = data.team_id ? teamName(data.team_id) : '';
+    j.who = email;
+    joinModal2(); render();
+  }catch(e){
+    j.err = e.message;
+    joinModal2();
+  }
+};
+
+/* A name to be called by, set whenever you feel like it. */
+ACT.setDisplayName = async ()=>{
+  const v = String(($('#dispName')||{}).value||'').trim();
+  try{
+    const {error} = await Supa.client.rpc('set_display_name', {p_league:Supa.cfg().leagueId, p_label:v||null});
+    if(error) throw error;
+    await Supa.loadMember(); await Supa.loadRoster();
+    render(); toast(v?'You are '+v+' now':'Back to your email','good');
+  }catch(e){ toast(e.message,'bad'); }
+};
+
 function lobbyModal(){
   const t = ui.tmp.lobby || {};
   if(t.loading) return modal('Joining…', '<div class="hint">Fetching the league…</div>',
@@ -8299,12 +9299,12 @@ ACT.tbMove = (d)=>{
   c[i] = c[j]; c[j] = d.k;
   S.settings.playoffs.chain = c; save(); render();
 };
-ACT.tbRm = (d)=>{
+ACT.tbChainRm = (d)=>{
   const c = tiebreakChain().filter(k=> k!==d.k);
   if(!c.length) return toast('Keep at least one','bad');
   S.settings.playoffs.chain = c; save(); render();
 };
-ACT.tbAdd = (d)=>{ S.settings.playoffs.chain = tiebreakChain().concat([d.k]); save(); render(); };
+ACT.tbChainAdd = (d)=>{ S.settings.playoffs.chain = tiebreakChain().concat([d.k]); save(); render(); };
 ACT.tbReset = ()=>{ S.settings.playoffs.chain = ['h2h','opp','pf','eff']; save(); render(); };
 ACT.rollSeason = ()=>{
   const carried = S.teams.map(t=>({t, amt: S.settings.cap.rollover.on ? rolloverInto(t.id, S.league.season+1) : 0}));
@@ -8323,6 +9323,7 @@ ACT.rollSeason = ()=>{
     '<button class="btn ghost" data-a="closeModal">Not yet</button><button class="btn pri" data-a="rollSeasonGo">Roll it over</button>');
 };
 ACT.rollSeasonGo = ()=>{
+  keepBackup(S, 'before rolling the season over');
   foldWeekIntoSeason(); foldWeekIntoDvp();
   const old = S.league.season;
   S.history = S.history || {};
@@ -8339,6 +9340,12 @@ ACT.rollSeasonGo = ()=>{
   S.players.forEach(p=>{
     if(!p.contract) return;
     if(p.contract.waiver && S.settings.waivers.clearAtRollover){ p.lastTeam = p.contract.teamId; p.contract=null; dropped++; return; }
+    if(!p.contract.teamId){
+      // Cut free and never picked up — the deal simply lapses.
+      p.lastTeam = p.contract.freedBy || null;
+      p.contract = null; dropped++;
+      return;
+    }
     if(p.contract.startYear + p.contract.years <= S.league.season){
       if(p.tag && p.tag.year===S.league.season){
         p.contract = makeContract(p.tag.byTeam, p.tag.price, 1, S.settings.contracts.defaultStruct, S.league.season);
@@ -8377,6 +9384,37 @@ ACT.rollSeasonGo = ()=>{
   notify('New season', S.league.season+' is open. '+dropped+' players are back in the pool.','good');
   buildWeek(1);
   closeModal(); save(true); go('dash'); toast(S.league.season+' is live','good');
+};
+ACT.openBackups = async ()=>{
+  const list = await listBackups();
+  modal('Saved copies of your league',
+    (list.length
+      ? '<p class="muted" style="margin-top:0">A copy is kept every time the app opens with a league loaded, and before '+
+        'anything drastic. The newest is at the top.</p>'+
+        '<div class="scrollx"><table><thead><tr><th>When</th><th>League</th><th class="right">Teams</th>'+
+        '<th class="right">Contracts</th><th></th></tr></thead><tbody>'+
+        list.map(b=>'<tr><td class="tiny">'+dstr(b.at)+'<div class="dim">'+esc(b.why)+'</div></td>'+
+          '<td>'+esc(b.league)+'<div class="tiny dim">'+b.season+'</div></td>'+
+          '<td class="right num">'+b.teams+'</td><td class="right num">'+b.players+'</td>'+
+          '<td class="right"><button class="btn sm" data-a="restoreBackup" data-slot="'+b.slot+'">Restore</button></td></tr>').join('')+
+        '</tbody></table></div>'+
+        '<div class="hint">Restoring replaces what is on screen, and a copy of that is kept too, so you can come back.</div>'
+      : '<p>There are no copies yet. One is kept every time the app opens with a league loaded.</p>'+
+        '<div class="hint">If your league has gone missing, check you are at the same web address as before — a browser '+
+        'keeps its storage per address, so a different one looks empty even though nothing was lost.</div>'),
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn" data-a="exportJSON">Download the one on screen</button>');
+};
+ACT.restoreBackup = async (d)=>{
+  const b = await Store.get(bakKey(+d.slot));
+  if(!b || !b.state) return toast('That copy has gone','bad');
+  await keepBackup(S, 'before restoring');
+  try{
+    S = migrate(b.state);
+    Store.set(KEY, S);
+    closeModal(); render();
+    toast('Restored '+((b.state.league||{}).name||'the league'),'good');
+  }catch(e){ toast('That copy would not open — '+e.message,'bad'); }
 };
 ACT.demoLeague = ()=>{
   modal('Rebuild the demo league','<p>This replaces everything currently loaded with a fresh ten-team demo.</p>',
@@ -8479,7 +9517,7 @@ ACT.syncNewCode = ()=>{
    writes it should not accept rather than hoping the app asked nicely.
    ============================================================ */
 const Supa = {
-  client:null, user:null, member:null, roster:[], status:'off', msg:'',
+  client:null, user:null, member:null, roster:[], invites:[], missing:false, status:'off', msg:'',
   busy:false, pending:false, channel:null, lastPush:0, booting:false,
 
   cfg(){ return S.settings.supa || (S.settings.supa = {on:false, url:'', anonKey:'', leagueId:''}); },
@@ -8680,7 +9718,14 @@ const Supa = {
       const {data, error} = await this.client.from('leagues')
         .select('rev,state').eq('id', this.cfg().leagueId).maybeSingle();
       if(error) throw error;
-      if(!data){ this.set('warn','No league on the server under that code'); this.busy=false; return; }
+      if(!data){
+        // The project was rebuilt, or the league was deleted. Say so loudly and
+        // leave the local copy exactly where it is.
+        this.missing = true;
+        this.set('warn','Nothing on the server under "'+this.cfg().leagueId+'"');
+        this.busy=false; render(); return;
+      }
+      this.missing = false;
       if((+data.rev||0) > (+S.rev||0)){
         adoptRemote(data.state, +data.rev||0);
         if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
@@ -8772,6 +9817,8 @@ function migrate(j){
   reshape(out.settings, 'waivers', d.settings.waivers, (old)=> ({on: old===true}));
   ['taxi','rookie','playoffs','fa','bbd','value','comp','players','tag']
     .forEach(k=> reshape(out.settings, k, d.settings[k], null));
+  reshape(out.settings.cap, 'backload', d.settings.cap.backload, null);
+  reshape(out.settings.contracts, 'limitEnforce', d.settings.contracts.limitEnforce, null);
   reshape(out.settings.tag, 'counts', d.settings.tag.counts, null);
   reshape(out.settings.comp, 'tiers', d.settings.comp.tiers, null);
   reshape(out.settings.comp, 'byRound', {}, null);
@@ -8920,15 +9967,48 @@ setInterval(()=>{ if(!$('#modal').classList.contains('on')) renderShell(); }, 60
    BOOT
    ============================================================ */
 async function init(){
-  const saved = await Store.get(KEY);
+  const read = await Store.read(KEY);
+  const saved = read.value;
+
+  if(!read.ok){
+    // The browser would not let us read. Never write over what might be there.
+    S = seedLeague(10); buildWeek(1);
+    S.meta.readFailed = read.err || 'storage unavailable';
+    S.meta.demo = true;
+    route = 'dash'; render();
+    setTimeout(()=> modal('Could not read your league',
+      '<p>The browser refused to open its own storage: <span class="num">'+esc(read.err||'no reason given')+'</span></p>'+
+      '<p class="muted">A demo is on screen so nothing is blank, and <b>nothing has been saved over</b>. '+
+      'Your league is most likely still there.</p>'+
+      '<div class="hint">Private or incognito windows often do this. Try a normal window, and if you have a downloaded '+
+      'league file you can always load it from Settings › Data.</div>',
+      '<button class="btn ghost" data-a="closeModal">Close</button>'), 400);
+    return;
+  }
+
   if(saved && saved.teams && saved.teams.length){
-    S = migrate(saved);
+    try{
+      S = migrate(saved);
+    }catch(e){
+      // Rather than fall back to the demo and bury it, say so and offer the copies.
+      S = seedLeague(10); buildWeek(1); S.meta.demo = true; S.meta.loadError = e.message;
+      route = 'dash'; render();
+      setTimeout(()=> modal('Your league would not open',
+        '<p class="hint bad">'+esc(e.message)+'</p>'+
+        '<p>Nothing has been written over. There are automatic copies kept every time the app opens.</p>',
+        '<button class="btn ghost" data-a="closeModal">Close</button>'+
+        '<button class="btn pri" data-a="openBackups">Look at the copies</button>'), 400);
+      return;
+    }
     if(!S.live.games.length) buildWeek(S.live.week||1);
+    keepBackup(S, 'opened');
   } else {
+    // Genuinely nothing stored. Put a demo up but do not commit it to storage —
+    // if this turns out to be the wrong browser or address, nothing is lost.
     S = seedLeague(10);
     buildWeek(1);
-    notify('Welcome', 'A ten-team demo is loaded so nothing is empty. Replace it from Import, or rebuild it any time from Settings.');
-    save(true);
+    S.meta.demo = true;
+    notify('Welcome', 'A ten-team demo is on screen so nothing is blank. Nothing has been saved yet — import your league or make a change and it becomes yours.');
   }
   const h = location.hash.slice(1);
   route = VIEWS[h] ? h : 'dash';
