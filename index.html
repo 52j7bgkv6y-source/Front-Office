@@ -1413,14 +1413,23 @@ function render(){
 }
 function openSheet(){ $('#sheet').classList.add('on'); }
 function closeSheet(){ $('#sheet').classList.remove('on'); }
-function modal(title, bodyHTML, footHTML){
+/* opts.locked leaves out the ✕ and refuses to close, for screens that have to
+   be finished — signing up from an invitation, mainly. */
+function modal(title, bodyHTML, footHTML, opts){
+  const locked = !!(opts && opts.locked);
+  ui.modalLocked = locked;
   $('#modalBox').innerHTML =
-    '<div class="mh"><h2>'+esc(title)+'</h2><div class="spacer"></div><button class="btn ghost sm" data-a="closeModal">✕</button></div>'+
+    '<div class="mh"><h2>'+esc(title)+'</h2><div class="spacer"></div>'+
+    (locked ? '' : '<button class="btn ghost sm" data-a="closeModal">✕</button>')+'</div>'+
     '<div class="mb">'+bodyHTML+'</div>'+
     (footHTML ? '<div class="mf">'+footHTML+'</div>' : '');
   $('#modal').classList.add('on');
 }
-function closeModal(){ $('#modal').classList.remove('on'); $('#modalBox').innerHTML=''; }
+function closeModal(force){
+  if(ui.modalLocked && force!==true) return;
+  ui.modalLocked = false;
+  $('#modal').classList.remove('on'); $('#modalBox').innerHTML='';
+}
 ACT.closeModal = closeModal;
 ACT.go = (d)=> go(d.r);
 ACT.sheet = ()=> $('#sheet').classList.contains('on') ? closeSheet() : openSheet();
@@ -9393,6 +9402,8 @@ function joinModal2(){
         ? 'Filled in from your invitation. Check it matches what you were sent.'
         : 'Six characters, sent to you with the invitation. Upper or lower case, it does not matter.'}</div>
       <div class="hr"></div>
+      ${j.forced?'<div class="hint">You were invited to '+esc(j.leagueName||'this league')+
+        '. Make an account and the team is yours — it takes about twenty seconds.</div>':''}
       <div class="tabs" style="margin-bottom:10px">
         <button class="${j.mode!=='old'?'on':''}" data-a="jMode" data-m="new">Make my account</button>
         <button class="${j.mode==='old'?'on':''}" data-a="jMode" data-m="old">I already have one</button>
@@ -9410,8 +9421,9 @@ function joinModal2(){
       ${err}`,
     j.done
       ? '<button class="btn pri" data-a="closeJoin">Take me to my team</button>'
-      : '<button class="btn ghost" data-a="closeJoin">Later</button>'+
-        '<button class="btn pri" data-a="jGo">'+(j.mode==='old'?'Sign in and join':'Create it and join')+'</button>');
+      : (j.forced ? '' : '<button class="btn ghost" data-a="closeJoin">Later</button>')+
+        '<button class="btn pri" data-a="jGo">'+(j.mode==='old'?'Sign in and join':'Create it and join')+'</button>',
+    {locked: !!j.forced && !j.done});
 }
 ACT.openJoin = ()=>{
   ui.tmp.join2 = {mode:'new'};
@@ -9427,7 +9439,10 @@ ACT.jMode = (d)=>{
   const c2=$('#jCode'), u2=$('#jUser'), w2=$('#jPw');
   if(c2) c2.value=j.code||''; if(u2) u2.value=j.user||''; if(w2) w2.value=j.pw||'';
 };
-ACT.closeJoin = ()=>{ ui.tmp.joinScreen = false; ui.tmp.join2 = null; closeModal(); render(); };
+ACT.closeJoin = ()=>{
+  ui.tmp.joinScreen = false; ui.tmp.join2 = null;
+  closeModal(true); render();
+};
 ACT.jGo = async ()=>{
   const j = ui.tmp.join2 = ui.tmp.join2 || {};
   j.code = String(($('#jCode')||{}).value || j.code || '').trim().toUpperCase();
@@ -10593,7 +10608,9 @@ function greetInvites(){
       save(true);
       history.replaceState(null,'',location.pathname);
       ui.tmp.skipBootInit = true;                 // this path connects for itself
-      ui.tmp.join2 = {mode:'new', code:(inv.c||'').toUpperCase(), leagueName:inv.n||''};
+      // Opening an invitation means signing up. There is no way past this screen
+      // that leaves somebody sitting on the practice league by mistake.
+      ui.tmp.join2 = {mode:'new', code:(inv.c||'').toUpperCase(), leagueName:inv.n||'', forced:true};
       setTimeout(()=>{ joinModal2(); Supa.init(); }, 300);
       return;
     }
