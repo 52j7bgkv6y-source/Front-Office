@@ -1373,6 +1373,11 @@ function navHTML(active){
   }).join('');
 }
 function renderShell(){
+  if(typeof needsGate==='function' && needsGate()){
+    const nav = $('#nav'), tb = $('#tabbar');
+    if(nav) nav.innerHTML = '';
+    if(tb) tb.innerHTML = '';
+  }
   const t = myTeam(), y = S.league.season, c = badgeCounts();
   $('#railLeague').textContent = S.league.name;
   $('#navLinks').innerHTML = navHTML(route);
@@ -1399,16 +1404,163 @@ function renderShell(){
     return '<button data-a="go" data-r="'+id+'" class="'+(route===id?'on':'')+'"><span class="ic">'+n.ic+'</span><span class="lb">'+esc(n.label.split(' ')[0])+'</span>'+b+'</button>';
   }).join('') + '<button data-a="sheet" class="'+(MOBILE_TABS.indexOf(route)<0?'on':'')+'"><span class="ic">⋯</span><span class="lb">More</span></button>';
 }
+/* Nobody who has been handed this league should ever be looking at the practice
+   one. If the league lives on a server and this person is not signed in, the
+   whole app is replaced by a way in — not a dialog they can dismiss. */
+function needsGate(){
+  const c = S.settings.supa || {};
+  if(!c.on || !c.url || !c.anonKey) return false;
+  if(typeof Supa!=='object') return false;
+  if(Supa.user) return false;
+  if(ui.tmp.gateOff) return false;
+  return !!(c.leagueId || (S.meta && S.meta.pendingInvite));
+}
 function render(){
   clearCapCache(); dppCache = null;
   const ae = document.activeElement;
   const k = ae && ae.dataset ? (ae.dataset.k || ae.dataset.set || null) : null;
   const ss = ae && ae.selectionStart, se = ae && ae.selectionEnd;
   renderShell();
+  if(needsGate()){
+    $('#view').innerHTML = gateView();
+    const el = $('#view [data-k="'+k+'"]');
+    if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
+    return;
+  }
   $('#view').innerHTML = VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>';
   if(k){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
+  }
+}
+/* The way in. Everything an invited owner ever needs is on this one screen. */
+function gateView(){
+  const g = ui.tmp.gate = ui.tmp.gate || {};
+  const pend = (S.meta && S.meta.pendingInvite) || null;
+  const code = g.code!=null ? g.code : (pend && pend.code) || '';
+  const name = (pend && pend.league) || S.league.name || 'the league';
+  const mode = g.mode || 'new';
+  return `
+  <div class="wrap" style="max-width:520px;margin:6vh auto">
+    <div class="panel">
+      <div class="ph"><h3>${mode==='old'?'Sign in':'Join '+esc(name)}</h3></div>
+      <div class="pb stack">
+        ${pend
+          ? '<p class="muted" style="margin:0">You have been invited to <b>'+esc(name)+'</b>'+
+            (pend.team?', taking over <b>'+esc(pend.team)+'</b>':'')+'. Make an account and it is yours.</p>'
+          : '<p class="muted" style="margin:0">This league lives on a server. Sign in to see it.</p>'}
+
+        <div class="tabs">
+          <button class="${mode!=='old'?'on':''}" data-a="gateMode" data-m="new">Make my account</button>
+          <button class="${mode==='old'?'on':''}" data-a="gateMode" data-m="old">I already have one</button>
+        </div>
+
+        <div class="codebox"><label class="f"><span>Your one-time code${
+          mode==='old'?' <span class="dim">(only if you are joining a new league)</span>':''}</span>
+          <input type="text" id="gCode" maxlength="8" placeholder="ABC123" value="${esc(code)}"
+            data-k="gCode" autocomplete="one-time-code" autocapitalize="characters"></label></div>
+
+        <label class="f"><span>Email</span>
+          <input type="email" id="gEmail" placeholder="you@example.com" value="${esc(g.email||'')}"
+            data-k="gEmail" autocomplete="email" inputmode="email"></label>
+        <label class="f"><span>Password</span>${pwField('gPw','at least six characters')}</label>
+
+        ${g.err?'<div class="hint bad">'+esc(g.err)+'</div>':''}
+        ${g.busy?'<div class="hint">Working…</div>':''}
+
+        <button class="btn pri wide" data-a="gateGo" ${g.busy?'disabled':''}>
+          ${mode==='old'?'Sign in':'Create my account'}</button>
+
+        <div class="row">
+          <button class="btn ghost sm" data-a="gateForgot">Forgotten your password?</button>
+          <div class="spacer"></div>
+          <button class="btn ghost sm" data-a="gateEscape">Trouble signing in?</button>
+        </div>
+        <div class="hint">Your email and password are your login from then on — same account on any device.
+          Nothing is emailed to you.</div>
+      </div>
+    </div>
+  </div>`;
+}
+ACT.gateMode = (d)=>{
+  const g = ui.tmp.gate = ui.tmp.gate || {};
+  gateRead(); g.mode = d.m; g.err = null; render();
+};
+function gateRead(){
+  const g = ui.tmp.gate = ui.tmp.gate || {};
+  const c=$('#gCode'), e=$('#gEmail'), w=$('#gPw');
+  if(c) g.code = c.value; if(e) g.email = e.value; if(w) g.pw = w.value;
+}
+ACT.gateForgot = ()=>{ gateRead(); ui.tmp.gate.err=null; ACT.forgotPw(); };
+ACT.gateEscape = ()=>{
+  modal('Trouble signing in',
+    '<p>Nothing on this screen changes the league — it only lets you in to see it.</p>'+
+    '<div class="hint">If the code is refused, ask whoever runs the league for a fresh one. They can also remove '+
+    'your account and start you over.</div>'+
+    '<div class="hint">If you are the one who set this league up and something is wrong with the connection, you can '+
+    'get at the settings. Everything is still saved.</div>',
+    '<button class="btn ghost" data-a="closeModal">Back</button>'+
+    '<button class="btn" data-a="gateSettings">Let me at the settings</button>');
+};
+ACT.gateSettings = ()=>{
+  ui.tmp.gateOff = true;
+  closeModal(); go('settings'); ui.sub='server'; render();
+  toast('The league here is the practice one until you sign in','warn');
+};
+ACT.gateGo = async ()=>{
+  const g = ui.tmp.gate = ui.tmp.gate || {};
+  gateRead();
+  g.err = null;
+  const code = String(g.code||'').trim().toUpperCase();
+  const email = String(g.email||'').trim().toLowerCase();
+  const pw = String(g.pw||'');
+  const mode = g.mode || 'new';
+
+  if(!/.+@.+\..+/.test(email)){ g.err = 'That does not look like an email address.'; return render(); }
+  if(pw.length < 6){ g.err = 'Six characters or more for the password.'; return render(); }
+  if(mode!=='old' && !code){ g.err = 'Put in the code you were sent.'; return render(); }
+
+  g.busy = true; render();
+  try{
+    if(!Supa.client) await Supa.init(true);
+    if(!Supa.client) throw new Error('Could not reach the league. Try again in a moment.');
+
+    if(!Supa.user){
+      let r;
+      if(mode==='old'){
+        r = await Supa.client.auth.signInWithPassword({email, password:pw});
+        if(r.error) throw new Error(/Invalid login/i.test(r.error.message)
+          ? 'That email and password do not match.' : r.error.message);
+      } else {
+        r = await Supa.client.auth.signUp({email, password:pw});
+        if(r.error && /already|registered/i.test(r.error.message)){
+          r = await Supa.client.auth.signInWithPassword({email, password:pw});
+          if(r.error) throw new Error('There is already an account on that email. '+
+            'Switch to "I already have one" and use its password.');
+        } else if(r.error) throw r.error;
+        if(!r.data.session) throw new Error('Your commissioner needs to switch off "Confirm email" in Supabase, '+
+          'under Authentication → Sign In / Providers → Email.');
+      }
+      Supa.user = (r.data.session && r.data.session.user) || r.data.user || null;
+    }
+
+    if(code){
+      const {data, error} = await Supa.client.rpc('redeem_code', {p_code:code, p_label:null});
+      if(error) throw error;
+      S.settings.supa.leagueId = data.league_id;
+    }
+    S.settings.supa.on = true;
+    if(S.meta) delete S.meta.pendingInvite;
+    save(true);
+    await Supa.loadMember();
+    await Supa.pull(true);
+    if(Supa.member && Supa.member.team_id){ S.league.myTeamId = Supa.member.team_id; Store.set(KEY, S); }
+    Supa.listen();
+    ui.tmp.gate = null;
+    render();
+    toast('Welcome'+(Supa.member&&Supa.member.team_id?' — you are '+teamName(Supa.member.team_id):''),'good');
+  }catch(e){
+    g.busy = false; g.err = e.message; render();
   }
 }
 function openSheet(){ $('#sheet').classList.add('on'); }
@@ -8689,7 +8841,31 @@ VIEWS.settings = function(){
           </div>
         `:''}
 
-        ${step===4?`
+        ${step===4 && !Supa.boss()?`
+          <div class="row">
+            <div style="flex:1"><div class="flabel">Signed in</div>
+              <b>${esc(myName() || Supa.user.email)}</b>
+              ${myName() && myName()!==Supa.user.email?'<span class="dim tiny"> · '+esc(Supa.user.email)+'</span>':''}
+              <div class="tiny muted">${esc(Supa.member&&Supa.member.team_id?teamName(Supa.member.team_id):'no team yet')}
+                in ${esc(S.league.name)} ${Supa.channel?'· <span class="good">live</span>':''}</div>
+            </div>
+            <button class="btn ghost sm" data-a="changePw">Change my password</button>
+            <button class="btn ghost sm" data-a="supaSignOut">Sign out</button>
+          </div>
+          <div class="hint">Everything saves by itself and everyone sees it straight away. There is nothing here for
+            you to set up — your commissioner looks after all of that.</div>
+          ${ui.tmp.serverMore?`<div class="hr"></div>
+            <label class="f"><span>What the league calls you <span class="dim">(optional)</span></span>
+              <div class="row"><input type="text" id="dispName" placeholder="${esc(Supa.user.email)}"
+                value="${esc((Supa.member&&Supa.member.label)||'')}" style="flex:1">
+                <button class="btn sm" data-a="setDisplayName">Set</button></div></label>
+            <div class="row"><button class="btn ghost sm" data-a="supaPull">Pull the latest</button>
+              <button class="btn ghost sm" data-a="supaCheck">Something is wrong</button></div>`:''}
+          <div class="row"><div class="spacer"></div>
+            <button class="btn ghost sm" data-a="serverMore">${ui.tmp.serverMore?'Fewer options':'More options'}</button></div>
+        `:''}
+
+        ${step===4 && Supa.boss()?`
           <div class="row">
             <div style="flex:1"><div class="flabel">Signed in</div>
               <b>${esc(myName() || Supa.user.email)}</b>
@@ -8794,6 +8970,7 @@ VIEWS.settings = function(){
       </div></div>`;
       })():''}
 
+      ${(!Supa.ready() || Supa.boss())?`
       <div class="panel" style="margin-top:14px"><div class="ph"><h3>News and live scores</h3><div class="spacer"></div>
         <button class="btn ghost sm" data-a="serverAdv">${ui.tmp.serverAdv?'Hide':'Show'}</button></div>
         ${ui.tmp.serverAdv?`<div class="pb stack">
@@ -8818,7 +8995,7 @@ VIEWS.settings = function(){
           <div class="hint">Superseded by accounts above, and off by default. It is still here in case a league has not
             moved over yet.</div>
         </div>`:''}
-      </div>
+      </div>`:''}
     </div>`:''}
 
     ${sub==='data'?`<div class="grid g2">
@@ -9205,7 +9382,9 @@ function inviteLink(code){
   const here = (typeof loc.origin==='string' && loc.origin!=='null' ? loc.origin : '') +
                (typeof loc.pathname==='string' ? loc.pathname : '');
   if(!here || !cfg.url || !cfg.anonKey || !cfg.leagueId) return '';
-  const bundle = btoa(JSON.stringify({c:code, u:cfg.url, k:cfg.anonKey, l:cfg.leagueId, n:S.league.name}));
+  const inv = (Supa.invites||[]).find(x=> x.code===code);
+  const bundle = btoa(JSON.stringify({c:code, u:cfg.url, k:cfg.anonKey, l:cfg.leagueId, n:S.league.name,
+    t:(inv && inv.team_id) ? teamName(inv.team_id) : ''}));
   return here + '#invite=' + encodeURIComponent(bundle);
 }
 function inviteText(c){
@@ -10608,10 +10787,13 @@ function greetInvites(){
       save(true);
       history.replaceState(null,'',location.pathname);
       ui.tmp.skipBootInit = true;                 // this path connects for itself
-      // Opening an invitation means signing up. There is no way past this screen
-      // that leaves somebody sitting on the practice league by mistake.
-      ui.tmp.join2 = {mode:'new', code:(inv.c||'').toUpperCase(), leagueName:inv.n||'', forced:true};
-      setTimeout(()=>{ joinModal2(); Supa.init(); }, 300);
+      // Remember it, so a reload or a mis-tap still lands on the way in rather
+      // than on the practice league.
+      S.meta.pendingInvite = {code:(inv.c||'').toUpperCase(), league:inv.n||'', team:inv.t||''};
+      ui.tmp.gate = {mode:'new', code:(inv.c||'').toUpperCase()};
+      save(true);
+      render();
+      Supa.init();
       return;
     }
   }
