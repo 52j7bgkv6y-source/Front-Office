@@ -851,7 +851,8 @@ function defaultState(){
         posWeights:{QB:1, RB:0.9, WR:1, TE:0.8, K:0.25, DEF:0.3, DL:0.5, LB:0.5, DB:0.5}
       },
       waivers:{ on:true, deadline:(season)+'-11-15', salary:1, blockExtensions:true, clearAtRollover:true },
-      taxi:{ claimsOn:true, windowHours:24 },
+      taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2 },
+      ir:{ mode:'games', fixed:0 },
       rookie:{ on:true, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
                roundYears:{1:4, 2:3, 3:3, 4:2}, structId:'ev', minSalary:1, overrides:{} },
       comp:{ on:true, moneyWeight:65, prodWeight:35, offset:true,
@@ -861,6 +862,9 @@ function defaultState(){
       playoffs:{ teams:6, startWeek:15, weeks:3, byes:2, twoWeekFinal:false, reseed:true,
                  thirdPlace:false, consolation:false, tiebreak:'pf',
                  chain:['h2h','opp','pf','eff'] },
+      loser:{ on:false, name:'Toilet bowl', who:'missed', teams:4, seedBy:'worst',
+              advance:'winner', byes:0, startWeek:15, twoWeekFinal:false, reseed:true,
+              thirdPlace:false, prize:true, pickControl:true },
       fa:{ on:true, budgetMode:'amount', budget:60, clockHours:24, minBid:1, minIncrement:1,
            blind:false, maxYears:3, resetEachSeason:true },
       bbd:{ on:true, roundHours:24, minBid:1, maxPerRound:0, tiebreak:'earliest',
@@ -882,6 +886,7 @@ function defaultState(){
     rev:0, season:{year:season, byPlayer:{}}, history:{}, dvp:{}, faAuctions:[],
     bbd:{ status:'idle', round:1, clock:null, bids:[], rounds:[] }, taxiClaims:[],
     news:{ at:0, items:[] }, pending:[], h2h:{}, schedule:[], lineups:{}, signings:[],
+    bracketResults:{ playoff:{}, loser:{} },
     teams:[], players:[], picks:[], auctions:[], trades:[], rules:[], notices:[], log:[],
     live:{ week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0 }
   };
@@ -968,6 +973,36 @@ function seasonWeeks(){ return clamp(+S.settings.roster.seasonWeeks||17, 1, 25);
 function weeksLeft(){ return clamp(seasonWeeks() - (+S.live.week||1) + 1, 0, seasonWeeks()); }
 function irRelief(p, year){
   return (p && p.ir && p.ir.seasonEnding && p.ir.year===year) ? (+p.ir.relief||0) : 0;
+}
+/* What a season-ending designation would hand back, and the numbers behind it.
+   Worked out once and used by both the confirmation screen and the commit, so
+   the figure a manager agrees to is the figure they get.
+     games — the share of the season he has not played. A player who has already
+             missed time gets more back than the calendar alone would give.
+     weeks — the share of the season still to come, whoever has played what.
+     fixed — the same figure every time, capped at what he actually costs. */
+function irBasis(p){
+  const y = S.league.season, weeks = seasonWeeks();
+  const gross = fixInc(Math.max(0, grossHit(p,y) - retainedOn(p,y)));
+  const mode = (S.settings.ir||{}).mode || 'games';
+  if(mode==='fixed'){
+    const set = Math.max(0, +((S.settings.ir||{}).fixed)||0);
+    return {mode, gross, weeks, played:null, left:null, pct:null,
+            relief: fixInc(Math.min(gross, set)), set, capped: set>gross};
+  }
+  const played = mode==='weeks'
+    ? clamp((+S.live.week||1)-1, 0, weeks)
+    : clamp(gamesIn(p.id, y), 0, weeks);
+  const left = Math.max(0, weeks - played);
+  const pct = weeks ? left/weeks : 0;
+  return {mode, gross, weeks, played, left, pct, relief: fixInc(gross*pct), capped:false};
+}
+function irModeLine(b){
+  if(b.mode==='fixed') return 'A flat '+money(b.set)+' back on any season-ending injury'+
+    (b.capped? ', trimmed to '+money(b.relief)+' because that is all he costs' : '');
+  return b.mode==='weeks'
+    ? b.left+' of '+b.weeks+' weeks still to play'
+    : 'he has played '+b.played+' of '+b.weeks+' games';
 }
 
 /* What the deal is worth in that year before anyone eats any of it. */
@@ -2793,12 +2828,15 @@ VIEWS.teams = function(){
             <td class="right money">${money(hit)}</td><td class="right num">${p.contract.years}</td>
             <td class="right">${c
               ? '<span class="pill live">'+esc(teamName(c.toTeam))+' claiming</span>'
-              : '<button class="btn sm" data-a="taxiClaim" data-id="'+p.id+'">Claim</button>'}</td></tr>`;
+              : (taxiLimitBlock(tid)
+                ? '<span class="tiny dim">no claims left</span>'
+                : '<button class="btn sm" data-a="taxiClaim" data-id="'+p.id+'">Claim</button>')}</td></tr>`;
         }).join('') || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody else is stashing anyone.</td></tr>'}
         </tbody></table></div>
         <div class="pb"><div class="hint">Put a claim in and the owner has ${S.settings.taxi.windowHours} hours to promote him
           or put a trade together with you. If they do neither he comes straight onto your active roster and you give up nothing —
-          provided you still have the room and the cap space when the clock runs out.</div></div></div>`:''}
+          provided you still have the room and the cap space when the clock runs out.</div></div>
+        ${taxiStealBoard()}</div>`:''}
 
       ${retired.length?`<div class="panel" style="margin-top:14px"><div class="ph"><h3>Retired</h3></div>
         <div class="pb tight scrollx"><table><tbody>
@@ -2909,7 +2947,7 @@ VIEWS.teams = function(){
       return `
       <div class="grid g4 keep2" style="margin-bottom:14px">
         <div class="tile"><div class="k">Where you sit</div><div class="v">${mySlot}<span class="dim" style="font-size:15px">/${S.teams.length}</span></div>
-          <div class="s">${rec.w}-${rec.l}${rec.t?'-'+rec.t:''} · ${mySlot<=3?'picking near the top':mySlot>S.teams.length-3?'picking late':'mid-board'}</div></div>
+          <div class="s">${rec.w}-${rec.l}${rec.t?'-'+rec.t:''}${phantomWins(byId(S.teams,tid))?' +'+phantomWins(byId(S.teams,tid))+' phantom':''} · ${mySlot<=3?'picking near the top':mySlot>S.teams.length-3?'picking late':'mid-board'}</div></div>
         <div class="tile"><div class="k">${nextY} picks cost</div><div class="v">${money(bill)}</div>
           <div class="s">${nextYear.length} pick${nextYear.length===1?'':'s'}, first year of each</div></div>
         <div class="tile"><div class="k">${nextY} cap room</div><div class="v ${space<0?'bad':''}">${money(space,{plus:true})}</div>
@@ -3022,6 +3060,7 @@ VIEWS.teams = function(){
             <td class="num">${seed?'<span class="pill ok">'+seed+'</span>':'<span class="dim">'+(i+1)+'</span>'}</td>
             <td><b style="font-weight:500">${esc(t.name)}</b>${seed&&seed<=P.byes?' <span class="tiny good">bye</span>':''}
               ${commishLabel(t.id)}
+              ${phantomWins(t)?'<span class="pill warn" title="commissioner win — draft order only">+'+phantomWins(t)+' phantom</span>':''}
               ${t._why?'<div class="tiny dim">tie broken on '+esc(t._why)+'</div>':''}</td>
             <td class="right num">${r.w}</td><td class="right num">${r.l}</td><td class="right num">${r.t}</td>
             <td class="right num">${winPct(t).toFixed(3).replace(/^0/,'')}</td>
@@ -3037,22 +3076,37 @@ VIEWS.teams = function(){
           and the row says which one actually did it. Draft order runs the other way, worst record first, and the last
           column is what those picks would cost against your ${nextY} cap.</div></div></div>
 
+      ${isCommish()?`<div class="panel" style="margin-bottom:14px">
+        <div class="ph"><h3>Phantom wins</h3><div class="spacer"></div>
+          <span class="tiny dim">draft order only</span></div>
+        <div class="pb tight scrollx"><table>
+          <thead><tr><th>Team</th><th class="right">Record</th><th class="right">Phantom</th>
+            <th class="right">Counts as</th><th class="right">Draft slot</th><th></th></tr></thead>
+          <tbody>${draftStandings().map(t=>{
+            const r = teamRecord(t), ph = phantomWins(t);
+            return `<tr><td>${esc(t.name)}</td>
+              <td class="right num">${r.w}-${r.l}${r.t?'-'+r.t:''}</td>
+              <td class="right num ${ph?'warn':'dim'}">${ph?'+'+ph:'—'}</td>
+              <td class="right num ${ph?'warn':'dim'}">${r.w+ph}-${r.l}${r.t?'-'+r.t:''}</td>
+              <td class="right num">${draftSlot(t.id)}</td>
+              <td class="right nowrap">
+                <button class="btn sm ghost" data-a="phantom" data-id="${t.id}" data-n="-1"${ph?'':' disabled'}>−</button>
+                <button class="btn sm" data-a="phantom" data-id="${t.id}" data-n="1">+</button></td></tr>`;
+          }).join('')}</tbody></table></div>
+        <div class="pb"><div class="hint">A phantom win does nothing for the playoffs — the standings above and the
+          bracket ignore it entirely. It only counts for draft order, and because the worst record picks first it pushes
+          a team <b>down</b> the board. Give one to a team level with another and the other team takes the better pick.
+          They clear when the season rolls over.</div></div></div>`:''}
+
       <div class="grid g2" style="margin-bottom:14px">
         <div class="panel"><div class="ph"><h3>Playoff bracket</h3><div class="spacer"></div>
           <span class="tiny dim">weeks ${P.startWeek}–${P.startWeek + playoffWeeks() - 1}</span></div>
           <div class="pb stack">
-          ${playoffBracket().map(rd=>`<div class="assetbox">
-            <div class="flabel">${rd.final?'Final':'Round '+rd.round} · week ${rd.week}${rd.final&&P.twoWeekFinal?' and '+(rd.week+1):''}</div>
-            ${rd.byes.length?'<div class="tiny dim" style="margin-bottom:6px">On a bye: '+rd.byes.map(b=>esc((b.team||{}).name||'')).join(', ')+'</div>':''}
-            ${rd.games.map(g=>`<div class="row" style="justify-content:space-between;padding:3px 0">
-              <span>${g.a.team?'<span class="dim tiny">'+g.a.seed+'</span> '+esc(g.a.team.name):'<span class="dim">winner</span>'}</span>
-              <span class="dim tiny">vs</span>
-              <span>${g.b.team?'<span class="dim tiny">'+g.b.seed+'</span> '+esc(g.b.team.name):'<span class="dim">winner</span>'}</span>
-            </div>`).join('') || '<div class="dim tiny">winners meet here</div>'}
-          </div>`).join('') || '<div class="empty-state"><p>Set a playoff field of two or more under Settings › League.</p></div>'}
+          ${bracketHtml(playoffBracket(), {advance:'winner', twoWeekFinal:P.twoWeekFinal})
+            || '<div class="empty-state"><p>Set a playoff field of two or more under Settings › Playoffs.</p></div>'}
           </div>
           <div class="pb"><div class="hint">${P.reseed?'Reseeded each round, so the top team left always draws the lowest.':'Fixed bracket — the path is set when the field is.'}
-            ${P.thirdPlace?' A third place game is played.':''}${P.consolation?' Everyone else plays a consolation bracket.':''}</div></div>
+            ${P.thirdPlace?' A third place game is played.':''}</div></div>
         </div>
         <div class="panel"><div class="ph"><h3>Cap standings</h3></div><div class="pb tight scrollx"><table>
           <thead><tr>${sortTh('cst','name','Team')}${sortTh('cst','n','Players','right')}
@@ -3063,7 +3117,35 @@ VIEWS.teams = function(){
             <td class="right num">${teamPlayers(x.id).length}</td>
             ${yrs.slice(0,3).map(yy=>{const sp=capSpace(x.id,yy);return '<td class="right num '+(sp<0?'bad':'')+'">'+money(sp,{plus:true})+'</td>';}).join('')}</tr>`).join('')}
           </tbody></table></div></div>
-      </div>`;
+      </div>
+
+      ${loserOn()?(()=>{ const L = S.settings.loser, lb = loserBracket();
+        const champ = loserChampion();
+        return `<div class="panel" style="margin-bottom:14px">
+        <div class="ph"><h3>${esc(loserName())}</h3><div class="spacer"></div>
+          <span class="tiny dim">${lb.length?'weeks '+L.startWeek+'–'+(L.startWeek + loserWeeks() - 1):'not enough teams'}</span></div>
+        ${champ?`<div class="pb"><div class="hint good"><b>${esc(teamName(champ))}</b> comes out of the ${esc(loserName())}${
+          loserPrizeOn()?' and takes the first pick.':'.'}</div></div>`:''}
+        <div class="pb stack">
+          ${bracketHtml(lb, {advance:L.advance, twoWeekFinal:L.twoWeekFinal, which:'loser'})
+            || '<div class="empty-state"><p>Two or more teams have to miss the playoffs before there is a bracket to draw.</p></div>'}
+        </div>
+        ${lb.length?`<div class="pb tight scrollx"><table>
+          <thead><tr><th>In it</th><th>Lineup set by</th><th class="right">This week</th><th></th></tr></thead>
+          <tbody>${loserField().map(t=>{
+            const boss = lineupBoss(t.id), lu = lineupFor(t.id);
+            return `<tr><td>${esc(t.name)}</td>
+              <td class="${boss===t.id?'dim':'warn'}">${esc(teamName(boss))}${boss===t.id?'':' <span class="tiny">(holds their first)</span>'}</td>
+              <td class="right num">${lu.total.toFixed(1)}${lu.saved?'':' <span class="tiny dim">best</span>'}</td>
+              <td class="right">${canSetLineup(t.id)
+                ? '<button class="btn sm" data-a="editLineup" data-team="'+t.id+'" data-w="'+(+S.live.week||1)+'">Set lineup</button>'
+                : ''}</td></tr>`;
+          }).join('')}</tbody></table></div>`:''}
+        <div class="pb"><div class="hint">${L.who==='bottom'?'The bottom '+L.teams+' of the teams that missed out':'Everyone who missed the playoffs'},
+          ${L.seedBy==='worst'?'worst record seeded first':'best of the rest seeded first'}.
+          ${L.advance==='loser'?'<b>Losing</b> puts you through, so the last team standing is the one that could not win a game.':'Winning puts you through.'}
+          ${L.reseed?' Reseeded each round.':' Fixed bracket.'}${L.thirdPlace?' A third place game is played.':''}</div></div></div>`;
+      })():''}`;
     })() : ''}
   </div>`;
 };
@@ -3105,6 +3187,90 @@ ACT.rmRetain = (d)=>{
   save(); render();
 };
 function freeAgents(){ return S.players.filter(p=> (!p.contract || isOrphan(p)) && !isRetired(p)); }
+/* The lineup editor. Slot by slot, only players who can actually play there,
+   and nobody in two places at once. */
+function lineupForm(teamId, week){
+  const L = lineupFor(teamId, week);
+  const pool = teamPlayers(teamId).filter(p=> !offCap(p) || playerSlot(p)==='active');
+  const chosen = {}; L.slots.forEach(x=>{ if(x.p) chosen[x.p.id]=1; });
+  const boss = lineupBoss(teamId, week);
+  return `
+    ${boss!==teamId?`<div class="hint warn">You are setting this because you hold ${esc(teamName(teamId))}'s
+      ${S.league.season+1} first-round pick, and the ${esc(loserName())} decides who takes the first pick.</div>`:''}
+    <div class="stack" style="margin:10px 0">
+      ${L.slots.map((x,i)=>{
+        const elig = x.eligible || [];
+        return `<div class="row" style="gap:8px">
+          <span class="tiny dim" style="width:56px">${esc(x.slot)}</span>
+          <select data-oninput="luSet" data-team="${teamId}" data-w="${week}" data-i="${i}" style="flex:1;min-width:150px">
+            <option value="">— empty —</option>
+            ${pool.filter(p=> elig.indexOf(p.pos)>=0)
+              .sort((a,b)=> fpts(b.id)-fpts(a.id))
+              .map(p=>'<option value="'+p.id+'"'+(x.p&&x.p.id===p.id?' selected':'')+
+                (chosen[p.id]&&(!x.p||x.p.id!==p.id)?' disabled':'')+'>'+
+                esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+'</option>').join('')}
+          </select>
+          <span class="tiny num" style="width:48px;text-align:right">${x.pts.toFixed(1)}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="row"><span class="tiny dim">${L.saved?'Set by hand':'Nothing saved — this is the best lineup'}</span>
+      <div class="spacer"></div><b>${L.total.toFixed(1)}</b></div>
+    <div class="hint">Anything you leave empty scores nothing. Clear the lot and it goes back to picking
+      the best lineup for you.</div>`;
+}
+ACT.editLineup = (d)=>{
+  const tid = d.team, w = +d.w || (+S.live.week||1);
+  if(!canSetLineup(tid, w)) return toast('Not your lineup to set','bad');
+  ui.tmp.lu = {team:tid, week:w};
+  modal('Lineup — '+teamName(tid)+', week '+w, lineupForm(tid, w),
+    '<button class="btn ghost" data-a="luClear">Back to the best lineup</button>'+
+    '<button class="btn pri" data-a="closeModal">Done</button>');
+};
+ACT.luSet = (d, el)=>{
+  const tid = d.team, w = +d.w, i = +d.i;
+  if(!canSetLineup(tid, w)) return toast('Not your lineup to set','bad');
+  S.lineups = S.lineups || {};
+  S.lineups[w] = S.lineups[w] || {};
+  const cur = lineupFor(tid, w);
+  const arr = cur.slots.map(x=> x.p ? x.p.id : '');
+  const val = el.value || '';
+  const dup = arr.indexOf(val);
+  if(val && dup>=0 && dup!==i) arr[dup] = '';    // nobody plays two positions
+  arr[i] = val;
+  S.lineups[w][tid] = arr;
+  save();
+  $('#modalBox .mb').innerHTML = lineupForm(tid, w);
+};
+ACT.luClear = ()=>{
+  const lu = ui.tmp.lu; if(!lu) return;
+  if(!canSetLineup(lu.team, lu.week)) return toast('Not your lineup to set','bad');
+  if((S.lineups||{})[lu.week]) delete S.lineups[lu.week][lu.team];
+  save();
+  $('#modalBox .mb').innerHTML = lineupForm(lu.team, lu.week);
+  toast('Back to the best lineup','good');
+};
+ACT.brSet = (d)=>{
+  if(!isCommish()) return toast('Commissioner only','bad');
+  const map = bracketResults(d.w==='loser' ? 'loser' : 'playoff');
+  if(d.team) map[d.key] = d.team; else delete map[d.key];
+  logIt((d.w==='loser'?loserName():'Playoff')+' game called '+(d.team?'for '+teamName(d.team):'back to the scores'),
+    {type:'admin', teams:d.team?[d.team]:[]});
+  save(); render();
+};
+ACT.phantom = (d)=>{
+  if(!isCommish()) return toast('Commissioner only','bad');
+  const t = byId(S.teams, d.id); if(!t) return;
+  const was = phantomWins(t);
+  t.phantomW = Math.max(0, was + (+d.n||0));
+  if(t.phantomW===was) return;
+  const up = t.phantomW > was;
+  logIt(teamName(t.id)+(up?' given a phantom win':' had a phantom win taken back')+
+    ' — now on '+t.phantomW+' for draft order, record unchanged at '+teamRecord(t).w+'-'+teamRecord(t).l,
+    {type:'admin', teams:[t.id]});
+  save(); render();
+  toast(teamName(t.id)+' on '+t.phantomW+' phantom win'+(t.phantomW===1?'':'s'),'good');
+};
 ACT.setSlot = (d)=>{
   const p = byId(S.players, d.id), slot = d.s;
   if(!p || !p.contract) return;
@@ -3133,18 +3299,24 @@ ACT.setSlot = (d)=>{
 ACT.seasonIR = (d)=>{
   const p = byId(S.players, d.id);
   if(!p || !p.contract) return;
-  const tid = p.contract.teamId, y = S.league.season;
-  const left = weeksLeft(), pctLeft = left/seasonWeeks();
-  const gross = fixInc(Math.max(0, grossHit(p,y) - retainedOn(p,y)));
+  const y = S.league.season, b = irBasis(p);
   modal('Season-ending injury — '+p.name, `
-    <p>${esc(p.name)} is done for ${y}. With ${left} of ${seasonWeeks()} weeks still to play, the league gives back
-      <b>${pct(pctLeft*100)}</b> of what is left on this year's salary.</p>
+    <p>${esc(p.name)} is done for ${y}. ${b.mode==='fixed'
+      ? 'This league hands back a set figure whenever that happens.'
+      : 'This league hands back the share of the year he will not play — '+esc(irModeLine(b))+', so <b>'+pct(b.pct*100)+'</b> comes off.'}</p>
     <div class="kv" style="margin:12px 0">
-      <dt>His ${y} salary</dt><dd>${money(gross)}</dd>
-      <dt>Weeks remaining</dt><dd>${left} of ${seasonWeeks()}</dd>
-      <dt>Relief</dt><dd class="good">${money(fixInc(gross*pctLeft))}</dd>
-      <dt>Still on your books</dt><dd>${money(fixInc(gross*(1-pctLeft)))}</dd>
+      <dt>His ${y} salary</dt><dd>${money(b.gross)}</dd>
+      ${b.mode==='fixed'
+        ? '<dt>Set relief</dt><dd>'+money(b.set)+(b.capped?' <span class="tiny dim">more than he costs</span>':'')+'</dd>'
+        : (b.mode==='weeks'
+            ? '<dt>Weeks remaining</dt><dd>'+b.left+' of '+b.weeks+'</dd>'
+            : '<dt>Games played</dt><dd>'+b.played+' of '+b.weeks+'</dd>')}
+      <dt>Relief</dt><dd class="good">${money(b.relief)}</dd>
+      <dt>Still on your books</dt><dd>${money(fixInc(b.gross-b.relief))}</dd>
     </div>
+    ${b.mode==='games' && b.played===0 && (+S.live.week||1)>1
+      ? '<div class="hint warn">He has not played a game this season, so the whole year comes back. Change the basis at Settings › Roster if that is not what the league wants.</div>'
+      : ''}
     <p class="muted tiny">He holds an IR spot and cannot be activated again until ${y+1}. Later years of the deal are untouched.</p>`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
     '<button class="btn pri" data-a="seasonIRGo" data-id="'+p.id+'">Put him on season-ending IR</button>');
@@ -3152,12 +3324,15 @@ ACT.seasonIR = (d)=>{
 ACT.seasonIRGo = (d)=>{
   const p = byId(S.players,d.id), tid = p.contract.teamId, y = S.league.season;
   if(slotRoom(tid,'ir') <= 0 && !onIR(p)){ closeModal(); return toast('No IR spots left','bad'); }
-  const left = weeksLeft(), pctLeft = left/seasonWeeks();
-  const gross = fixInc(Math.max(0, grossHit(p,y) - retainedOn(p,y)));
+  const b = irBasis(p);
   p.slot = 'ir';
-  p.ir = {seasonEnding:true, year:y, week:S.live.week||1, weeksLeft:left,
-          pct:Math.round(pctLeft*1000)/10, relief:fixInc(gross*pctLeft)};
-  logIt(teamName(tid)+' put '+p.name+' on season-ending IR — '+money(p.ir.relief)+' back ('+p.ir.pct+'% of the year left)',
+  p.ir = {seasonEnding:true, year:y, week:S.live.week||1, mode:b.mode,
+          played:b.played, weeksLeft:b.left, gamesTotal:b.weeks,
+          pct: b.pct==null ? null : Math.round(b.pct*1000)/10, relief:b.relief};
+  logIt(teamName(tid)+' put '+p.name+' on season-ending IR — '+money(p.ir.relief)+' back ('+
+    (b.mode==='fixed' ? 'the set figure' : b.mode==='weeks'
+      ? b.left+' of '+b.weeks+' weeks left'
+      : 'played '+b.played+' of '+b.weeks+' games')+')',
     {type:'admin', teams:[tid], players:[p.id]});
   notify('Season-ending IR', p.name+' is out for the year. '+teamName(tid)+' gets '+money(p.ir.relief)+' back.','warn');
   closeModal(); save(); render(); toast('Relief applied','good');
@@ -3305,6 +3480,81 @@ ACT.unretire = (d)=>{
    for nothing.
    ============================================================ */
 function openClaimFor(playerId){ return (S.taxiClaims||[]).find(c=> c.playerId===playerId && c.status==='open'); }
+/* Who has been raiding whom. Only worth showing once somebody has actually
+   tried something, or it is a table of zeroes. */
+function taxiStealBoard(){
+  const any = (S.taxiClaims||[]).length;
+  if(!any && !taxiLimitOn()) return '';
+  const t = S.settings.taxi;
+  const rows = S.teams.map(tm=>({tm, n:taxiStealCount(tm.id), left:taxiStealsLeft(tm.id)}))
+    .filter(r=> r.n.attempts>0 || taxiLimitOn())
+    .sort((a,b)=> b.n.landed-a.n.landed || b.n.attempts-a.n.attempts);
+  if(!rows.length) return '';
+  return `<div class="hr"></div>
+    <div class="ph"><h3 style="font-size:15px">Taxi claims this season</h3><div class="spacer"></div>
+      <span class="tiny dim">${taxiLimitOn()
+        ? (t.limitMode==='landed' ? 'up to '+t.limitMax+' can land per team' : t.limitMax+' attempts each')
+        : 'no limit set'}</span></div>
+    <div class="pb tight scrollx"><table>
+      <thead><tr><th>Team</th><th class="right">Tried</th><th class="right">Landed</th>
+        <th class="right">Running</th><th class="right">Saw them off</th>
+        ${taxiLimitOn()?'<th class="right">Left</th>':''}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td>${esc(r.tm.name)}</td>
+        <td class="right num ${r.n.attempts?'':'dim'}">${r.n.attempts}</td>
+        <td class="right num ${r.n.landed?'good':'dim'}">${r.n.landed}</td>
+        <td class="right num ${r.n.inFlight?'':'dim'}">${r.n.inFlight}</td>
+        <td class="right num dim">${taxiStolenFrom(r.tm.id)}</td>
+        ${taxiLimitOn()?'<td class="right num '+(r.left<=0?'bad':'')+'">'+r.left+'</td>':''}
+      </tr>`).join('')}</tbody></table></div>
+    <div class="pb"><div class="hint">Counts start over when the season rolls over.
+      <b>Tried</b> is every claim put in, <b>Landed</b> is the ones that stuck, and
+      <b>Saw them off</b> is how many times that team kept a player somebody came for.</div></div>`;
+}
+/* How many times this team had somebody taken off their own taxi squad. */
+function taxiStolenFrom(teamId){
+  return (S.taxiClaims||[]).filter(c=> c.fromTeam===teamId && c.status==='awarded').length;
+}
+/* ---- how many a team has taken off other people's taxi squads ----
+   S.taxiClaims is emptied when the season rolls over, so all of this is
+   per-season without anything having to be reset by hand. */
+function taxiStealCount(teamId){
+  const mine = (S.taxiClaims||[]).filter(c=> c.toTeam===teamId);
+  return {
+    attempts: mine.length,
+    landed:   mine.filter(c=> c.status==='awarded').length,
+    inFlight: mine.filter(c=> c.status==='open').length,
+    failed:   mine.filter(c=> c.status==='defended' || c.status==='withdrawn').length
+  };
+}
+/* Two ways to read a limit, and they answer different questions.
+   "attempts" — every claim you put in burns one, however it ends. Pulling it
+   does not give it back, or a team could tie up half the league and pull out
+   at the last second.
+   "landed"  — only claims that actually stick count, but ones still running
+   are counted too, since they might yet stick. A claim that gets defended or
+   lapses hands the slot back and you can go again. */
+function taxiStealsUsed(teamId){
+  const n = taxiStealCount(teamId);
+  return S.settings.taxi.limitMode==='landed' ? n.landed + n.inFlight : n.attempts;
+}
+function taxiLimitOn(){
+  const t = S.settings.taxi;
+  return t.limitMode && t.limitMode!=='off' && +t.limitMax>0;
+}
+function taxiStealsLeft(teamId){
+  if(!taxiLimitOn()) return null;
+  return Math.max(0, (+S.settings.taxi.limitMax) - taxiStealsUsed(teamId));
+}
+/* Why this team cannot claim anybody right now, or null if they can. */
+function taxiLimitBlock(teamId){
+  if(!taxiLimitOn()) return null;
+  if(taxiStealsLeft(teamId) > 0) return null;
+  const t = S.settings.taxi, n = +t.limitMax, s = n===1?'':'s';
+  return t.limitMode==='landed'
+    ? 'they are already down for '+n+' taxi claim'+s+' this season'
+    : 'they have used all '+n+' of their taxi claims this season';
+}
 function claimBlocked(c){
   const p = byId(S.players, c.playerId);
   if(!p || !p.contract) return 'he is no longer under contract';
@@ -3333,6 +3583,17 @@ function settleTaxiClaim(c){
     notify('Claim defended', teamName(c.fromTeam)+' kept '+playerName(c.playerId)+' — '+blocked+'.');
     return;
   }
+  /* Checked again here, not just when the claim went in: another of this
+     team's claims may have landed in the meantime and used up the allowance. */
+  if(S.settings.taxi.limitMode==='landed' && taxiLimitOn()){
+    const landed = taxiStealCount(c.toTeam).landed;
+    if(landed >= +S.settings.taxi.limitMax){
+      c.status='withdrawn'; c.reason='they had already taken their '+S.settings.taxi.limitMax+' for the season';
+      c.log.unshift({at:Date.now(), text:'Claim lapsed — '+teamName(c.toTeam)+' had already taken their '+S.settings.taxi.limitMax+' this season'});
+      notify('Claim lapsed', teamName(c.toTeam)+' is at their taxi claim limit, so '+playerName(c.playerId)+' stays put.','bad');
+      return;
+    }
+  }
   const cannot = claimCanLand(c);
   if(cannot){
     c.status='withdrawn'; c.reason=cannot;
@@ -3353,6 +3614,7 @@ ACT.taxiClaim = (d)=>{
   if(!p || !p.contract || !onTaxi(p)) return toast('He is not on a taxi squad','bad');
   if(p.contract.teamId===me) return toast('He is already yours','bad');
   if(openClaimFor(p.id)) return toast('Somebody has already claimed him','bad');
+  if(taxiLimitBlock(me)) return toast('No claims left — '+taxiLimitBlock(me),'bad');
   const hit = fixInc(Math.max(0, grossHit(p, S.league.season) - retainedOn(p, S.league.season)));
   const room = slotRoom(me,'active'), space = capSpace(me, S.league.season);
   modal('Claim '+p.name+' off the taxi squad', `
@@ -3365,6 +3627,9 @@ ACT.taxiClaim = (d)=>{
         <div class="s">${hit>space?'not enough':'room after: '+money(space-hit,{plus:true})}</div></div>
       <div class="tile"><div class="k">Roster spots</div><div class="v ${room<=0?'bad':''}" style="font-size:19px">${room}</div>
         <div class="s">he must go straight to active</div></div>
+      ${taxiLimitOn()?`<div class="tile"><div class="k">Claims left</div>
+        <div class="v ${taxiStealsLeft(me)<=0?'bad':''}" style="font-size:19px">${taxiStealsLeft(me)}</div>
+        <div class="s">of ${S.settings.taxi.limitMax} this season${S.settings.taxi.limitMode==='landed'?', counting ones still running':''}</div></div>`:''}
     </div>
     <div class="hint">Checked again when the window closes, not just now. If you have spent the room by then the claim
       lapses and he stays where he is.</div>`,
@@ -3373,6 +3638,9 @@ ACT.taxiClaim = (d)=>{
 };
 ACT.taxiClaimGo = (d)=>{
   const p = byId(S.players,d.id), me = actingTeam();
+  /* Checked again — the modal may have been sitting open while another of
+     their claims settled. */
+  if(taxiLimitBlock(me)) return toast('No claims left — '+taxiLimitBlock(me),'bad');
   const c = {id:uid('tc'), playerId:p.id, fromTeam:p.contract.teamId, toTeam:me, at:Date.now(),
     clock:newClock(S.settings.taxi.windowHours), status:'open',
     log:[{at:Date.now(), text:teamName(me)+' claimed him off the taxi squad'}]};
@@ -3920,7 +4188,8 @@ function assetChips(o, opts){
   const bits = (o.players||[]).map(id=>{ const p=byId(S.players,id); return p?'<span class="chip">'+posTag(p.pos)+' '+esc(p.name)+(rm?'<button data-a="'+rm+'" data-kind="players" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; })
     .concat((o.picks||[]).map(id=>{ const k=byId(S.picks,id); return k?'<span class="chip">'+esc(pickLabel(k))+(rm?'<button data-a="'+rm+'" data-kind="picks" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; }))
     .filter(Boolean);
-  if(+o.cash) bits.push('<span class="chip money">'+money(+o.cash)+' cap</span>');
+  if(+o.cash) bits.push('<span class="chip money">'+money(+o.cash)+' cap'+
+    (rm?'<button data-a="'+rm+'" data-kind="cash" data-id="cash" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>');
   return bits.join('') || '<span class="dim tiny">nothing yet</span>';
 }
 /* A trade with more than two teams in it is just a list of hand-overs. */
@@ -3930,19 +4199,23 @@ function legTeams(tr){
   return Object.keys(set);
 }
 function legValue(l){ return assetValue({players:l.players, picks:l.picks, cash:l.cash}); }
-/* What each team gains and loses this year if the whole thing goes through. */
+/* How much cap ROOM each team gains or loses if the whole thing goes through.
+   Room, not committed money — the two move in opposite directions, and both
+   callers add this straight onto capSpace(). Sending a salary away frees room;
+   taking one on eats it. This was once written in committed terms, which made
+   the board show every team's after figure backwards. */
 function tradeCapDelta(tr, teamId, year){
   let d = 0;
   (tr.legs||[]).forEach(l=>{
     (l.players||[]).forEach(pid=>{
       const p = byId(S.players,pid); if(!p || !p.contract) return;
       const gross = fixInc(Math.max(0, grossHit(p,year) - retainedOn(p,year)));
-      const keep  = fixInc(+(((l.retain||{})[pid]||{}).byYear||{})[year] || 0);
-      if(l.from===teamId) d -= (gross - keep);   // off your books, less whatever you keep paying
-      if(l.to===teamId)   d += (gross - keep);
+      const keep  = Math.min(gross, fixInc(+(((l.retain||{})[pid]||{}).byYear||{})[year] || 0));
+      if(l.from===teamId) d += (gross - keep);   // frees up his salary, less the part you keep paying
+      if(l.to===teamId)   d -= (gross - keep);   // costs them his salary, less the part you keep paying
     });
-    const cash = +l.cash||0;
-    if(cash){ if(l.from===teamId) d += cash; if(l.to===teamId) d -= cash; }
+    const cash = +l.cash||0;                     // sending cap dollars leaves you poorer, them richer
+    if(cash){ if(l.from===teamId) d -= cash; if(l.to===teamId) d += cash; }
   });
   return fixInc(d);
 }
@@ -3969,18 +4242,9 @@ function multiLegal(tr){
   });
   return bad;
 }
-function processMulti(tr){
-  if(tr.status!=='review') return;
-  if(limitBinds('trades')){
-    const lim = limitAfterTrade(tr);
-    if(lim.length){
-      tr.status='rejected';
-      tr.log.unshift({at:Date.now(), text:'Blocked — '+teamName(lim[0].team)+' would be past the contract length limits'});
-      notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad');
-      return;
-    }
-  }
-  tr.undo = tradeSnapshot(tr);
+/* Hand everything over. Used both for real and for the dry run below, so the
+   two can never drift apart. */
+function applyMultiLegs(tr){
   (tr.legs||[]).forEach(l=>{
     (l.players||[]).forEach(pid=>{
       const p = byId(S.players,pid); if(!p || !p.contract) return;
@@ -3996,6 +4260,50 @@ function processMulti(tr){
       if(t){ t.adj=t.adj||[]; t.adj.push({year:S.league.season, amount:-cash, note:'Cap from '+teamName(l.from)}); }
     }
   });
+}
+/* Would anybody be over once this lands? Measured, not calculated — we hand
+   the assets over for real, read everybody's books, then put it all back. The
+   arithmetic version of this ran with its signs reversed for months without
+   anyone noticing, which is survivable in a table and is not in a gate.
+   Same year as the two-team check, so a three-way is held to the same standard
+   as the two-way it could otherwise be split into. */
+function multiCapProblem(tr){
+  const snap = tradeSnapshot(tr);
+  applyMultiLegs(tr);
+  let worst = null;
+  legTeams(tr).forEach(t=>{
+    const sp = capSpace(t, S.league.season);
+    if(sp < 0 && (!worst || sp < worst.space)) worst = {team:t, space:sp, over:fixInc(-sp)};
+  });
+  restoreSnapshot(snap);
+  return worst;
+}
+function processMulti(tr){
+  if(tr.status!=='review') return;
+  if(limitBinds('trades')){
+    const lim = limitAfterTrade(tr);
+    if(lim.length){
+      tr.status='rejected';
+      tr.reason = teamName(lim[0].team)+' would be past the contract length limits';
+      tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
+      notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad');
+      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
+      return;
+    }
+  }
+  if(S.settings.trades.capMustBeLegal){
+    const bad = multiCapProblem(tr);
+    if(bad){
+      tr.status='rejected';
+      tr.reason = 'Would put '+teamName(bad.team)+' '+money(bad.over)+' over the '+S.league.season+' cap';
+      tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
+      notify('Trade blocked', tr.reason, 'bad');
+      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
+      return;
+    }
+  }
+  tr.undo = tradeSnapshot(tr);
+  applyMultiLegs(tr);
   tr.status='approved'; tr.processedAt=Date.now();
   tr.log.unshift({at:Date.now(), text:'Processed'});
   logIt('Multi-team trade processed — '+legTeams(tr).map(teamName).join(', '),
@@ -4008,7 +4316,8 @@ function moveAssets(fromTeam, toTeam, o){
     const p=byId(S.players,id); if(!p || !p.contract) return;
     p.contract.teamId = toTeam;
     const r = (o.retain||{})[id];
-    if(r && +r.pct) applyRetention(id, fromTeam, +r.pct, +r.through||S.league.season, 'pct');
+    if(isOldRetain(r)) applyRetention(id, fromTeam, +r.pct, +r.through||S.league.season, 'pct');
+    else if(r && r.byYear && Object.keys(r.byYear).length) applyRetentionYears(id, fromTeam, r.byYear);
   });
   (o.picks||[]).forEach(id=>{ const k=byId(S.picks,id); if(k) k.ownerTeamId=toTeam; });
   const cash = +o.cash||0;
@@ -4072,12 +4381,12 @@ function askForm(){
   <div class="hr"></div>
   <div class="flabel">Keep paying some of his salary</div>
   <div class="assetbox"><div class="row">
-    <input type="number" min="0" max="100" style="width:96px" data-oninput="askField" data-f="retainPct" value="${a.retainPct||0}">
+    <input type="number" min="0" max="100" style="width:96px" data-oninput="askField" data-f="retainPct" data-k="askret" value="${a.retainPct||0}">
     <span class="muted tiny">% of his cap hit, through</span>
     <select data-oninput="askField" data-f="retainThrough">
       ${retainYearOptions(a.playerId, a.retainThrough)}</select>
   </div>
-  <div class="hint" style="margin-top:6px">${a.retainPct? 'You would carry '+money(retainPreview(a.playerId, a.retainPct, a.retainThrough))+' in '+S.league.season+', and the buyer takes the rest.' : 'Leave at zero to hand over the full contract.'}</div>
+  <div class="hint" style="margin-top:6px" id="askRetHint">${askRetLine(a)}</div>
   </div>
   <div class="hint">Ask value ${money(askValue(a))} · the clock runs ${S.settings.trades.auctionHours} hours once someone meets it${S.settings.trades.quiet.on?', pausing overnight':''}.</div>`;
 }
@@ -4088,6 +4397,11 @@ function retainYearOptions(playerId, sel){
   for(let y=S.league.season; y<=last; y++) out.push('<option value="'+y+'"'+(+sel===y?' selected':'')+'>'+y+'</option>');
   return out.join('') || '<option value="'+S.league.season+'">'+S.league.season+'</option>';
 }
+function askRetLine(a){
+  return a.retainPct
+    ? 'You would carry '+money(retainPreview(a.playerId, a.retainPct, a.retainThrough))+' in '+S.league.season+', and the buyer takes the rest.'
+    : 'Leave at zero to hand over the full contract.';
+}
 function retainPreview(playerId, pct, through){
   const p = byId(S.players, playerId); if(!p || !p.contract) return 0;
   const y = S.league.season;
@@ -4096,7 +4410,10 @@ function retainPreview(playerId, pct, through){
 ACT.askField = (d,el)=>{
   const num = d.f==='cash' || d.f==='retainPct' || d.f==='retainThrough';
   ui.tmp.ask[d.f] = num ? (+el.value||0) : el.value;
-  if(d.f==='retainPct' || d.f==='retainThrough') $('#modalBox .mb').innerHTML = askForm();
+  if(d.f==='retainPct' || d.f==='retainThrough'){
+    const h = $('#askRetHint');
+    if(h) h.innerHTML = askRetLine(ui.tmp.ask); else remodal(askForm());
+  }
 };
 ACT.askSpecAdd = (d)=>{
   const a = ui.tmp.ask; a.specs = a.specs||[];
@@ -4965,6 +5282,21 @@ function tradeAwaits(tr, teamId){
     ? (tr.teams||[]).indexOf(teamId)>=0 && (tr.accepted||[]).indexOf(teamId)<0
     : !!(tr.b && tr.b.teamId===teamId);
 }
+/* Retention is easy to miss on a trade card, and it is the whole difference
+   between a deal that fits and one that does not. */
+function retainNote(o){
+  const kept = Object.keys(o.retain||{}).filter(pid=>{
+    const r = o.retain[pid];
+    return isOldRetain(r) || (r && r.byYear && Object.keys(r.byYear).some(y=> +r.byYear[y]>0));
+  });
+  if(!kept.length) return '';
+  return '<div class="tiny good" style="margin-top:5px">'+ kept.map(pid=>{
+    const r = o.retain[pid];
+    return esc(teamName(o.teamId))+' keeps paying '+ (isOldRetain(r)
+      ? r.pct+'% of '+esc(playerName(pid))+' through '+r.through
+      : money(sum(Object.keys(r.byYear).map(y=> +r.byYear[y]||0)))+' of '+esc(playerName(pid)));
+  }).join(' · ') +'</div>';
+}
 function tradeLine(tr){
   if(tr.type==='multi') return (tr.teams||[]).map(teamName).join(' ⇄ ');
   const l = (o)=> ((o.players||[]).map(playerName).concat((o.picks||[]).map(id=>{const k=byId(S.picks,id);return k?pickLabel(k):'';})).filter(Boolean).join(', ') || 'nothing') + ((+o.cash)?' + '+money(o.cash):'');
@@ -5071,45 +5403,76 @@ function tbSide(side){
         ${ownedPicks(tid).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
       <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="picks">Add</button>
     </div>
-    <label class="f" style="margin-top:8px"><span>Cap dollars sent</span>
-      <input type="number" step="${S.settings.cap.increment}" data-oninput="tbCash" data-side="${side}" value="${s.cash||0}"></label>
+    <div class="row" style="margin-top:6px">
+      <input type="number" id="tbc_${side}" min="0" step="${S.settings.cap.increment}"
+        placeholder="Cap dollars…" style="flex:1;min-width:140px">
+      <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="cash">${s.cash?'Replace':'Add'}</button>
+    </div>
     ${s.players.length?`<div style="margin-top:9px"><div class="flabel">Keep paying part of the salary</div>
       ${s.players.map(pid=>{
-        const pl = byId(S.players,pid), r = (s.retain||{})[pid] || {pct:0, through:S.league.season};
-        return `<div class="row" style="margin-bottom:5px">
-          <span class="tiny" style="flex:1;min-width:70px">${esc(pl?pl.name:'—')}</span>
-          <input type="number" min="0" max="100" style="width:64px" data-oninput="tbRetain" data-side="${side}" data-pid="${pid}" data-f="pct" value="${r.pct||0}">
-          <span class="tiny dim">% thru</span>
-          <select data-oninput="tbRetain" data-side="${side}" data-pid="${pid}" data-f="through" style="width:92px">${retainYearOptions(pid, r.through)}</select>
-          ${r.pct?'<span class="tiny good">'+money(retainPreview(pid,r.pct,r.through))+' in '+y+'</span>':''}
+        const pl = byId(S.players,pid); if(!pl || !pl.contract) return '';
+        const r = (s.retain||{})[pid] || {};
+        const keep = r.byYear || {};
+        const tot = sum(Object.keys(keep).map(k=> +keep[k]||0));
+        return `<div style="margin-bottom:8px">
+          <div class="row" style="margin-bottom:3px">
+            <span class="tiny" style="flex:1;min-width:70px">${esc(pl.name)}</span>
+            <input type="number" min="0" max="100" style="width:56px" placeholder="%"
+              data-oninput="tbPct" data-side="${side}" data-pid="${pid}" data-k="tp_${side}_${pid}"
+              value="${r.pct==null?'':esc(String(r.pct))}">
+            <button class="btn sm ghost" data-a="tbFill" data-side="${side}" data-pid="${pid}">Every year</button>
+          </div>
+          <div class="scrollx"><table><tbody><tr>
+          ${contractYears(pl).map(x=>`<td style="padding:1px 3px">
+            <div class="tiny dim" style="text-align:center">${x.year}</div>
+            <input type="number" min="0" max="${x.salary}" step="${S.settings.cap.increment}"
+              value="${+keep[x.year]||0}" style="width:70px;text-align:right"
+              data-oninput="tbKeep" data-side="${side}" data-pid="${pid}" data-y="${x.year}" data-k="tk_${side}_${pid}_${x.year}">
+            <div class="tiny dim" style="text-align:center">of ${money(x.salary)}</div></td>`).join('')}
+          </tr></tbody></table></div>
+          <div class="tiny good" id="tbtot_${side}_${pid}">${tot?'keeping '+money(tot)+' across the deal':''}</div>
         </div>`;
       }).join('')}
-      <div class="hint">Whatever you keep stays on your books and comes off theirs, for every year through the one you pick.</div></div>`:''}
+      <div class="hint">Any year, any amount — eat a lump in one season and nothing the next.
+      Type a percentage and press <b>Every year</b> to fill them all at once.</div></div>`:''}
     <div class="tiny dim" style="margin-top:6px">Salary out ${money(out)} · space after ${money(capSpace(tid,y)+out,{plus:true})}</div>
   </div>`;
+}
+/* Whatever is on the workbench right now, in the shape the cap board wants. */
+function builderTrade(){
+  if(ui.tmp.multi) return ui.tmp.multi;
+  const a = ui.tmp.tb.a, b = ui.tmp.tb.b;
+  return {legs:[
+    {from:a.teamId, to:b.teamId, players:a.players, picks:a.picks, cash:a.cash, retain:retainToYears(a)},
+    {from:b.teamId, to:a.teamId, players:b.players, picks:b.picks, cash:b.cash, retain:retainToYears(b)}]};
 }
 function tradeForm(){
   const m = ui.tmp.multi;
   if(m) return multiForm();
   return `<div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
-  ${capBoard({legs:[
-    {from:ui.tmp.tb.a.teamId, to:ui.tmp.tb.b.teamId, players:ui.tmp.tb.a.players, picks:ui.tmp.tb.a.picks,
-     cash:ui.tmp.tb.a.cash, retain:retainToYears(ui.tmp.tb.a)},
-    {from:ui.tmp.tb.b.teamId, to:ui.tmp.tb.a.teamId, players:ui.tmp.tb.b.players, picks:ui.tmp.tb.b.picks,
-     cash:ui.tmp.tb.b.cash, retain:retainToYears(ui.tmp.tb.b)}]})}
+  <div id="capBoardBox">${capBoard(builderTrade())}</div>
   <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>
   <div class="hint">Once the other side accepts, the trade sits in a ${S.settings.trades.reviewHours}-hour review window
   ${S.settings.trades.counters.on?'during which any other team can counter it':''}${S.settings.trades.quiet.on?'. The window stops counting overnight':''}.</div>`;
 }
-/* The old two-sided builder speaks in percentages; the cap board wants years. */
+/* Both builders now keep per-year figures. Anything proposed before that change
+   still carries {pct, through} and has to keep working — an old shape is one
+   with no byYear on it at all. */
+function isOldRetain(r){ return !!(r && !r.byYear && +r.pct); }
 function retainToYears(side){
   const out = {};
   Object.keys(side.retain||{}).forEach(pid=>{
-    const r = side.retain[pid]; if(!r || !+r.pct) return;
+    const r = side.retain[pid]; if(!r) return;
     const p = byId(S.players,pid); if(!p || !p.contract) return;
+    if(isOldRetain(r)){
+      const byYear = {};
+      contractYears(p).forEach(x=>{ if(x.year <= (+r.through||S.league.season)) byYear[x.year] = fixInc(x.salary*(+r.pct||0)/100); });
+      out[pid] = {byYear};
+      return;
+    }
     const byYear = {};
-    contractYears(p).forEach(x=>{ if(x.year <= (+r.through||S.league.season)) byYear[x.year] = fixInc(x.salary*(+r.pct||0)/100); });
-    out[pid] = {byYear};
+    Object.keys(r.byYear||{}).forEach(y=>{ if(+r.byYear[y]>0) byYear[y] = fixInc(+r.byYear[y]); });
+    if(Object.keys(byYear).length) out[pid] = {byYear};
   });
   return out;
 }
@@ -5164,7 +5527,7 @@ function multiForm(){
       ${m.legs.map((l,i)=> mtLeg(l,i)).join('') || '<div class="hint">Nothing moving yet — add a hand-over below.</div>'}
     </div>
     <button class="btn sm" data-a="mtAddLeg" style="margin-top:8px">Add a hand-over</button>
-    ${capBoard(m)}
+    <div id="capBoardBox">${capBoard(m)}</div>
     <div class="hint">Each row is one team giving something to another. Three-way deals are just three rows.
       Everyone in it has to accept before it goes to review.</div>`;
 }
@@ -5191,8 +5554,11 @@ function mtLeg(l, i){
         ${ownedPicks(l.from).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
       <button class="btn sm" data-a="mtAdd" data-i="${i}" data-kind="picks">Add</button>
     </div>
-    <label class="f" style="margin-top:8px"><span>Cap dollars sent</span>
-      <input type="number" step="${S.settings.cap.increment}" data-oninput="mtCash" data-i="${i}" value="${l.cash||0}"></label>
+    <div class="row" style="margin-top:6px">
+      <input type="number" id="mtc_${i}" min="0" step="${S.settings.cap.increment}"
+        placeholder="Cap dollars…" style="flex:1;min-width:130px">
+      <button class="btn sm" data-a="mtAdd" data-i="${i}" data-kind="cash">${l.cash?'Replace':'Add'}</button>
+    </div>
     ${(l.players||[]).length?`<div style="margin-top:9px"><div class="flabel">Salary ${esc(teamName(l.from))} keeps paying</div>
       ${l.players.map(pid=>{
         const pl = byId(S.players,pid); if(!pl || !pl.contract) return '';
@@ -5205,7 +5571,9 @@ function mtLeg(l, i){
               value="${+keep[x.year]||0}" style="width:70px;text-align:right"
               data-oninput="mtKeep" data-i="${i}" data-pid="${pid}" data-y="${x.year}" data-k="mk_${i}_${pid}_${x.year}">
             <div class="tiny dim" style="text-align:center">of ${money(x.salary)}</div></td>`).join('')}
-          </tr></tbody></table></div></div>`;
+          </tr></tbody></table></div>
+          <div class="tiny good" id="mttot_${i}_${pid}">${(()=>{ const t=sum(Object.keys(keep).map(k=> +keep[k]||0));
+            return t? 'keeping '+money(t)+' across the deal':''; })()}</div></div>`;
       }).join('')}
       <div class="hint">Any year, any amount — eat a lump in one season and nothing the next.</div></div>`:''}
   </div>`;
@@ -5242,6 +5610,7 @@ ACT.mtLegField = (d,el)=>{
   $('#modalBox .mb').innerHTML = tradeForm();
 };
 ACT.mtAdd = (d)=>{
+  if(d.kind==='cash') return setCashFrom('#mtc_'+d.i, v=>{ ui.tmp.multi.legs[+d.i].cash = v; });
   const sel = $('#'+(d.kind==='players'?'mtp_':'mtk_')+d.i);
   if(!sel || !sel.value) return;
   const arr = ui.tmp.multi.legs[+d.i][d.kind];
@@ -5250,20 +5619,62 @@ ACT.mtAdd = (d)=>{
 };
 ACT.mtRm = (d)=>{
   const l = ui.tmp.multi.legs[+d.side];
+  if(d.kind==='cash'){ l.cash = 0; $('#modalBox .mb').innerHTML = tradeForm(); return; }
   const arr = l[d.kind]; const i = arr.indexOf(d.id);
   if(i>=0) arr.splice(i,1);
   $('#modalBox .mb').innerHTML = tradeForm();
 };
-ACT.mtCash = (d,el)=>{ ui.tmp.multi.legs[+d.i].cash = +el.value||0; refreshCapBoard(); };
 ACT.mtKeep = (d,el)=>{
   const l = ui.tmp.multi.legs[+d.i];
   l.retain = l.retain || {};
   const r = l.retain[d.pid] = l.retain[d.pid] || {byYear:{}};
   const v = Math.max(0, +el.value||0);
-  if(v) r.byYear[d.y] = v; else delete r.byYear[d.y];
+  if(v) r.byYear[d.y] = fixInc(v); else delete r.byYear[d.y];
+  const tot = sum(Object.keys(r.byYear).map(k=> +r.byYear[k]||0));
+  const line = $('#mttot_'+d.i+'_'+d.pid);
+  if(line) line.innerHTML = tot ? 'keeping '+money(tot)+' across the deal' : '';
   refreshCapBoard();
 };
-function refreshCapBoard(){ $('#modalBox .mb').innerHTML = tradeForm(); }
+/* Cap dollars are one figure per side, not a list — so this always REPLACES
+   what is there rather than adding to it. Typing 0 clears it, same as the ×
+   on the chip. An empty box is treated as "changed my mind", not as zero. */
+function setCashFrom(sel, put, form){
+  const box = $(sel); if(!box) return;
+  const raw = String(box.value==null?'':box.value).trim();
+  if(raw==='') return;
+  put(Math.max(0, fixInc(+raw||0)));
+  $('#modalBox .mb').innerHTML = (form||tradeForm)();
+}
+/* Redraw a modal without throwing the cursor out of whatever box is being
+   typed in. The main view has done this since forever inside render(); modals
+   never got it, which is why a percentage could not be typed past its first
+   digit — the redraw after "1" destroyed the input before "00" arrived.
+   Fields opt in by carrying a data-k. */
+/* Replaces the board and nothing else. Rebuilding the whole form on every
+   keystroke is what made these fields untypeable: an <input type="number">
+   does not support setSelectionRange, so once the element is destroyed the
+   caret cannot be put back and the next digit lands somewhere else — or
+   nowhere. The percentage box has always worked precisely because it redraws
+   nothing. Now none of them do. */
+function refreshCapBoard(){
+  const box = $('#capBoardBox');
+  if(box) box.innerHTML = capBoard(builderTrade());
+  else remodal(tradeForm());
+}
+function remodal(html){
+  const box = $('#modalBox .mb'); if(!box) return;
+  const ae = document.activeElement;
+  const k = ae && ae.dataset ? (ae.dataset.k || null) : null;
+  let ss=null, se=null;
+  try{ ss = ae.selectionStart; se = ae.selectionEnd; }catch(e){}
+  box.innerHTML = html;
+  if(!k) return;
+  const el = $('#modalBox .mb [data-k="'+k+'"]');
+  if(el){ el.focus(); try{ if(ss!=null) el.setSelectionRange(ss,se); }catch(e){} }
+}
+/* "12." and "-" are half-typed, not numbers. Redrawing on them rewrites the box
+   and eats the next keystroke, so we wait until it settles. */
+function midNumber(v){ const t=String(v==null?'':v); return t==='' || /[.\-+eE]$/.test(t); }
 ACT.tbTeam = (d,el)=>{ const s=ui.tmp.tb[d.side]; s.teamId=el.value; s.players=[]; s.picks=[]; $('#modalBox .mb').innerHTML=tradeForm(); };
 document.addEventListener('change', e=>{
   const s = e.target.closest('[data-a="tbTeam"]'); if(s) return ACT.tbTeam(s.dataset, s);
@@ -5271,18 +5682,42 @@ document.addEventListener('change', e=>{
   const l = e.target.closest('[data-a="mtLegField"]'); if(l) return ACT.mtLegField(l.dataset, l);
 });
 ACT.tbAdd = (d)=>{
+  if(d.kind==='cash') return setCashFrom('#tbc_'+d.side, v=>{ ui.tmp.tb[d.side].cash = v; });
   const sel = $('#'+(d.kind==='players'?'tbp_':'tbk_')+d.side); if(!sel||!sel.value) return;
   const arr = ui.tmp.tb[d.side][d.kind]; if(arr.indexOf(sel.value)<0) arr.push(sel.value);
   $('#modalBox .mb').innerHTML = tradeForm();
 };
-ACT.tbRm = (d)=>{ const arr=ui.tmp.tb[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=tradeForm(); };
-ACT.tbCash = (d,el)=>{ ui.tmp.tb[d.side].cash = +el.value||0; };
-ACT.tbRetain = (d,el)=>{
-  const side = ui.tmp.tb[d.side];
-  side.retain = side.retain || {};
-  const r = side.retain[d.pid] = side.retain[d.pid] || {pct:0, through:S.league.season};
-  r[d.f] = +el.value||0;
-  if(d.f==='pct' || d.f==='through') $('#modalBox .mb').innerHTML = tradeForm();
+ACT.tbRm = (d)=>{
+  if(d.kind==='cash'){ ui.tmp.tb[d.side].cash = 0; $('#modalBox .mb').innerHTML=tradeForm(); return; }
+  const arr=ui.tmp.tb[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1);
+  if(d.kind==='players' && ui.tmp.tb[d.side].retain) delete ui.tmp.tb[d.side].retain[d.id];
+  $('#modalBox .mb').innerHTML=tradeForm(); };
+function tbRetainFor(side, pid){
+  const s = ui.tmp.tb[side];
+  s.retain = s.retain || {};
+  const r = s.retain[pid] = s.retain[pid] || {byYear:{}};
+  r.byYear = r.byYear || {};
+  return r;
+}
+ACT.tbKeep = (d,el)=>{
+  const r = tbRetainFor(d.side, d.pid);
+  const v = Math.max(0, +el.value||0);
+  if(v) r.byYear[d.y] = fixInc(v); else delete r.byYear[d.y];
+  const tot = sum(Object.keys(r.byYear).map(k=> +r.byYear[k]||0));
+  const line = $('#tbtot_'+d.side+'_'+d.pid);
+  if(line) line.innerHTML = tot ? 'keeping '+money(tot)+' across the deal' : '';
+  refreshCapBoard();
+};
+/* Parks the figure and redraws nothing, so "100" can be typed as "100" rather
+   than being cut off after the "1". Pressing Every year is what applies it. */
+ACT.tbPct = (d,el)=>{ tbRetainFor(d.side, d.pid).pct = el.value; };
+ACT.tbFill = (d)=>{
+  const p = byId(S.players, d.pid); if(!p || !p.contract) return;
+  const r = tbRetainFor(d.side, d.pid);
+  const v = Math.max(0, Math.min(100, +r.pct||0));
+  r.byYear = {};
+  if(v) contractYears(p).forEach(x=>{ const amt = fixInc(x.salary*v/100); if(amt>0) r.byYear[x.year] = amt; });
+  remodal(tradeForm());
 };
 ACT.sendTrade = ()=>{
   const m = ui.tmp.multi;
@@ -5403,8 +5838,11 @@ function counterForm(){
         <div class="row" style="margin-top:6px"><select id="ctgk" style="flex:1;min-width:130px"><option value="">Pick…</option>
           ${ownedPicks(me).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
           <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="picks">Add</button></div>
-        <label class="f" style="margin-top:8px"><span>Cap dollars</span>
-          <input type="number" step="${S.settings.cap.increment}" data-oninput="ctCash" value="${ct.gives.cash||0}"></label>
+        <div class="row" style="margin-top:6px">
+          <input type="number" id="ctgc" min="0" step="${S.settings.cap.increment}"
+            placeholder="Cap dollars…" style="flex:1;min-width:130px">
+          <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="cash">${ct.gives.cash?'Replace':'Add'}</button>
+        </div>
       </div></div>
   </div>
   <div class="hint ${c.mustIncludeOriginal && !hits ? 'bad':''}">
@@ -5414,13 +5852,15 @@ function counterForm(){
       : ' If accepted, the original trade is voided and yours replaces it.'}</div>`;
 }
 ACT.ctAdd = (d)=>{
+  if(d.kind==='cash') return setCashFrom('#ctgc', v=>{ ui.tmp.ct.gives.cash = v; }, counterForm);
   const map = {'wants-players':'#ctwp','wants-picks':'#ctwk','gives-players':'#ctgp','gives-picks':'#ctgk'};
   const sel = $(map[d.side+'-'+d.kind]); if(!sel||!sel.value) return;
   const arr = ui.tmp.ct[d.side][d.kind]; if(arr.indexOf(sel.value)<0) arr.push(sel.value);
   $('#modalBox .mb').innerHTML = counterForm();
 };
-ACT.ctRm = (d)=>{ const arr=ui.tmp.ct[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=counterForm(); };
-ACT.ctCash = (d,el)=>{ ui.tmp.ct.gives.cash = +el.value||0; };
+ACT.ctRm = (d)=>{
+  if(d.kind==='cash'){ ui.tmp.ct.gives.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
+  const arr=ui.tmp.ct[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=counterForm(); };
 ACT.sendCounter = ()=>{
   const ct = ui.tmp.ct, tr = byId(S.trades,ct.tradeId), c = S.settings.trades.counters, orig = originalAssets(tr);
   if(!ct.wants.players.length && !ct.wants.picks.length) return toast('Ask for something','bad');
@@ -5483,6 +5923,7 @@ VIEWS.trades = function(){
         </div>`).join('')}
         </div>
         ${capBoard(tr)}
+        ${tr.reason?'<div class="hint bad">'+esc(tr.reason)+'</div>':''}
         ${tr.status==='proposed'?`<div class="row" style="margin-top:10px">
           <span class="tiny muted">${(tr.accepted||[]).length} of ${(tr.teams||[]).length} in${
             left.length?' · waiting on '+left.map(teamName).join(', '):''}</span>
@@ -5514,6 +5955,7 @@ VIEWS.trades = function(){
           <div><div class="flabel">${esc(teamName(tr.a.teamId))} sends</div><div class="assetbox">${assetChips(tr.a)}</div></div>
           <div><div class="flabel">${esc(teamName(tr.b.teamId))} sends</div><div class="assetbox">${assetChips(tr.b)}</div></div>
         </div>
+        ${retainNote(tr.a)}${retainNote(tr.b)}
         ${tr.reason?'<div class="hint bad">'+esc(tr.reason)+'</div>':''}
         <div class="row" style="margin-top:12px">
           ${tr.status==='proposed' && (me===tr.b.teamId||isCommish()) ?
@@ -6077,15 +6519,19 @@ function yearsOut(pk){ return Math.max(0, (+pk.year||0) - draftBaseYear()); }
 function pickRank(a, b){
   return (a.year - b.year) || ((isComp(a)?1:0) - (isComp(b)?1:0)) || (pickSlot(a) - pickSlot(b));
 }
-function ownedPicks(teamId, round){
+/* Named apart from ownedPicks() on purpose. This one is round-specific and is
+   only for pricing a tag steal; the general one lists everything a team holds.
+   They were both called ownedPicks once, the later declaration won, and every
+   pick dropdown in the app came back empty. */
+function ownedPicksInRound(teamId, round){
   return S.picks.filter(k=> k.ownerTeamId===teamId && k.round===round && k.year>=draftBaseYear())
     .slice().sort(pickRank);
 }
 function stealCost(teamId){
   const need = clamp(+S.settings.tag.requireFirsts||2, 1, 5);
-  const firsts = ownedPicks(teamId, 1).slice(0, need);
+  const firsts = ownedPicksInRound(teamId, 1).slice(0, need);
   const secondsNeeded = sum(firsts.map(yearsOut));
-  const seconds = ownedPicks(teamId, 2).slice(0, secondsNeeded);
+  const seconds = ownedPicksInRound(teamId, 2).slice(0, secondsNeeded);
   return {
     firsts, seconds, need, secondsNeeded,
     shortFirsts: Math.max(0, need - firsts.length),
@@ -6604,12 +7050,22 @@ function winPct(t){
   const r = teamRecord(t), g = r.w + r.l + r.t;
   return g ? (r.w + r.t*0.5)/g : 0;
 }
+/* A commissioner-awarded win that does not help anybody make the playoffs but
+   does count for draft order. Because worst record picks first, a phantom win
+   pushes a team DOWN the board — so of two teams level on the field, the one
+   without it takes the better pick. */
+function phantomWins(t){ return Math.max(0, +((t||{}).phantomW) || 0); }
+function anyPhantom(){ return S.teams.some(t=> phantomWins(t)>0); }
 /* Sort on record, then walk the tiebreak chain within each level group.
    Head to head only counts when it actually separates the whole group — a
    three-way tie where everyone went 1-1 proves nothing and falls through. */
-function standings(withWhy){
+function standings(withWhy){ return rankTeams((t)=>{ const r=teamRecord(t); return r.w + r.t*0.5; }, withWhy); }
+/* The same ladder, with phantom wins folded in. Draft order only. */
+function draftStandings(withWhy){
+  return rankTeams((t)=>{ const r=teamRecord(t); return r.w + r.t*0.5 + phantomWins(t); }, withWhy);
+}
+function rankTeams(score, withWhy){
   const chain = tiebreakChain();
-  const score = (t)=> { const r = teamRecord(t); return r.w + r.t*0.5; };
   const groups = {};
   S.teams.forEach(t=>{ const k = score(t).toFixed(1); (groups[k] = groups[k]||[]).push(t); });
   const out = [];
@@ -6640,8 +7096,21 @@ function standings(withWhy){
   });
   return out;
 }
-/* Worst record picks first. A traded pick keeps the slot of whoever it came from. */
-function draftOrder(){ return standings().slice().reverse(); }
+/* Worst record picks first. A traded pick keeps the slot of whoever it came
+   from. Phantom wins count here and nowhere else.
+   If the league hands the loser bracket's winner the first pick, that team is
+   lifted to the top and everybody else keeps their order behind them. */
+function draftOrder(){
+  const base = draftStandings().slice().reverse();
+  if(!loserPrizeOn()) return base;
+  const champ = loserChampion();
+  if(!champ) return base;
+  const i = base.findIndex(t=> t.id===champ);
+  if(i <= 0) return base;
+  const out = base.slice();
+  out.unshift(out.splice(i,1)[0]);
+  return out;
+}
 function draftSlot(teamId){
   const i = draftOrder().findIndex(t=> t.id===teamId);
   return i < 0 ? S.teams.length : i+1;
@@ -6696,38 +7165,214 @@ function playoffField(){
   const p = S.settings.playoffs;
   return standings().slice(0, clamp(+p.teams||0, 0, S.teams.length));
 }
-function playoffBracket(){
-  const p = S.settings.playoffs;
-  const seeds = playoffField();
-  if(seeds.length < 2) return [];
-  const byes = clamp(+p.byes||0, 0, Math.max(0, seeds.length-2));
+/* Top seed against bottom seed, round by round, until one is left. Used by
+   both brackets — the loser bracket is the same ladder with a different field
+   and, if you want it, the loser of each game going through instead. */
+/* What a team actually put up in a given week, out of the books. */
+function weekPointsFor(teamId, week){
+  const g = (S.schedule||[]).find(x=> x.week===week && (x.home===teamId || x.away===teamId));
+  if(!g) return null;
+  const v = g.home===teamId ? g.hp : g.ap;
+  return (v==null || isNaN(+v)) ? null : +v;
+}
+function buildBracket(seeds, o){
+  o = o || {};
+  if(!seeds || seeds.length < 2) return [];
+  const byes = clamp(+o.byes||0, 0, Math.max(0, seeds.length-2));
+  const mark = o.advance==='loser' ? 'L' : 'W';
+  const results = o.results || {};
+  const seedOf = {}; seeds.forEach((t,i)=> seedOf[t.id] = i+1);
   const rounds = [];
-  let alive = seeds.map((t,i)=> ({seed:i+1, team:t}));
+  const alive = seeds.map((t,i)=> ({seed:i+1, team:t}));
   let waiting = alive.slice(0, byes);
   let playing = alive.slice(byes);
-  let week = +p.startWeek||15;
+  let week = +o.startWeek||15;
   let r = 1;
   while(playing.length + waiting.length > 1 && r < 8){
     const games = [];
-    for(let i=0; i<Math.floor(playing.length/2); i++){
-      games.push({a: playing[i], b: playing[playing.length-1-i]});
-    }
+    for(let i=0; i<Math.floor(playing.length/2); i++)
+      games.push({a: playing[i], b: playing[playing.length-1-i], key:'r'+r+'g'+i, week});
     const odd = playing.length % 2 ? [playing[Math.floor(playing.length/2)]] : [];
-    const isFinal = (waiting.length + games.length + odd.length) === 1 + 0 && games.length===1 && waiting.length===0;
-    rounds.push({round:r, week, games, byes: waiting.slice(), final: games.length===1 && waiting.length===0});
-    const advancing = games.map(g=> ({seed:'W', team:null, from:g})).concat(odd);
+    /* Only the final when this one game settles it — nobody on a bye, and
+       nobody getting a free pass because the number playing was odd. The old
+       code checked neither: it tested the bye list after clearing it, and
+       ignored the odd team entirely, so a bracket could show two rounds both
+       labelled Final and count an extra week for each. */
+    const isFinal = games.length===1 && waiting.length===0 && odd.length===0;
+    /* Settle this round before pairing the next one. A commissioner's call
+       always wins; otherwise it comes off what the two teams actually scored
+       that week, and stays open while the week is unplayed or tied. */
+    games.forEach(g=>{
+      if(!g.a.team || !g.b.team) return;
+      const said = results[g.key];
+      if(said && (said===g.a.team.id || said===g.b.team.id)){ g.through = said; g.byHand = true; return; }
+      const ap = weekPointsFor(g.a.team.id, week), bp = weekPointsFor(g.b.team.id, week);
+      if(ap==null || bp==null) return;
+      g.ap = ap; g.bp = bp;
+      if(ap===bp) return;                       // a tie settles nothing
+      const higher = ap>bp ? g.a.team.id : g.b.team.id;
+      const lower  = ap>bp ? g.b.team.id : g.a.team.id;
+      g.through = o.advance==='loser' ? lower : higher;
+    });
+    rounds.push({round:r, week, games, byes: waiting.slice(), final:isFinal, mark});
+    const advancing = games.map(g=>{
+      const t = g.through ? byId(S.teams, g.through) : null;
+      return {seed: t ? (seedOf[t.id] || mark) : mark, team:t, from:g};
+    }).concat(odd);
     playing = waiting.concat(advancing);
-    if(p.reseed) playing = playing.slice();
+    /* Reseeding needs to know who actually got through, so it only bites once
+       the round is settled. It used to be `playing.slice()`, which copies the
+       array and reorders nothing — the setting has never done anything. */
+    if(o.reseed && playing.every(x=> typeof x.seed === 'number'))
+      playing = playing.slice().sort((a,b)=> a.seed - b.seed);
     waiting = [];
-    week += (games.length===1 && waiting.length===0 && p.twoWeekFinal) ? 2 : 1;
+    week += (isFinal && o.twoWeekFinal) ? 2 : 1;
     r++;
     if(playing.length <= 1) break;
   }
+  /* The two beaten semi-finalists, played alongside the final. */
+  if(o.thirdPlace && rounds.length >= 2){
+    const last = rounds[rounds.length-1], semi = rounds[rounds.length-2];
+    if(last.final && semi.games.length >= 2) last.third = true;
+  }
   return rounds;
 }
-function playoffWeeks(){
-  const b = playoffBracket();
-  return b.length + (S.settings.playoffs.twoWeekFinal ? 1 : 0);
+/* The team left standing, or null while it is still being played out. */
+function bracketChampion(rounds){
+  if(!rounds.length) return null;
+  const last = rounds[rounds.length-1];
+  if(!last.final || last.games.length!==1) return null;
+  return last.games[0].through || null;
+}
+function bracketWeeks(rounds, twoWeekFinal){
+  return rounds.length + (twoWeekFinal ? 1 : 0);
+}
+function bracketResults(which){
+  S.bracketResults = S.bracketResults || {playoff:{}, loser:{}};
+  S.bracketResults[which] = S.bracketResults[which] || {};
+  return S.bracketResults[which];
+}
+function playoffBracket(){
+  const p = S.settings.playoffs;
+  return buildBracket(playoffField(), {byes:p.byes, startWeek:p.startWeek, reseed:p.reseed,
+    twoWeekFinal:p.twoWeekFinal, thirdPlace:p.thirdPlace, advance:'winner',
+    results:bracketResults('playoff')});
+}
+function playoffWeeks(){ return bracketWeeks(playoffBracket(), S.settings.playoffs.twoWeekFinal); }
+/* ---- the loser bracket ----
+   Who is in it, how they are seeded, and whether winning or losing puts you
+   through are all separate questions, so they are separate settings. */
+function loserSettings(){ return S.settings.loser || {}; }
+function loserOn(){ return !!loserSettings().on; }
+function loserField(){
+  const L = loserSettings();
+  const inPlayoffs = {};
+  playoffField().forEach(t=> inPlayoffs[t.id] = 1);
+  let rest = standings().filter(t=> !inPlayoffs[t.id]);   // best of the rest first
+  if(L.who === 'bottom'){
+    const n = clamp(+L.teams||0, 0, rest.length);
+    rest = rest.slice(rest.length - n);                   // the worst n of them
+  }
+  return L.seedBy === 'best' ? rest : rest.slice().reverse();
+}
+function loserBracket(){
+  if(!loserOn()) return [];
+  const L = loserSettings();
+  return buildBracket(loserField(), {byes:L.byes, startWeek:L.startWeek, reseed:L.reseed,
+    twoWeekFinal:L.twoWeekFinal, thirdPlace:L.thirdPlace, advance:L.advance,
+    results:bracketResults('loser')});
+}
+/* Whoever comes out of the loser bracket, once it has actually been settled. */
+function loserChampion(){ return loserOn() ? bracketChampion(loserBracket()) : null; }
+function loserPrizeOn(){ return loserOn() && loserSettings().prize !== false; }
+function loserWeeks(){ return bracketWeeks(loserBracket(), loserSettings().twoWeekFinal); }
+function loserName(){ return String(loserSettings().name || 'Toilet bowl'); }
+/* ---- who may set whose lineup ----
+   A team sets its own, always. But once the loser bracket decides the first
+   pick, the owner sitting on somebody's first-rounder has more riding on that
+   team's week than its own owner does — who is already out and may not care.
+   So for the weeks the bracket runs, control passes to whoever holds the pick. */
+function loserWeekRange(){
+  const lb = loserBracket();
+  if(!lb.length) return null;
+  const last = lb[lb.length-1];
+  return {from: lb[0].week, to: last.week + (loserSettings().twoWeekFinal ? 1 : 0)};
+}
+function inLoserWeeks(week){
+  const r = loserWeekRange();
+  return !!r && week >= r.from && week <= r.to;
+}
+function inLoserBracket(teamId){ return loserField().some(t=> t.id===teamId); }
+/* The next draft's first-rounder that started life with this team. */
+function firstRounderOf(teamId){
+  const y = S.league.season + 1;
+  return S.picks.find(k=> !isComp(k) && k.round===1 && k.year===y && k.originTeamId===teamId) || null;
+}
+function pickHolderFor(teamId){
+  const k = firstRounderOf(teamId);
+  return (k && k.ownerTeamId && k.ownerTeamId!==teamId) ? k.ownerTeamId : null;
+}
+/* Whose call it is this week. */
+function lineupBoss(teamId, week){
+  const L = loserSettings();
+  if(L.on && L.pickControl!==false && loserPrizeOn() &&
+     inLoserWeeks(week==null ? (+S.live.week||1) : week) && inLoserBracket(teamId)){
+    const holder = pickHolderFor(teamId);
+    if(holder) return holder;
+  }
+  return teamId;
+}
+function canSetLineup(teamId, week){
+  return isCommish() || actingTeam() === lineupBoss(teamId, week);
+}
+/* The lineup as it stands: what was saved, or the best one if nothing was. */
+function lineupFor(teamId, week){
+  const w = week==null ? (+S.live.week||1) : week;
+  const saved = ((S.lineups||{})[w]||{})[teamId];
+  /* One row per starting spot, in the order the league has them. */
+  const spots = [];
+  S.settings.roster.slots.forEach(sl=>{ for(let n=0;n<sl.count;n++) spots.push(sl); });
+  if(!saved || !saved.length){
+    const best = bestLineup(teamId);
+    return {slots: best.starters.map((x,i)=> ({slot:x.slot, p:x.p, pts:x.pts,
+              eligible:(spots[i]||{}).eligible||[]})), saved:false, total:best.total};
+  }
+  const pool = teamPlayers(teamId), used = {};
+  const slots = spots.map((sl,i)=>{
+    const pid = saved[i];
+    const p = pid ? pool.find(x=> x.id===pid && !used[x.id]) : null;
+    if(p) used[p.id] = 1;
+    return {slot:sl.label, p:p||null, pts:p?fpts(p.id):0, eligible:sl.eligible};
+  });
+  return {slots, saved:true, total:Math.round(sum(slots.map(x=>x.pts))*100)/100};
+}
+/* Draws either bracket. The placeholder reads "loser" rather than "winner"
+   when it is losing that puts you through. */
+function bracketHtml(rounds, o){
+  o = o || {};
+  const word = o.advance==='loser' ? 'loser' : 'winner';
+  const side = (g, g2, pts)=>{
+    if(!g || !g.team) return '<span class="dim">'+word+'</span>';
+    const won = g2 && g2.through===g.team.id;
+    return '<span class="'+(won?'good':'')+'"><span class="dim tiny">'+g.seed+'</span> '+esc(g.team.name)+
+      (pts!=null?' <span class="tiny dim">'+pts.toFixed(1)+'</span>':'')+'</span>';
+  };
+  return rounds.map(rd=>`<div class="assetbox">
+    <div class="flabel">${rd.final?'Final':'Round '+rd.round} · week ${rd.week}${rd.final&&o.twoWeekFinal?' and '+(rd.week+1):''}</div>
+    ${rd.byes.length?'<div class="tiny dim" style="margin-bottom:6px">On a bye: '+rd.byes.map(b=>esc((b.team||{}).name||'')).join(', ')+'</div>':''}
+    ${rd.games.map(g=>`<div class="row" style="justify-content:space-between;padding:3px 0">
+      <span>${side(g.a,g,g.ap)}</span><span class="dim tiny">${g.through?(g.byHand?'called':'→'):'vs'}</span><span>${side(g.b,g,g.bp)}</span>
+    </div>${(o.which && isCommish() && g.a.team && g.b.team)?`<div class="row tiny" style="gap:5px;padding-bottom:4px">
+      <span class="dim">through:</span>
+      <button class="btn sm ghost" data-a="brSet" data-w="${o.which}" data-key="${g.key}" data-team="${g.a.team.id}">${esc(g.a.team.name)}</button>
+      <button class="btn sm ghost" data-a="brSet" data-w="${o.which}" data-key="${g.key}" data-team="${g.b.team.id}">${esc(g.b.team.name)}</button>
+      ${g.byHand?'<button class="btn sm ghost danger" data-a="brSet" data-w="'+o.which+'" data-key="'+g.key+'" data-team="">clear</button>':''}
+    </div>`:''}`).join('') || '<div class="dim tiny">'+word+'s meet here</div>'}
+    ${rd.third?`<div class="row" style="justify-content:space-between;padding:3px 0;border-top:1px solid var(--line);margin-top:5px">
+      <span class="dim">${o.advance==='loser'?'winner':'loser'}</span>
+      <span class="dim tiny">3rd place</span>
+      <span class="dim">${o.advance==='loser'?'winner':'loser'}</span></div>`:''}
+  </div>`).join('');
 }
 
 /* ============================================================
@@ -8193,6 +8838,34 @@ VIEWS.settings = function(){
           <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.taxi.claimsOn" ${S.settings.taxi.claimsOn?'checked':''}>
             <span>Let teams claim players off each other's taxi squads</span></label>
           <label class="f"><span>Claim window (hours)</span><input type="number" min="1" data-set="settings.taxi.windowHours" value="${S.settings.taxi.windowHours}"></label>
+          <label class="f"><span>Season-ending IR gives back</span>
+            <select data-set="settings.ir.mode">
+              <option value="games"${(S.settings.ir||{}).mode==='games'?' selected':''}>A share, on games he has played</option>
+              <option value="weeks"${(S.settings.ir||{}).mode==='weeks'?' selected':''}>A share, on weeks left in the season</option>
+              <option value="fixed"${(S.settings.ir||{}).mode==='fixed'?' selected':''}>A set amount</option>
+            </select></label>
+          ${(S.settings.ir||{}).mode==='fixed'?`<label class="f"><span>How much back each time</span>
+            <input type="number" min="0" step="${c.cap.increment}" data-set="settings.ir.fixed" value="${(S.settings.ir||{}).fixed||0}"></label>`:''}
+          <div class="hint" style="grid-column:1/-1">${
+            (S.settings.ir||{}).mode==='fixed'
+              ? 'The same figure whenever anybody goes down, trimmed if it comes to more than the player actually costs.'
+              : (S.settings.ir||{}).mode==='weeks'
+                ? 'Counts the weeks still to play. Two players going down in the same week get the same share back, whatever either of them has actually appeared in.'
+                : 'Counts the games he has appeared in. Somebody who has already been missing gets more back than the calendar alone would give — including the whole year if he never played at all.'
+          }</div>
+          <label class="f"><span>Cap how many a team can take</span>
+            <select data-set="settings.taxi.limitMode">
+              <option value="off"${S.settings.taxi.limitMode==='off'?' selected':''}>No limit</option>
+              <option value="attempts"${S.settings.taxi.limitMode==='attempts'?' selected':''}>Limit claims put in</option>
+              <option value="landed"${S.settings.taxi.limitMode==='landed'?' selected':''}>Limit claims that stick</option>
+            </select></label>
+          ${taxiLimitOn()||S.settings.taxi.limitMode!=='off'?`<label class="f"><span>How many each per season</span>
+            <input type="number" min="1" data-set="settings.taxi.limitMax" value="${S.settings.taxi.limitMax}"></label>`:''}
+          ${S.settings.taxi.limitMode!=='off'?`<div class="hint" style="grid-column:1/-1">${
+            S.settings.taxi.limitMode==='attempts'
+              ? 'Every claim burns one, however it turns out. Pulling a claim does not hand it back — otherwise a team could tie up half the league and pull out at the last moment.'
+              : 'Only claims that actually stick count against a team. Ones still running count too, since they might yet stick, but a claim that gets defended or lapses hands the slot back and they can go again.'
+          } Counts start over each season.</div>`:''}
           <div class="hint" style="grid-column:1/-1">${sum(c.roster.slots.map(s=>+s.count||0))} starters + ${c.roster.bench} bench = ${sum(c.roster.slots.map(s=>+s.count||0))+(+c.roster.bench||0)} active,
             plus ${c.roster.ir} IR and ${c.roster.taxi} taxi.</div>
         </div></div>
@@ -8559,8 +9232,6 @@ VIEWS.settings = function(){
             <span>The final runs two weeks</span></label>
           <label class="check"><input type="checkbox" data-set="settings.playoffs.thirdPlace" ${P.thirdPlace?'checked':''}>
             <span>Play a third place game</span></label>
-          <label class="check"><input type="checkbox" data-set="settings.playoffs.consolation" ${P.consolation?'checked':''}>
-            <span>Run a consolation bracket for everyone else</span></label>
         </div></div>
         <div class="stack">
           <div class="panel"><div class="ph"><h3>How that works out</h3></div><div class="pb">
@@ -8583,6 +9254,75 @@ VIEWS.settings = function(){
               || '<tr><td class="dim center" style="padding:18px">No games played yet.</td></tr>'}
             </tbody></table></div></div>
         </div>
+
+        ${(()=>{ const L = S.settings.loser, lf = loserField(), lb = loserBracket();
+          const missed = S.teams.length - clamp(+P.teams||0, 0, S.teams.length);
+          const endsAt = L.startWeek + loserWeeks() - 1;
+          return `
+        <div class="panel"><div class="ph"><h3>${esc(loserName())}</h3><div class="spacer"></div>
+          <span class="tiny dim">the other end of the table</span></div><div class="pb stack">
+          <label class="check"><input type="checkbox" data-set="settings.loser.on" ${L.on?'checked':''}>
+            <span>Run a bracket for the teams that missed out</span></label>
+          ${L.on?`
+          <label class="f"><span>Call it</span>
+            <input type="text" maxlength="40" data-set="settings.loser.name" data-k="lname" value="${esc(L.name||'')}" placeholder="Toilet bowl"></label>
+          <div class="grid g2">
+            <label class="f"><span>Who is in it</span>
+              <select data-set="settings.loser.who">
+                <option value="missed"${L.who==='missed'?' selected':''}>Everyone who missed the playoffs</option>
+                <option value="bottom"${L.who==='bottom'?' selected':''}>Only the bottom few</option>
+              </select></label>
+            ${L.who==='bottom'?`<label class="f"><span>How many</span>
+              <input type="number" min="2" max="${Math.max(2,missed)}" data-set="settings.loser.teams" value="${L.teams}"></label>`:
+              `<label class="f"><span>That is</span><input type="text" value="${missed} team${missed===1?'':'s'}" disabled></label>`}
+            <label class="f"><span>Seeded by</span>
+              <select data-set="settings.loser.seedBy">
+                <option value="worst"${L.seedBy==='worst'?' selected':''}>Worst record first</option>
+                <option value="best"${L.seedBy==='best'?' selected':''}>Best of the rest first</option>
+              </select></label>
+            <label class="f"><span>Who goes through</span>
+              <select data-set="settings.loser.advance">
+                <option value="winner"${L.advance==='winner'?' selected':''}>The winner of each game</option>
+                <option value="loser"${L.advance==='loser'?' selected':''}>The loser of each game</option>
+              </select></label>
+            <label class="f"><span>First-round byes</span>
+              <input type="number" min="0" max="${Math.max(0,lf.length-2)}" data-set="settings.loser.byes" value="${L.byes}"></label>
+            <label class="f"><span>Starts in week</span>
+              <input type="number" min="1" max="25" data-set="settings.loser.startWeek" value="${L.startWeek}"></label>
+          </div>
+          <label class="check"><input type="checkbox" data-set="settings.loser.reseed" ${L.reseed?'checked':''}>
+            <span>Reseed every round</span></label>
+          <label class="check"><input type="checkbox" data-set="settings.loser.twoWeekFinal" ${L.twoWeekFinal?'checked':''}>
+            <span>The final runs two weeks</span></label>
+          <label class="check"><input type="checkbox" data-set="settings.loser.thirdPlace" ${L.thirdPlace?'checked':''}>
+            <span>Play a third place game</span></label>
+          <label class="check"><input type="checkbox" data-set="settings.loser.prize" ${L.prize!==false?'checked':''}>
+            <span>The team left standing takes the first pick <span class="dim">— ahead of the worst record</span></span></label>
+          <label class="check"><input type="checkbox" data-set="settings.loser.pickControl" ${L.pickControl!==false?'checked':''}>
+            <span>Whoever holds a team's first-rounder sets that team's lineup while this runs</span></label>
+          ${L.pickControl!==false && L.prize!==false?`<div class="hint">An owner already knocked out has nothing riding on these
+            weeks, and the team holding their first-round pick has everything. So for the ${esc(loserName())} weeks only, control of
+            the lineup passes to whoever owns that pick — the original owner keeps everything else, and the commissioner can always
+            step in. Nothing changes for a team whose own first-rounder is still theirs.</div>`:''}
+          <div class="kv">
+            <dt>Field</dt><dd>${lf.length} of the ${missed} that missed out</dd>
+            <dt>Rounds</dt><dd>${lb.length||'—'}</dd>
+            <dt>Runs</dt><dd>${lb.length?'week '+L.startWeek+' to '+endsAt:'—'}</dd>
+            <dt>Seed 1</dt><dd>${lf.length?esc(lf[0].name):'—'}</dd>
+          </div>
+          ${lf.length<2?'<div class="hint bad">Fewer than two teams miss out, so there is no bracket to draw.</div>':''}
+          ${L.byes >= lf.length && lf.length?'<div class="hint bad">Everyone has a bye — nobody would play.</div>':''}
+          ${lb.length && endsAt > (c.roster.seasonWeeks||17)?
+            '<div class="hint bad">It runs past week '+(c.roster.seasonWeeks||17)+', which is where you said the season ends.</div>':''}
+          ${lb.length && L.startWeek < P.startWeek?
+            '<div class="hint">It starts before the playoffs do. That is allowed — some leagues start the wooden spoon early — but check it is what you meant.</div>':''}
+          <div class="hint">${L.advance==='loser'
+            ? 'With the loser going through, the team left at the end is the one that could not win a game — the usual way of settling who takes the wooden spoon.'
+            : 'With the winner going through, this is an ordinary bracket among the teams that missed out.'}
+            Games settle off what the two teams actually scored that week, once the week is in the books. The commissioner can call
+            any of them by hand from the bracket itself.</div>`:''}
+        </div></div>`;
+        })()}
       </div>`;
     })():''}
 
@@ -10089,8 +10829,9 @@ ACT.rollSeasonGo = ()=>{
   S.taxiClaims = [];
   (S.pending||[]).forEach(q=>{ if(q.status==='open') applyTerms(q, true); });
   S.pending = [];
-  S.teams.forEach(t=>{ t.record = {w:0,l:0,t:0,pf:0,pa:0}; t.eff = {weeks:0,got:0,best:0}; });
+  S.teams.forEach(t=>{ t.record = {w:0,l:0,t:0,pf:0,pa:0}; t.eff = {weeks:0,got:0,best:0}; t.phantomW = 0; });
   S.h2h = {}; S.schedule = []; S.lineups = {};
+  S.bracketResults = {playoff:{}, loser:{}};
   S.settings.rookie.baseSeason = S.settings.rookie.baseSeason || S.league.season;
   S.players.forEach(p=>{ if(p.ir){ delete p.ir; if(playerSlot(p)==='ir') p.slot='active'; } });
   S.teams.forEach(t=>{ if(S.settings.fa.resetEachSeason) t.faSpent = 0; });
@@ -10572,8 +11313,18 @@ function migrate(j){
      to be rebuilt, or every field inside them is unreachable. */
   reshape(out.settings.cap, 'rollover', d.settings.cap.rollover, (old)=> ({on: old===true}));
   reshape(out.settings, 'waivers', d.settings.waivers, (old)=> ({on: old===true}));
-  ['taxi','rookie','playoffs','fa','bbd','value','comp','players','tag']
+  ['taxi','rookie','playoffs','fa','bbd','value','comp','players','tag','loser']
     .forEach(k=> reshape(out.settings, k, d.settings[k], null));
+  /* "Run a consolation bracket for everyone else" was a checkbox that never did
+     anything. Anyone who ticked it wanted this, so switch the real one on and
+     start it when their playoffs do. */
+  if(((j.settings||{}).playoffs||{}).consolation && !((j.settings||{}).loser||{}).on){
+    out.settings.loser.on = true;
+    out.settings.loser.startWeek = +out.settings.playoffs.startWeek || out.settings.loser.startWeek;
+  }
+  /* Cleared once it has been carried across, or switching the bracket back off
+     would not stick — the next load would see the old flag and turn it on again. */
+  out.settings.playoffs.consolation = false;
   reshape(out.settings.cap, 'backload', d.settings.cap.backload, null);
   reshape(out.settings.contracts, 'limitEnforce', d.settings.contracts.limitEnforce, null);
   reshape(out.settings.tag, 'counts', d.settings.tag.counts, null);
@@ -10596,6 +11347,10 @@ function migrate(j){
   out.league.coCommishIds = Array.isArray((j.league||{}).coCommishIds) ? j.league.coCommishIds : [];
   out.h2h = (j.h2h && typeof j.h2h==='object') ? j.h2h : {};
   out.lineups = (j.lineups && typeof j.lineups==='object') ? j.lineups : {};
+  out.bracketResults = (j.bracketResults && typeof j.bracketResults==='object')
+    ? j.bracketResults : {playoff:{}, loser:{}};
+  out.bracketResults.playoff = out.bracketResults.playoff || {};
+  out.bracketResults.loser   = out.bracketResults.loser   || {};
   out.schedule = Array.isArray(j.schedule) ? j.schedule : [];
   if(!Array.isArray(out.settings.playoffs.chain) || !out.settings.playoffs.chain.length)
     out.settings.playoffs.chain = ['h2h','opp','pf','eff'];
