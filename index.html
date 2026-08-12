@@ -1458,6 +1458,7 @@ function render(){
   renderShell();
   if(needsGate()){
     $('#view').innerHTML = gateView();
+    gateLobby();
     const el = $('#view [data-k="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
     return;
@@ -1473,32 +1474,41 @@ function gateView(){
   const g = ui.tmp.gate = ui.tmp.gate || {};
   const pend = (S.meta && S.meta.pendingInvite) || null;
   const code = g.code!=null ? g.code : (pend && pend.code) || '';
-  const name = (pend && pend.league) || S.league.name || 'the league';
+  const name = (g.lobbyName) || (pend && pend.league) || S.league.name || 'the league';
   const mode = g.mode || 'new';
+  const lob = g.lobby || null;                       // teams and whether a password is wanted
+  const linkTeam = (pend && pend.teamId) || '';
+  const free = lob ? lob.filter(t=> !t.taken || t.team_id===linkTeam) : [];
+  const claimed = linkTeam ? (lob||[]).find(t=> t.team_id===linkTeam) : null;
+  const teamName_ = claimed ? claimed.team_name : (pend && pend.team) || '';
   return `
   <div class="wrap" style="max-width:520px;margin:6vh auto">
     <div class="panel">
       <div class="ph"><h3>${mode==='old'?'Sign in':'Join '+esc(name)}</h3></div>
       <div class="pb stack">
-        ${pend
-          ? '<p class="muted" style="margin:0">You have been invited to <b>'+esc(name)+'</b>'+
-            (pend.team?', taking over <b>'+esc(pend.team)+'</b>':'')+'. Make an account and it is yours.</p>'
-          : '<p class="muted" style="margin:0">This league lives on a server. Sign in to see it.</p>'}
+        ${teamName_
+          ? '<p class="muted" style="margin:0">You have been invited to <b>'+esc(name)+'</b>, taking over <b>'+
+            esc(teamName_)+'</b>. Make an account and it is yours.</p>'
+          : pend
+            ? '<p class="muted" style="margin:0">You have been invited to <b>'+esc(name)+'</b>. Make an account and pick your team.</p>'
+            : '<p class="muted" style="margin:0">This league lives on a server. Sign in to see it.</p>'}
 
         <div class="tabs">
           <button class="${mode!=='old'?'on':''}" data-a="gateMode" data-m="new">Make my account</button>
           <button class="${mode==='old'?'on':''}" data-a="gateMode" data-m="old">I already have one</button>
         </div>
 
-        <div class="codebox"><label class="f"><span>Your one-time code${
-          g.fromLink?' <span class="good">— filled in from your link</span>'
-                    :(mode==='old'?' <span class="dim">(only if you are joining a new league)</span>':'')}</span>
-          <input type="text" id="gCode" maxlength="8" placeholder="ABC123" value="${esc(code)}"
-            data-k="gCode" autocomplete="one-time-code" autocapitalize="characters"
-            autocorrect="off" spellcheck="false"></label></div>
-        ${g.fromLink?'<div class="hint good">Nothing to copy out of the message — the code came with the link. '+
-          'Put in your email and a password you choose, and that is you in'+
-          (pend && pend.team ? ', running '+esc(pend.team) : '')+'.</div>':''}
+        ${(!linkTeam && free.length) ? `<label class="f"><span>Which team is yours</span>
+          <select id="gTeam" data-k="gTeam">
+            <option value="">Pick one…</option>
+            ${free.map(t=>'<option value="'+esc(t.team_id)+'"'+(g.team===t.team_id?' selected':'')+'>'+
+              esc(t.team_name)+(t.owner_name?' · '+esc(t.owner_name):'')+'</option>').join('')}
+          </select></label>` : ''}
+
+        ${g.needsPw ? `<label class="f"><span>League password</span>
+          <input type="text" id="gLeaguePw" value="${esc(g.leaguePw||'')}" data-k="gLeaguePw"
+            autocapitalize="none" autocorrect="off" spellcheck="false"
+            placeholder="the word your commissioner gave out"></label>` : ''}
 
         <label class="f"><span>Email</span>
           <input type="email" id="gEmail" placeholder="you@example.com" value="${esc(g.email||'')}"
@@ -1521,9 +1531,34 @@ function gateView(){
         </div>
         <div class="hint">Your email and password are your login from then on — same account on any device.
           Nothing is emailed to you.</div>
+
+        <details ${code?'open':''} style="margin-top:2px">
+          <summary class="tiny dim" style="cursor:pointer">Got a one-time code? You do not need one, but it still works.</summary>
+          <div class="codebox" style="margin-top:8px"><input type="text" id="gCode" maxlength="8" placeholder="ABC123"
+            value="${esc(code)}" data-k="gCode" autocomplete="one-time-code" autocapitalize="characters"
+            autocorrect="off" spellcheck="false"></div>
+        </details>
       </div>
     </div>
   </div>`;
+}
+/* Which teams are going and whether the league wants a password. Read without
+   an account on purpose — you cannot pick a team you are not allowed to see. */
+async function gateLobby(){
+  const g = ui.tmp.gate = ui.tmp.gate || {};
+  if(g.lobbyTried) return;
+  g.lobbyTried = true;
+  try{
+    if(!Supa.client) await Supa.init(true);
+    const id = Supa.cfg().leagueId;
+    if(!Supa.client || !id) return;
+    const {data, error} = await Supa.client.rpc('league_lobby', {p_league:id});
+    if(error || !data || !data.length) return;
+    g.lobby = data;
+    g.lobbyName = data[0].league_name || '';
+    g.needsPw = !!data[0].needs_password;
+    render();
+  }catch(e){}
 }
 ACT.gateMode = (d)=>{
   const g = ui.tmp.gate = ui.tmp.gate || {};
@@ -1534,6 +1569,9 @@ function gateRead(){
   const c=$('#gCode'), e=$('#gEmail'), w=$('#gPw');
   if(c) g.code = c.value;
   if(e) g.email = e.value;
+  const tm=$('#gTeam'), lp=$('#gLeaguePw');
+  if(tm) g.team = tm.value;
+  if(lp) g.leaguePw = lp.value;
   /* Only take the password if there is one in the box. A redraw can leave it
      empty for a moment, and overwriting a good password with nothing turns a
      working sign-in into "six characters or more". */
@@ -1590,9 +1628,12 @@ ACT.gateGo = async ()=>{
   const pw = String(g.pw||'');
   const mode = g.mode || 'new';
 
+  const wantTeam = (pend0 && pend0.teamId) || g.team || null;
   if(!/.+@.+\..+/.test(email)){ g.err = 'That does not look like an email address.'; return render(); }
   if(pw.length < 6){ g.err = 'Six characters or more for the password.'; return render(); }
-  if(mode!=='old' && !code){ g.err = 'Put in the code you were sent.'; return render(); }
+  if(!code && g.lobby && g.lobby.length && !wantTeam && mode!=='old'){
+    g.err = 'Pick which team is yours.'; return render();
+  }
 
   g.busy = true; render();
   try{
@@ -1618,9 +1659,21 @@ ACT.gateGo = async ()=>{
       Supa.user = (r.data.session && r.data.session.user) || r.data.user || null;
     }
 
+    /* A code still works for anybody holding one, but it is no longer the way
+       in — the link is. With an account made, claiming a team is one call. */
     if(code){
       const {data, error} = await Supa.client.rpc('redeem_code', {p_code:code, p_label:null});
       if(error) throw error;
+      S.settings.supa.leagueId = data.league_id;
+    } else if(Supa.cfg().leagueId){
+      const {data, error} = await Supa.client.rpc('join_with_password', {
+        p_league: Supa.cfg().leagueId,
+        p_password: g.leaguePw || '',
+        p_team: wantTeam,
+        p_label: email });
+      if(error) throw new Error(/league password/i.test(error.message)
+        ? 'That is not the league password. Ask whoever runs it for the word.'
+        : error.message);
       S.settings.supa.leagueId = data.league_id;
     }
     S.settings.supa.on = true;
@@ -9724,10 +9777,15 @@ VIEWS.settings = function(){
         <button class="btn ghost sm" data-a="refreshInvites">Refresh</button></div>
         <div class="pb">
         ${Supa.boss()?`<div class="grid g2" style="margin-bottom:12px">
-          <label class="f"><span>Who the next code is for</span>
+          <label class="f"><span>Who the next link is for</span>
             <input type="text" id="invWho" placeholder="their name, so you remember"></label>
           <label class="f"><span>Their email <span class="dim">(optional)</span></span>
             <input type="email" id="invTo" placeholder="opens your mail app already addressed"></label>
+          <label class="f"><span>Their mobile <span class="dim">(optional)</span></span>
+            <input type="tel" id="invPhone" placeholder="opens your messages app already addressed"
+              autocomplete="tel" inputmode="tel"></label>
+          <div class="hint" style="grid-column:1/-1">Neither is stored anywhere — they only fill in the address on
+            the message so you do not have to. The text goes from your own phone, not from the league.</div>
         </div>`:''}
         <div class="scrollx"><table>
         <thead><tr><th>Team</th><th>Who</th><th>Status</th><th></th></tr></thead><tbody>
@@ -9743,7 +9801,7 @@ VIEWS.settings = function(){
             <td>${m
               ? '<span class="pill ok">joined</span>'+(m.role==='commish'?' <span class="pill warn">commissioner</span>':'')
               : code ? '<span class="pill warn">code out</span> <span class="num tiny">'+esc(code.code)+'</span>'
-              : '<span class="pill">not invited</span>'}</td>
+              : '<span class="pill">open</span>'}</td>
             <td class="right nowrap">${!Supa.boss() ? '' : m
               ? (m.user_id===Supa.user.id ? '' :
                  '<button class="btn sm ghost" data-a="supaSetMember" data-user="'+m.user_id+'" data-team="'+t.id+
@@ -9752,7 +9810,7 @@ VIEWS.settings = function(){
               : code
                 ? '<button class="btn sm" data-a="showLastCode" data-code="'+esc(code.code)+'">Send again</button>'+
                   '<button class="btn sm ghost danger" data-a="dropInvite" data-code="'+esc(code.code)+'">×</button>'
-                : '<button class="btn sm pri" data-a="invitePerson" data-team="'+t.id+'">Invite</button>'}</td>
+                : '<button class="btn sm pri" data-a="invitePerson" data-team="'+t.id+'">Get their link</button>'}</td>
           </tr>`;
         }).join('')}
         ${noTeam.map(m=>`<tr><td class="dim tiny">no team</td><td class="tiny">${esc(memberName(m))}</td>
@@ -9760,8 +9818,12 @@ VIEWS.settings = function(){
           <td class="right">${Supa.boss()&&m.user_id!==Supa.user.id
             ? '<button class="btn sm ghost danger" data-a="supaDropMember" data-user="'+m.user_id+'">Remove</button>':''}</td></tr>`).join('')}
         </tbody></table></div>
-        ${Supa.boss()?`<div class="hint">Press <b>Invite</b> on an empty team and you get a six-character code with a
-          message ready to send. One code per team, one use each.</div>
+        ${Supa.boss()?`<div class="hint">Press <b>Get their link</b> on an empty team and you get a link with a message
+          ready to send. Whoever opens it makes an account — email and a password they choose — and that team is theirs.
+          Nothing to type but those two things.</div>
+        <div class="hint warn">There is no code on these links, so a link works for whoever opens it. Send each one to
+          one person. Once a team is taken the link cannot hand it to anybody else, and the
+          <b>league password</b> below puts a word on the door if you want one.</div>
         <div class="hint">Somebody locked out of their account? They can reset it themselves from the sign-in screen.
           Failing that, <b>Remove</b> them and press <b>Invite</b> again — a fresh code lets them start over with a
           password they will remember, and their team is waiting for them.</div>`:''}
@@ -10158,18 +10220,13 @@ ACT.supaCreate = async ()=>{
     render(); toast('League created and you are the commissioner','good');
   }catch(e){ toast(e.message,'bad'); }
 };
-ACT.invitePerson = async (d)=>{
+ACT.invitePerson = (d)=>{
   if(!Supa.boss()) return toast('Commissioners only','bad');
   const who = String(($('#invWho')||{}).value||'').trim();
   const to  = String(($('#invTo')||{}).value||'').trim();
-  try{
-    const {data, error} = await Supa.client.rpc('invite_person', {
-      p_league:Supa.cfg().leagueId, p_team:d.team||null, p_label:who||null, p_email:to||null });
-    if(error) throw error;
-    ui.tmp.lastCode = {code:data.code, team:d.team, who, to};
-    await loadInvites();
-    showCode();
-  }catch(e){ toast(e.message,'bad'); }
+  const phone = tidyPhone(($('#invPhone')||{}).value);
+  ui.tmp.lastCode = {code:'', team:d.team||'', who, to, phone};
+  showCode();
 };
 /* The link carries the project, the key, the league and the code, so opening it
    on a phone that has never seen this app lands straight on the sign-up screen
@@ -10200,20 +10257,23 @@ function inviteLink(code, teamId){
   const cfg = Supa.cfg();
   const loc = location;
   const here = loc.origin + (typeof loc.pathname==='string' ? loc.pathname : '');
-  const inv = (Supa.invites||[]).find(x=> x.code===code);
+  const inv = code ? (Supa.invites||[]).find(x=> x.code===code) : null;
   const tid = teamId || (inv && inv.team_id) || '';
-  const bundle = packBundle({c:code, u:cfg.url, k:cfg.anonKey, l:cfg.leagueId, n:S.league.name,
+  const bundle = packBundle({c:code||'', u:cfg.url, k:cfg.anonKey, l:cfg.leagueId, n:S.league.name,
     t: tid ? teamName(tid) : '', ti: tid || ''});
   return bundle ? here + '#invite=' + encodeURIComponent(bundle) : '';
 }
+/* The ordinary way in now: no code, just the league and which team is theirs.
+   Whoever opens it makes an account and that team is done. */
+function teamLink(teamId){ return inviteLink('', teamId); }
 function inviteText(c){
   const link = inviteLink(c.code, c.team);
   if(link) return 'You are in the '+S.league.name+'.'+
     (c.team ? ' You have got '+teamName(c.team)+'.' : '')+'\n\n'+
     'Open this on your phone:\n'+link+'\n\n'+
-    'Put in your email and a password you make up. That is the whole thing — the code is already in the link.\n\n'+
-    'That email and password are how you get back in, on any device.\n\n'+
-    '(If you ever need it by hand, the code is '+c.code+'. It only works once.)';
+    'Put in your email and a password you make up. That is the whole thing.\n\n'+
+    'That email and password are how you get back in, on any device.'+
+    (c.code ? '\n\n(If you are ever asked for a code by hand, it is '+c.code+'.)' : '');
   const where = (typeof location==='object' && location.origin ? location.origin : '') +
                 (typeof location==='object' ? location.pathname : '');
   return 'You are in the '+S.league.name+'.'+
@@ -10231,26 +10291,81 @@ function showCode(){
   const body = inviteText(c);
   const link = inviteLink(c.code, c.team);
   modal('Invitation for '+(c.who || (c.team?teamName(c.team):'whoever you send it to')),
-    '<div class="codebox" style="margin-bottom:12px"><input type="text" readonly value="'+esc(c.code)+'" onclick="this.select()"></div>'+
-    '<div class="hint">One person, one use. Making another code for the same team replaces this one.</div>'+
     (link
-      ? '<div class="flabel" style="margin-top:12px">Their link — send them this</div>'+
+      ? '<div class="flabel">Their link — send them this</div>'+
         '<input type="text" readonly value="'+esc(link)+'" onclick="this.select()">'+
-        '<div class="hint">Opening it fills the code in for them'+
-        (c.team ? ' and puts them straight into '+esc(teamName(c.team)) : '')+
-        '. All they type is an email and a password, even on a phone that has never seen this app before.</div>'
+        '<div class="hint">Opening it puts them on a sign-up screen'+
+        (c.team ? ', with '+esc(teamName(c.team))+' already theirs' : ', where they pick their team')+
+        '. All they type is an email and a password — even on a phone that has never seen this app before.</div>'+
+        '<div class="hint warn">There is no code on this link, so it works for whoever opens it. '+
+        'Send it to one person'+(c.team?' — it only ever hands over '+esc(teamName(c.team)):'')+
+        ', and once they have that team nobody else can take it. If you want a word on the door as well, '+
+        'set a league password below.</div>'
       : '<div class="hint bad">No link to give them — '+esc(inviteLinkProblem())+'</div>')+
+    (c.code ? '<div class="hr"></div><div class="flabel">One-time code</div>'+
+      '<div class="codebox"><input type="text" readonly value="'+esc(c.code)+'" onclick="this.select()"></div>' : '')+
+    (link ? '<div class="hr"></div>'+
+      '<div class="flabel">Text it to them</div>'+
+      '<div class="row"><input type="tel" id="invPhone" placeholder="their mobile number" '+
+      'value="'+esc(c.phone||'')+'" autocomplete="tel" inputmode="tel" style="flex:1">'+
+      '<button class="btn" data-a="textCode">Text it</button></div>'+
+      '<div class="hint">This opens the messages app on <b>this</b> device with the number and a short version of the '+
+      'message already in it — you still press send. Nothing is sent by the league, and the number is not kept.</div>'
+      : '')+
     '<div class="hr"></div>'+
     '<div class="flabel">The message they get</div>'+
-    '<textarea readonly rows="9" onclick="this.select()">'+esc(body)+'</textarea>',
+    '<textarea readonly rows="8" onclick="this.select()">'+esc(body)+'</textarea>',
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
-    (c.to ? '<button class="btn" data-a="mailCode">Email it to '+esc(c.to)+'</button>' : '')+
+    (c.to ? '<button class="btn" data-a="mailCode">Email it</button>' : '')+
+    (looksLikePhone(c.phone) ? '<button class="btn" data-a="textCode">Text '+esc(c.phone)+'</button>' : '')+
     '<button class="btn" data-a="shareCode">Send it</button>'+
     '<button class="btn pri" data-a="copyCode">Copy it</button>');
 }
 ACT.copyCode = ()=>{
   const c = ui.tmp.lastCode; if(!c) return;
   if(navigator.clipboard) navigator.clipboard.writeText(inviteText(c)).then(()=> toast('Copied','good'));
+};
+/* Keep the digits and a leading +, throw away whatever else people type —
+   brackets, dashes, spaces, dots. */
+function tidyPhone(v){
+  const raw = String(v||'').trim();
+  const plus = raw.charAt(0)==='+';
+  const digits = raw.replace(/\D/g,'');
+  return digits ? (plus?'+':'')+digits : '';
+}
+function looksLikePhone(v){
+  const d = tidyPhone(v).replace(/^\+/,'');
+  return d.length>=7 && d.length<=15;
+}
+/* iOS wants the body after &, Android after ?. Getting it wrong opens the
+   Messages app with the number and an empty message, which looks like the
+   feature is broken when it is only punctuation. */
+function smsHref(number, body){
+  const ua = String((navigator||{}).userAgent||'');
+  const apple = /iPhone|iPad|iPod|Macintosh/i.test(ua);
+  return 'sms:'+tidyPhone(number)+(apple?'&':'?')+'body='+encodeURIComponent(body);
+}
+/* A text is not an email. Long bodies get cut off by some handlers, and the
+   link is the only part that actually matters. */
+function inviteSms(c){
+  const link = inviteLink(c.code, c.team);
+  if(!link) return '';
+  return (c.team ? 'You have got '+teamName(c.team)+' in the '+S.league.name+'.'
+                 : 'You are in the '+S.league.name+'.')+
+    ' Open this and pick an email and password:\n'+link;
+}
+ACT.textCode = ()=>{
+  const c = ui.tmp.lastCode; if(!c) return;
+  const num = tidyPhone(c.phone || ($('#invPhone')||{}).value);
+  if(!looksLikePhone(num)) return toast('That does not look like a phone number','bad');
+  const body = inviteSms(c);
+  if(!body) return toast('No link to send yet — '+inviteLinkProblem(),'bad');
+  c.phone = num;
+  /* Nothing here can tell whether a handler picked it up, so say what should
+     happen rather than claim it did. */
+  toast('Opening your messages app…');
+  try{ location.href = smsHref(num, body); }
+  catch(e){ toast('This device cannot open a text from a link — copy it instead','bad'); }
 };
 ACT.mailCode = ()=>{
   const c = ui.tmp.lastCode; if(!c || !c.to) return;
