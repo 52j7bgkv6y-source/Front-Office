@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14m · OG Dynasty locked in';
+const APP_BUILD = '2026-08-14q · waiting room fix';
 
 /* ============================================================
    HOME LEAGUE
@@ -684,9 +684,10 @@ const APP_BUILD = '2026-08-14m · OG Dynasty locked in';
 const HOME_LEAGUE = {
   url:      'https://xjgqtjaklfrczznowwno.supabase.co',
   anonKey:  'sb_publishable_Zaf5KfMx01pZfKcNylmNoA_n25uVQuO',
-  /* Leave leagueId blank and the app finds the league itself when the project
-     holds exactly one. Fill it in to pin a specific one. */
-  leagueId: ''
+  /* The league this address serves. Pinned, so there is no lookup to fail. */
+  leagueId: 'tvilleog',
+  /* Only used if the pinned id ever comes back missing. */
+  tryIds: ['tvilleog', 'ogdynasty', 'og-dynasty']
 };
 /* The address is tied to a league as soon as we know where to connect; the
    league id may still be discovered a moment later. */
@@ -699,6 +700,37 @@ async function findHomeLeague(){
   if(!homeLeagueOn() || (S.settings.supa && S.settings.supa.leagueId)) return;
   try{
     if(!Supa.client && !await Supa.init(false)) return;
+    /* Best route first: a signed-in member's own row names their league, and
+       security rules always allow reading your own membership. */
+    if(Supa.user){
+      const mine = await Supa.client.from('league_members')
+        .select('league_id').eq('user_id', Supa.user.id).limit(1);
+      const lid = mine && mine.data && mine.data[0] && mine.data[0].league_id;
+      if(lid){
+        S.settings.supa.leagueId = lid;
+        S.meta.homeFound = lid; S.meta.homeTrouble = null;
+        save(true);
+        try{ await Supa.loadMember(); await Supa.pull(); Supa.listen(); }catch(e){}
+        render();
+        return;
+      }
+    }
+    /* Next: try the likely names for this league by asking for each one. */
+    for(const cand of (HOME_LEAGUE.tryIds||[])){
+      try{
+        const r = await Supa.client.from('leagues').select('id').eq('id', cand).maybeSingle();
+        if(r && r.data && r.data.id){
+          S.settings.supa.leagueId = r.data.id;
+          S.meta.homeFound = r.data.id; S.meta.homeTrouble = null;
+          save(true);
+          try{ await Supa.loadMember(); await Supa.pull(); Supa.listen(); }catch(e){}
+          render();
+          return;
+        }
+      }catch(e){ /* blocked or absent — try the next */ }
+    }
+    /* Otherwise ask the project directly. Security rules often block this for a
+       signed-out visitor, which is why it is the last resort. */
     const {data, error} = await Supa.client.from('leagues').select('id').limit(20);
     if(error) throw error;
     const ids = (data||[]).map(r=> r.id).filter(Boolean);
@@ -710,7 +742,7 @@ async function findHomeLeague(){
       S.meta.homeTrouble = ids.length
         ? 'This project holds '+ids.length+' leagues ('+ids.slice(0,4).join(', ')+
           '). Put the right one in HOME_LEAGUE.leagueId.'
-        : 'The project did not return a league. Either it is empty, or its security rules do not let a signed-out visitor list leagues \u2014 in that case fill in HOME_LEAGUE.leagueId.';
+        : 'Could not work out which league this is. Open Supabase \u2192 Table Editor \u2192 leagues and read the id column, then put it in HOME_LEAGUE.leagueId at the top of index.html.';
       render();
     }
   }catch(e){
@@ -1668,10 +1700,14 @@ function holdForCommish(){ return ((S.settings||{}).join||{}).holdForCommish !==
 function needsSeat(){
   const c = S.settings.supa || {};
   if(!c.on || !c.leagueId) return false;
-  if(typeof Supa!=='object' || !Supa.user || !Supa.member) return false;
+  if(typeof Supa!=='object' || !Supa.user) return false;
+  if(ui.tmp.gateOff) return false;
+  /* Signed in but with no membership row at all: they created an account from
+     the plain link and nothing has put them in the league yet. They wait too —
+     otherwise they drop into the league reading somebody else's seat. */
+  if(!Supa.member) return true;
   if(Supa.member.team_id) return false;
   if(Supa.member.role==='commish') return false;
-  if(ui.tmp.gateOff) return false;
   return true;
 }
 function waitingMembers(){ return (Supa.roster||[]).filter(m=> !m.team_id && m.role!=='commish'); }
@@ -1701,6 +1737,11 @@ function render(){
     return;
   }
   if(needsSeat()){ $('#view').innerHTML = seatView(); return; }
+  /* This address belongs to a league but we do not know which one yet. Show
+     that plainly rather than dropping them into the local practice copy. */
+  if(homeLeagueOn() && !openedFromFile() && !(S.settings.supa||{}).leagueId){
+    $('#view').innerHTML = homeWaitView(); return;
+  }
   $('#view').innerHTML = VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>';
   if(k){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
@@ -1717,9 +1758,13 @@ function seatView(){
       <div class="ph"><h3>You are in ${esc(S.league.name)}</h3><div class="spacer"></div>
         <span class="pill warn">waiting for a team</span></div>
       <div class="pb stack">
-        <p class="muted" style="margin:0">Your account is made and you are on the list. ${
+        ${Supa.member ? `<p class="muted" style="margin:0">Your account is made and you are on the list. ${
           boss.length ? esc(boss.join(' and '))+' now put' : 'The commissioner now puts'} you in a team —
-          as soon as that happens this turns into your front office, with nothing more for you to do.</p>
+          as soon as that happens this turns into your front office, with nothing more for you to do.</p>`
+        : `<div class="hint bad">Your account is made, but this league has not got you on its list yet, so the
+          commissioner cannot see you to give you a team. Ask ${boss.length?esc(boss.join(' or ')):'the commissioner'}
+          to send you your own invite link \u2014 opening that puts you on the list straight away.</div>
+          ${S.meta.seatSelfAdd? '<div class="hint dim tiny">Reason: '+esc(S.meta.seatSelfAdd)+'</div>':''}`}
         <div class="kv">
           <dt>Signed in as</dt><dd>${esc((Supa.user||{}).email||'')}</dd>
           <dt>League</dt><dd>${esc(S.league.name)}</dd>
@@ -1737,6 +1782,7 @@ function seatView(){
           Your email and password get you straight back here.</div>
       </div>
     </div>
+    ${buildStampLine()}
   </div>`;
 }
 ACT.seatCheck = async ()=>{
@@ -1749,6 +1795,29 @@ ACT.seatCheck = async ()=>{
   render(); toast('Not yet — still waiting on the commissioner');
 };
 /* The way in. Everything an invited owner ever needs is on this one screen. */
+/* Anyone stuck on the sign-in or waiting screens cannot reach Settings, and
+   they are exactly the people who need to read their version back. */
+function buildStampLine(){
+  return '<div class="tiny dim" style="text-align:center;margin-top:12px;word-break:break-word">'+
+    esc(APP_BUILD)+' \u00b7 league '+esc(HOME_LEAGUE.leagueId||(S.settings.supa||{}).leagueId||'not set')+
+    ' <button class="btn ghost sm" data-a="copyBuild" style="margin-left:6px">Copy</button></div>';
+}
+function homeWaitView(){
+  const t = S.meta && S.meta.homeTrouble;
+  return `
+  <div class="wrap" style="max-width:520px;margin:6vh auto">
+    <div class="panel"><div class="ph"><h3>${t?'Cannot tell which league this is':'Connecting\u2026'}</h3></div>
+      <div class="pb stack">
+        ${t ? '<div class="hint bad">'+esc(t)+'</div>'
+            : '<p class="muted" style="margin:0">Finding your league on the server.</p>'}
+        <div class="hint">Nothing local has been changed. If this stays up, the league id needs to be
+          filled into <span class="num">HOME_LEAGUE</span> at the top of index.html.</div>
+        ${Supa.user? '<button class="btn ghost sm" data-a="supaSignOut">Sign out</button>':''}
+        <button class="btn ghost sm" data-a="gateSettings">Let me at the settings</button>
+      </div></div>
+    ${buildStampLine()}
+  </div>`;
+}
 function gateView(){
   const g = ui.tmp.gate = ui.tmp.gate || {};
   const pend = (S.meta && S.meta.pendingInvite) || null;
@@ -1835,6 +1904,7 @@ function gateView(){
         </details>
       </div>
     </div>
+    ${buildStampLine()}
   </div>`;
 }
 /* Which teams are going and whether the league wants a password. Read without
@@ -10941,6 +11011,19 @@ VIEWS.settings = function(){
     </div>`:''}
 
     ${sub==='server'?`
+      <div class="panel" style="margin-bottom:14px;border-color:#2E4B63">
+        <div class="ph"><h3>This version</h3><div class="spacer"></div>
+          <button class="btn ghost sm" data-a="copyBuild">Copy</button></div>
+        <div class="pb stack">
+          <div><div class="flabel">Build</div>
+            <div id="buildStamp" class="num" style="font-size:15px;word-break:break-word">${esc(APP_BUILD)}</div></div>
+          <div><div class="flabel">League this file points at</div>
+            <div class="num" style="word-break:break-all">${esc(HOME_LEAGUE.leagueId || (S.settings.supa||{}).leagueId || 'not set')}</div></div>
+          <div class="hint">If someone is seeing the wrong league, have them read this Build line back to you.
+            It should match the newest one deployed. If it does not, they are on an old cached copy \u2014
+            pull down to refresh the page, or close the tab and open the link again.</div>
+        </div>
+      </div>
       ${(()=>{
         const c = S.settings.supa;
         const step = !c.on ? 0 : !Supa.client ? 1 : !Supa.user ? 2 : !c.leagueId ? 3 : 4;
@@ -12190,6 +12273,15 @@ ACT.supaSetMember = async (d)=>{
 ACT.supaMemberTeam = async (d,el)=>{
   await ACT.supaSetMember({user:d.user, team:el.value, role:d.role});
 };
+ACT.copyBuild = ()=>{
+  const txt = APP_BUILD + ' \u00b7 league ' + (HOME_LEAGUE.leagueId || (S.settings.supa||{}).leagueId || 'not set');
+  const done = ()=> toast('Copied \u2014 send that to your commissioner','good');
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(done, ()=> modal('This version','<p class="num">'+esc(txt)+'</p>',
+      '<button class="btn ghost" data-a="closeModal">Close</button>'));
+  else modal('This version','<p class="num">'+esc(txt)+'</p>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
 ACT.copyHomeBlock = ()=>{
   const el = $('#homeBlock');
   const txt = el ? (el.textContent || '') : '';
@@ -12573,7 +12665,13 @@ function adoptRemote(state, rev){
   S.settings.sync = keepSync;
   if(keepSupa && (keepSupa.url || keepSupa.leagueId)) S.settings.supa = keepSupa;
   S.settings.live = Object.assign({}, S.settings.live, keepLive);
-  if(keepMe && byId(S.teams, keepMe)) S.league.myTeamId = keepMe;
+  /* The pulled state remembers whoever pushed it. A seat belongs to the signed-in
+     account, so take it from the membership row, then the local one, and other-
+     wise leave it empty rather than adopting the pusher's team. */
+  const seat = (typeof Supa==='object' && Supa.member && Supa.member.team_id) || null;
+  if(seat && byId(S.teams, seat)) S.league.myTeamId = seat;
+  else if(keepMe && byId(S.teams, keepMe)) S.league.myTeamId = keepMe;
+  else if(typeof Supa==='object' && Supa.user && !seat) S.league.myTeamId = null;
   Store.set(KEY, S);
 }
 let pushT=null;
@@ -12655,7 +12753,24 @@ const Supa = {
   },
 
   async afterSignIn(){
+    /* Signing in is the moment their own membership row becomes readable, so if
+       we still do not know the league, this is when to look it up. */
+    if(homeLeagueOn() && !this.cfg().leagueId){
+      try{ await findHomeLeague(); }catch(e){}
+    }
     await this.loadMember();
+    /* No membership row: they made an account straight from the league address.
+       Put them in the league with no team, so they show up on the commissioner's
+       list as waiting instead of being invisible. */
+    if(!this.member && this.cfg().leagueId && this.user){
+      try{
+        const {error} = await this.client.from('league_members').insert({
+          league_id: this.cfg().leagueId, user_id: this.user.id,
+          team_id: null, role: 'owner', label: this.user.email });
+        if(!error) await this.loadMember();
+        else S.meta.seatSelfAdd = error.message;
+      }catch(e){ S.meta.seatSelfAdd = e.message; }
+    }
     if(this.cfg().leagueId){ await this.pull(); this.listen(); }
     render();
   },
@@ -12840,7 +12955,16 @@ const Supa = {
         // leave the local copy exactly where it is.
         this.missing = true;
         this.set('warn','Nothing on the server under "'+this.cfg().leagueId+'"');
-        this.busy=false; render(); return;
+        this.busy=false;
+        /* The pinned league is not there. Try the other known names once, rather
+           than leaving everyone staring at an empty league. */
+        if(homeLeagueOn() && !S.meta.homeRecovered){
+          S.meta.homeRecovered = true;
+          S.settings.supa.leagueId = '';
+          findHomeLeague();
+          return;
+        }
+        render(); return;
       }
       this.missing = false;
       if((+data.rev||0) > (+S.rev||0)){
