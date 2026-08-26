@@ -665,7 +665,30 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14k · seat confirm button';
+const APP_BUILD = '2026-08-14l · home league';
+
+/* ============================================================
+   HOME LEAGUE
+   Fill these three in and EVERY visitor to this address lands in
+   this league — never a practice/demo league. Leave them blank and
+   the app behaves as before (a demo for anyone with nothing saved).
+
+   Where to find them:
+     url      Supabase - Project Settings - Data API - Project URL
+     anonKey  the same page - the "anon" / publishable key
+     leagueId Settings - Server in this app, once you are connected
+
+   The anon key is meant to be public; row-level security is what
+   protects the data, so it is safe to ship in this file.
+   ============================================================ */
+const HOME_LEAGUE = {
+  url:      '',
+  anonKey:  '',
+  leagueId: ''
+};
+function homeLeagueOn(){
+  return !!(HOME_LEAGUE.url && HOME_LEAGUE.anonKey && HOME_LEAGUE.leagueId);
+}
 
 /* ============================================================
    FRONT OFFICE — Dynasty Cap Manager
@@ -1398,6 +1421,14 @@ function toast(msg, kind){
 /* ============================================================
    DEMO LEAGUE BUILDER
    ============================================================ */
+/* An empty league shell — no demo teams, no demo players. Used when this
+   address belongs to a real league and we are waiting to connect and pull it. */
+function blankLeague(){
+  const st = defaultState();
+  st.teams = []; st.players = [];
+  st.live = st.live || {}; st.live.games = []; st.live.week = st.live.week || 1;
+  return st;
+}
 function seedLeague(teamCount){
   const st = defaultState();
   const n = clamp(teamCount||10, 4, 20);
@@ -10957,6 +10988,19 @@ VIEWS.settings = function(){
             <b>Settings → Data API</b>. Not the <span class="num">supabase.com/dashboard/…</span> address you are
             looking at while you are in Supabase.</div>
           <button class="btn sm" data-a="supaConnect">Reconnect</button>`:''}
+
+          <div class="hr"></div>
+          <div class="flabel">Everyone who opens this address</div>
+          ${homeLeagueOn()
+            ? '<div class="hint ok">This file is locked to league <span class="num">'+esc(HOME_LEAGUE.leagueId)+
+              '</span>. Anyone who opens it gets the sign-in screen for that league \u2014 never a practice league \u2014 '+
+              'and once they sign in they wait in the lobby until you give them a team.</div>'
+            : '<div class="hint warn">This file is <b>not</b> tied to a league yet, so anyone opening it with an empty '+
+              'browser sees a ten-team practice league instead of yours. Paste the block below into the top of '+
+              'index.html (replacing the empty <span class="num">HOME_LEAGUE</span> there) and deploy that file.</div>'+
+              '<pre class="num" id="homeBlock" style="white-space:pre-wrap;word-break:break-all;background:#0F1B24;border:1px solid #22384A;border-radius:8px;padding:10px;margin:8px 0">'+
+              esc('const HOME_LEAGUE = {\n  url:      \''+(c.url||'')+'\',\n  anonKey:  \''+(c.anonKey||'')+'\',\n  leagueId: \''+(c.leagueId||'')+'\'\n};')+'</pre>'+
+              '<button class="btn sm pri" data-a="copyHomeBlock">Copy this block</button>'}
         `:''}
 
         ${step===3?`
@@ -12111,6 +12155,15 @@ ACT.supaSetMember = async (d)=>{
 ACT.supaMemberTeam = async (d,el)=>{
   await ACT.supaSetMember({user:d.user, team:el.value, role:d.role});
 };
+ACT.copyHomeBlock = ()=>{
+  const el = $('#homeBlock');
+  const txt = el ? (el.textContent || '') : '';
+  if(!txt) return toast('Nothing to copy','bad');
+  const done = ()=> toast('Copied — paste it over the empty HOME_LEAGUE at the top of index.html','good');
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, ()=>toast('Could not copy','bad'));
+  else { modal('Your home league block','<pre class="num" style="white-space:pre-wrap;word-break:break-all">'+esc(txt)+'</pre>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'); }
+};
 ACT.supaDropMember = async (d)=>{
   try{
     const {error} = await Supa.client.rpc('drop_member', {p_league:Supa.cfg().leagueId, p_user:d.user});
@@ -13033,6 +13086,14 @@ async function init(){
   const read = await Store.read(KEY);
   const saved = read.value;
 
+  /* A home league is baked in: this address always means THIS league. Point the
+     connection at it before anything else runs, so no visitor can land on a
+     practice league by accident. */
+  if(homeLeagueOn() && saved && saved.settings && saved.settings.supa){
+    saved.settings.supa = Object.assign({}, saved.settings.supa,
+      {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey, leagueId:HOME_LEAGUE.leagueId});
+  }
+
   if(!read.ok){
     // The browser would not let us read. Never write over what might be there.
     S = seedLeague(10); buildWeek(1);
@@ -13065,6 +13126,14 @@ async function init(){
     }
     if(!S.live.games.length) buildWeek(S.live.week||1);
     keepBackup(S, 'opened');
+  } else if(homeLeagueOn()){
+    // Nothing stored, but this address belongs to a league. No demo: start from
+    // an empty shell wired to that league, connect, and let them sign in. Once
+    // they are in, an unseated member drops into the waiting lobby.
+    S = blankLeague();
+    S.settings.supa = Object.assign({}, S.settings.supa,
+      {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey, leagueId:HOME_LEAGUE.leagueId});
+    S.meta.joining = true;
   } else {
     // Genuinely nothing stored. Put a demo up but do not commit it to storage —
     // if this turns out to be the wrong browser or address, nothing is lost.
@@ -13080,7 +13149,7 @@ async function init(){
   if(openedFromFile()) notify('Opened from a file',
     'Everything works except signing in — browsers will not load the Supabase library into a page opened this way. '+
     'Settings › Server says how to serve it locally in one line.', 'warn');
-  if(!ui.tmp.skipBootInit && S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(), 300);
+  if(!ui.tmp.skipBootInit && S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(homeLeagueOn()), 300);
 }
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
