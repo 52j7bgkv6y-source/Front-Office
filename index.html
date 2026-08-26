@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14l · home league';
+const APP_BUILD = '2026-08-14m · OG Dynasty locked in';
 
 /* ============================================================
    HOME LEAGUE
@@ -682,12 +682,42 @@ const APP_BUILD = '2026-08-14l · home league';
    protects the data, so it is safe to ship in this file.
    ============================================================ */
 const HOME_LEAGUE = {
-  url:      '',
-  anonKey:  '',
+  url:      'https://xjgqtjaklfrczznowwno.supabase.co',
+  anonKey:  'sb_publishable_Zaf5KfMx01pZfKcNylmNoA_n25uVQuO',
+  /* Leave leagueId blank and the app finds the league itself when the project
+     holds exactly one. Fill it in to pin a specific one. */
   leagueId: ''
 };
+/* The address is tied to a league as soon as we know where to connect; the
+   league id may still be discovered a moment later. */
 function homeLeagueOn(){
-  return !!(HOME_LEAGUE.url && HOME_LEAGUE.anonKey && HOME_LEAGUE.leagueId);
+  return !!(HOME_LEAGUE.url && HOME_LEAGUE.anonKey);
+}
+/* No id baked in: ask the project which leagues exist. Exactly one means there
+   is nothing to choose, so use it. */
+async function findHomeLeague(){
+  if(!homeLeagueOn() || (S.settings.supa && S.settings.supa.leagueId)) return;
+  try{
+    if(!Supa.client && !await Supa.init(false)) return;
+    const {data, error} = await Supa.client.from('leagues').select('id').limit(20);
+    if(error) throw error;
+    const ids = (data||[]).map(r=> r.id).filter(Boolean);
+    if(ids.length===1){
+      S.settings.supa.leagueId = ids[0];
+      S.meta.homeFound = ids[0];
+      save(true); render();
+    } else {
+      S.meta.homeTrouble = ids.length
+        ? 'This project holds '+ids.length+' leagues ('+ids.slice(0,4).join(', ')+
+          '). Put the right one in HOME_LEAGUE.leagueId.'
+        : 'The project did not return a league. Either it is empty, or its security rules do not let a signed-out visitor list leagues \u2014 in that case fill in HOME_LEAGUE.leagueId.';
+      render();
+    }
+  }catch(e){
+    S.meta.homeTrouble = 'Could not look the league up \u2014 '+e.message+
+      '. Fill in HOME_LEAGUE.leagueId to skip the lookup.';
+    render();
+  }
 }
 
 /* ============================================================
@@ -1655,7 +1685,7 @@ function needsGate(){
   if(typeof Supa!=='object') return false;
   if(Supa.user) return false;
   if(ui.tmp.gateOff) return false;
-  return !!(c.leagueId || (S.meta && S.meta.pendingInvite));
+  return !!(c.leagueId || (S.meta && S.meta.pendingInvite) || homeLeagueOn());
 }
 function render(){
   clearCapCache(); dppCache = null;
@@ -1735,6 +1765,11 @@ function gateView(){
     <div class="panel">
       <div class="ph"><h3>${mode==='old'?'Sign in':'Join '+esc(name)}</h3></div>
       <div class="pb stack">
+        ${(homeLeagueOn() && !(S.settings.supa||{}).leagueId)
+          ? (S.meta.homeTrouble
+              ? '<div class="hint bad">'+esc(S.meta.homeTrouble)+'</div>'
+              : '<div class="hint">Finding the league\u2026</div>')
+          : ''}
         ${holdForCommish()
           ? (pend
               ? '<p class="muted" style="margin:0">You have been invited to <b>'+esc(name)+'</b>. Make an account and '+
@@ -13126,10 +13161,12 @@ async function init(){
     }
     if(!S.live.games.length) buildWeek(S.live.week||1);
     keepBackup(S, 'opened');
-  } else if(homeLeagueOn()){
+  } else if(homeLeagueOn() && !openedFromFile()){
     // Nothing stored, but this address belongs to a league. No demo: start from
     // an empty shell wired to that league, connect, and let them sign in. Once
     // they are in, an unseated member drops into the waiting lobby.
+    // (Opened straight from a file there is no signing in, so that case falls
+    // through to the practice league below rather than showing a blank app.)
     S = blankLeague();
     S.settings.supa = Object.assign({}, S.settings.supa,
       {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey, leagueId:HOME_LEAGUE.leagueId});
@@ -13150,6 +13187,7 @@ async function init(){
     'Everything works except signing in — browsers will not load the Supabase library into a page opened this way. '+
     'Settings › Server says how to serve it locally in one line.', 'warn');
   if(!ui.tmp.skipBootInit && S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(homeLeagueOn()), 300);
+  if(homeLeagueOn() && !S.settings.supa.leagueId) setTimeout(findHomeLeague, 500);
 }
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
