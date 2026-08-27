@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14r · league always pinned';
+const APP_BUILD = '2026-08-14t · server report';
 
 /* ============================================================
    HOME LEAGUE
@@ -1739,7 +1739,7 @@ function render(){
   if(needsSeat()){ $('#view').innerHTML = seatView(); return; }
   /* This address belongs to a league but we do not know which one yet. Show
      that plainly rather than dropping them into the local practice copy. */
-  if(homeLeagueOn() && !openedFromFile() && !(S.settings.supa||{}).leagueId){
+  if(homeLeagueOn() && !HOME_LEAGUE.leagueId && !openedFromFile() && !(S.settings.supa||{}).leagueId){
     $('#view').innerHTML = homeWaitView(); return;
   }
   $('#view').innerHTML = VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>';
@@ -1800,7 +1800,10 @@ ACT.seatCheck = async ()=>{
 function buildStampLine(){
   return '<div class="tiny dim" style="text-align:center;margin-top:12px;word-break:break-word">'+
     esc(APP_BUILD)+' \u00b7 league '+esc(HOME_LEAGUE.leagueId||(S.settings.supa||{}).leagueId||'not set')+
-    ' <button class="btn ghost sm" data-a="copyBuild" style="margin-left:6px">Copy</button></div>';
+    '<div style="margin-top:8px">'+
+      '<button class="btn ghost sm" data-a="copyBuild">Copy version</button> '+
+      '<button class="btn ghost sm" data-a="serverReport">Server report</button>'+
+    '</div></div>';
 }
 function homeWaitView(){
   const t = S.meta && S.meta.homeTrouble;
@@ -11019,6 +11022,7 @@ VIEWS.settings = function(){
             <div id="buildStamp" class="num" style="font-size:15px;word-break:break-word">${esc(APP_BUILD)}</div></div>
           <div><div class="flabel">League this file points at</div>
             <div class="num" style="word-break:break-all">${esc(HOME_LEAGUE.leagueId || (S.settings.supa||{}).leagueId || 'not set')}</div></div>
+          <button class="btn sm" data-a="serverReport">Run a server report</button>
           <div class="hint">If someone is seeing the wrong league, have them read this Build line back to you.
             It should match the newest one deployed. If it does not, they are on an old cached copy \u2014
             pull down to refresh the page, or close the tab and open the link again.</div>
@@ -11474,6 +11478,8 @@ ACT.supaClearLeague = ()=>{
     '<button class="btn danger" data-a="supaClearGo">Forget it</button>');
 };
 ACT.supaClearGo = ()=>{
+  if(homeLeagueOn() && HOME_LEAGUE.leagueId)
+    return toast('This address is this league — signing out is what you want','warn');
   S.settings.supa.leagueId = '';
   if(Supa.channel){ try{ Supa.client.removeChannel(Supa.channel); }catch(e){} Supa.channel = null; }
   Supa.member = null; Supa.roster = [];
@@ -11565,6 +11571,60 @@ ACT.newPasswordGo = async ()=>{
   closeModal();
   await Supa.afterSignIn();
   toast('Password set — you are signed in','good');
+};
+ACT.serverReport = async ()=>{
+  modal('Checking the server','<div class="hint">Asking your project what it supports\u2026</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+  const L = [];
+  const c = S.settings.supa || {};
+  L.push('build: '+APP_BUILD);
+  L.push('league in file: '+(HOME_LEAGUE.leagueId||'(none)'));
+  L.push('league in use: '+(c.leagueId||'(none)'));
+  L.push('signed in: '+(Supa.user? (Supa.user.email||'yes') : 'no'));
+  L.push('my member row: '+(Supa.member? ('team='+(Supa.member.team_id||'none')+' role='+(Supa.member.role||'?')) : 'NONE'));
+  if(!Supa.client){ L.push('not connected'); }
+  else {
+    /* Reading the league row proves the id and the security rules. */
+    try{
+      const r = await Supa.client.from('leagues').select('id').eq('id', c.leagueId).maybeSingle();
+      L.push('read league row: '+(r.error? 'ERROR '+r.error.message : (r.data? 'yes' : 'not visible')));
+    }catch(e){ L.push('read league row: ERROR '+e.message); }
+    /* Which server functions exist. A "does not exist" here is the answer when
+       people cannot join: the database was built by a different version. */
+    const probes = [
+      ['league_lobby',   {p_code:'x'}],
+      ['join_league',    {p_code:'x', p_label:'x'}],
+      ['join_open',      {p_league:c.leagueId, p_label:'x'}],
+      ['redeem_code',    {p_code:'x'}],
+      ['set_member',     {p_league:c.leagueId, p_user:'00000000-0000-0000-0000-000000000000', p_team:null, p_role:'owner'}],
+      ['assign_team',    {p_league:c.leagueId, p_user:'00000000-0000-0000-0000-000000000000', p_team:null}],
+      ['league_roster',  {p_league:c.leagueId}]
+    ];
+    for(const [fn,args] of probes){
+      try{
+        const r = await Supa.client.rpc(fn, args);
+        const msg = r.error ? r.error.message : '';
+        if(/does not exist|could not find|schema cache/i.test(msg)) L.push('fn '+fn+': MISSING');
+        else L.push('fn '+fn+': present'+(msg? ' ('+msg.slice(0,40)+')':''));
+      }catch(e){
+        L.push('fn '+fn+': '+(/does not exist|could not find/i.test(e.message)?'MISSING':'error '+e.message.slice(0,40)));
+      }
+    }
+  }
+  const txt = L.join('\n');
+  modal('Server report',
+    '<pre class="num" id="srvReport" style="white-space:pre-wrap;word-break:break-all;background:#0F1B24;'+
+    'border:1px solid #22384A;border-radius:8px;padding:10px;font-size:12px">'+esc(txt)+'</pre>'+
+    '<div class="hint">Send this to your commissioner \u2014 it says exactly what the server does and does not have.</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn pri" data-a="copyReport">Copy</button>');
+};
+ACT.copyReport = ()=>{
+  const el = $('#srvReport'); const txt = el? (el.textContent||'') : '';
+  if(!txt) return toast('Nothing to copy','bad');
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(()=> toast('Copied','good'), ()=> toast('Select and copy it by hand','warn'));
+  else toast('Select and copy it by hand','warn');
 };
 ACT.supaCheck = async (d, el, failedWith)=>{
   modal('Checking your settings', '<div class="hint">Asking your project a few questions…</div>',
@@ -12755,7 +12815,7 @@ const Supa = {
   async afterSignIn(){
     /* Signing in is the moment their own membership row becomes readable, so if
        we still do not know the league, this is when to look it up. */
-    if(homeLeagueOn() && !this.cfg().leagueId){
+    if(homeLeagueOn() && !HOME_LEAGUE.leagueId && !this.cfg().leagueId){
       try{ await findHomeLeague(); }catch(e){}
     }
     await this.loadMember();
@@ -12951,19 +13011,19 @@ const Supa = {
         .select('rev,state').eq('id', this.cfg().leagueId).maybeSingle();
       if(error) throw error;
       if(!data){
-        // The project was rebuilt, or the league was deleted. Say so loudly and
-        // leave the local copy exactly where it is.
+        this.busy = false;
+        /* Reading nothing does NOT mean the league is gone. Until somebody is a
+           member, the league row is simply not visible to them — that is what the
+           security rules are for. Treat that as "waiting to be let in", not as a
+           missing league, and never touch a league id that is baked into this
+           file: that id is the one thing we know for certain. */
+        if(this.user && !this.member){
+          this.missing = false;
+          this.set('ok','Waiting to be given a team');
+          render(); return;
+        }
         this.missing = true;
         this.set('warn','Nothing on the server under "'+this.cfg().leagueId+'"');
-        this.busy=false;
-        /* The pinned league is not there. Try the other known names once, rather
-           than leaving everyone staring at an empty league. */
-        if(homeLeagueOn() && !S.meta.homeRecovered){
-          S.meta.homeRecovered = true;
-          S.settings.supa.leagueId = '';
-          findHomeLeague();
-          return;
-        }
         render(); return;
       }
       this.missing = false;
@@ -13328,7 +13388,7 @@ async function init(){
     'Everything works except signing in — browsers will not load the Supabase library into a page opened this way. '+
     'Settings › Server says how to serve it locally in one line.', 'warn');
   if(!ui.tmp.skipBootInit && S.settings.supa && S.settings.supa.on) setTimeout(()=> Supa.init(homeLeagueOn()), 300);
-  if(homeLeagueOn() && !S.settings.supa.leagueId) setTimeout(findHomeLeague, 500);
+  if(homeLeagueOn() && !HOME_LEAGUE.leagueId && !S.settings.supa.leagueId) setTimeout(findHomeLeague, 500);
 }
 /* A link can carry a Supabase invitation code, or the older address-and-code
    pair for leagues on the shared-password server. Both land here. */
