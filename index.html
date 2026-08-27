@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14t · server report';
+const APP_BUILD = '2026-08-14u · works with your database';
 
 /* ============================================================
    HOME LEAGUE
@@ -1764,6 +1764,7 @@ function seatView(){
         : `<div class="hint bad">Your account is made, but this league has not got you on its list yet, so the
           commissioner cannot see you to give you a team. Ask ${boss.length?esc(boss.join(' or ')):'the commissioner'}
           to send you your own invite link \u2014 opening that puts you on the list straight away.</div>
+          <button class="btn pri" data-a="seatJoin">Try to join the league now</button>
           ${S.meta.seatSelfAdd? '<div class="hint dim tiny">Reason: '+esc(S.meta.seatSelfAdd)+'</div>':''}`}
         <div class="kv">
           <dt>Signed in as</dt><dd>${esc((Supa.user||{}).email||'')}</dd>
@@ -1785,6 +1786,13 @@ function seatView(){
     ${buildStampLine()}
   </div>`;
 }
+ACT.seatJoin = async ()=>{
+  if(!Supa.user) return toast('Sign in first','bad');
+  toast('Asking the league to add you\u2026');
+  const ok = await joinOpenLeague();
+  render();
+  toast(ok? 'You are on the list \u2014 waiting for a team' : (S.meta.seatSelfAdd||'The league would not add you'), ok?'good':'bad');
+};
 ACT.seatCheck = async ()=>{
   await Supa.loadMember();
   if(Supa.member && Supa.member.team_id){
@@ -1920,7 +1928,10 @@ async function gateLobby(){
     if(!Supa.client) await Supa.init(true);
     const id = Supa.cfg().leagueId;
     if(!Supa.client || !id) return;
-    const {data, error} = await Supa.client.rpc('league_lobby', {p_league:id});
+    let data, error;
+    try{ ({data, error} = await rpcTry([['league_lobby',{p_league:id}],
+                                       ['league_roster',{p_league:id}]])); }
+    catch(e){ return; }
     if(error || !data || !data.length) return;
     g.lobby = data;
     g.lobbyName = data[0].league_name || '';
@@ -2080,7 +2091,9 @@ ACT.gateGo = async ()=>{
     /* A code still works for anybody holding one, but it is no longer the way
        in — the link is. With an account made, claiming a team is one call. */
     if(code){
-      const {data, error} = await Supa.client.rpc('redeem_code', {p_code:code, p_label:null});
+      const {data, error} = await rpcTry([['redeem_code',{p_code:code, p_label:null}],
+                                          ['join_league',{p_code:code, p_label:(Supa.user||{}).email||null}],
+                                          ['join_open',{p_league:Supa.cfg().leagueId, p_label:(Supa.user||{}).email||null}]]);
       if(error) throw error;
       S.settings.supa.leagueId = data.league_id;
     } else if(Supa.cfg().leagueId){
@@ -11572,6 +11585,44 @@ ACT.newPasswordGo = async ()=>{
   await Supa.afterSignIn();
   toast('Password set — you are signed in','good');
 };
+/* This app has been through a rename of its server functions. A project set up
+   by an older copy has join_open()/assign_team(); a newer one has
+   join_league()/redeem_code()/league_lobby(). Rather than demand everyone
+   rebuild their database, call whichever is actually there. */
+const RPC_MISSING = /does not exist|could not find|schema cache|not find the function/i;
+async function rpcTry(list){
+  let last = null;
+  for(const [fn, args] of list){
+    try{
+      const r = await Supa.client.rpc(fn, args);
+      if(r && r.error && RPC_MISSING.test(r.error.message||'')){ last = r.error; continue; }
+      return r;
+    }catch(e){
+      if(RPC_MISSING.test(e.message||'')){ last = e; continue; }
+      throw e;
+    }
+  }
+  throw last || new Error('The server does not have the function this needs.');
+}
+/* Put the signed-in person into the league with no team, so the commissioner can
+   see them waiting. join_open() is the open-door version older projects have. */
+async function joinOpenLeague(){
+  const id = Supa.cfg().leagueId;
+  if(!id || !Supa.user) return false;
+  try{
+    const r = await rpcTry([
+      ['join_open',   {p_league:id, p_label:Supa.user.email}],
+      ['join_open',   {p_league:id, p_label:null}],
+      ['join_league', {p_code:id, p_label:Supa.user.email}]
+    ]);
+    if(r && r.error) throw r.error;
+    await Supa.loadMember();
+    return !!Supa.member;
+  }catch(e){
+    S.meta.seatSelfAdd = e.message;
+    return false;
+  }
+}
 ACT.serverReport = async ()=>{
   modal('Checking the server','<div class="hint">Asking your project what it supports\u2026</div>',
     '<button class="btn ghost" data-a="closeModal">Close</button>');
@@ -12012,7 +12063,9 @@ async function openLobby(name){
     if(!Supa.client) await Supa.init(true);
     if(!Supa.client) throw new Error('Could not reach the league — the connection is not open yet.');
     if(!Supa.cfg().leagueId) throw new Error('This link is missing the league it belongs to. Ask for a fresh one.');
-    const {data, error} = await Supa.client.rpc('league_lobby', {p_league:Supa.cfg().leagueId});
+    const lr = await rpcTry([['league_lobby',{p_league:Supa.cfg().leagueId}],
+                             ['league_roster',{p_league:Supa.cfg().leagueId}]]);
+    const {data, error} = lr;
     if(error) throw error;
     const t = ui.tmp.lobby;
     t.teams = data || [];
@@ -12129,7 +12182,9 @@ ACT.jGo = async ()=>{
       }
       Supa.user = (r.data.session && r.data.session.user) || r.data.user || null;
     }
-    const {data, error} = await Supa.client.rpc('redeem_code', {p_code:j.code, p_label:null});
+    const {data, error} = await rpcTry([['redeem_code',{p_code:j.code, p_label:null}],
+                                        ['join_league',{p_code:j.code, p_label:(Supa.user||{}).email||null}],
+                                        ['join_open',{p_league:Supa.cfg().leagueId, p_label:(Supa.user||{}).email||null}]]);
     if(error) throw error;
 
     S.settings.supa.leagueId = data.league_id;
@@ -12285,7 +12340,9 @@ ACT.supaJoin = async ()=>{
   const code = String(($('#supaCode')||{}).value||'').trim();
   if(!code) return toast('Paste the invitation code','bad');
   try{
-    const {data, error} = await Supa.client.rpc('join_league', {p_code:code, p_label:Supa.user.email});
+    const {data, error} = await rpcTry([['join_league',{p_code:code, p_label:Supa.user.email}],
+                                        ['redeem_code',{p_code:code, p_label:null}],
+                                        ['join_open',{p_league:Supa.cfg().leagueId, p_label:Supa.user.email}]]);
     if(error) throw error;
     S.settings.supa.leagueId = data.league_id;
     save(true);
@@ -12820,16 +12877,10 @@ const Supa = {
     }
     await this.loadMember();
     /* No membership row: they made an account straight from the league address.
-       Put them in the league with no team, so they show up on the commissioner's
-       list as waiting instead of being invisible. */
+       Ask the server to put them in with no team, so they show up on the
+       commissioner's list as waiting instead of being invisible. */
     if(!this.member && this.cfg().leagueId && this.user){
-      try{
-        const {error} = await this.client.from('league_members').insert({
-          league_id: this.cfg().leagueId, user_id: this.user.id,
-          team_id: null, role: 'owner', label: this.user.email });
-        if(!error) await this.loadMember();
-        else S.meta.seatSelfAdd = error.message;
-      }catch(e){ S.meta.seatSelfAdd = e.message; }
+      await joinOpenLeague();
     }
     if(this.cfg().leagueId){ await this.pull(); this.listen(); }
     render();
