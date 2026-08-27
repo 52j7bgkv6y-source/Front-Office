@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14q · waiting room fix';
+const APP_BUILD = '2026-08-14r · league always pinned';
 
 /* ============================================================
    HOME LEAGUE
@@ -13241,13 +13241,27 @@ setInterval(()=>{ if(!$('#modal').classList.contains('on')) renderShell(); }, 60
 /* ============================================================
    BOOT
    ============================================================ */
+/* Pin the baked-in league onto the state, no matter how the state was built —
+   restored, migrated, blank, or a fallback after a failure. Without this a save
+   in an unexpected shape kept an empty league id and the app could not tell
+   which league it was. */
+function applyHomeLeague(){
+  if(!homeLeagueOn() || !S) return;
+  S.settings = S.settings || {};
+  S.settings.supa = Object.assign({}, S.settings.supa || {},
+    {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey});
+  if(HOME_LEAGUE.leagueId){
+    S.settings.supa.leagueId = HOME_LEAGUE.leagueId;
+    /* the id is known, so any earlier lookup complaint is stale */
+    if(S.meta){ S.meta.homeTrouble = null; S.meta.homeRecovered = false; }
+  }
+}
 async function init(){
   const read = await Store.read(KEY);
   const saved = read.value;
 
-  /* A home league is baked in: this address always means THIS league. Point the
-     connection at it before anything else runs, so no visitor can land on a
-     practice league by accident. */
+  /* A home league is baked in: this address always means THIS league. Applied
+     again to S below, whichever way the state was built. */
   if(homeLeagueOn() && saved && saved.settings && saved.settings.supa){
     saved.settings.supa = Object.assign({}, saved.settings.supa,
       {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey, leagueId:HOME_LEAGUE.leagueId});
@@ -13258,6 +13272,7 @@ async function init(){
     S = seedLeague(10); buildWeek(1);
     S.meta.readFailed = read.err || 'storage unavailable';
     S.meta.demo = true;
+    applyHomeLeague();
     route = 'dash'; render();
     setTimeout(()=> modal('Could not read your league',
       '<p>The browser refused to open its own storage: <span class="num">'+esc(read.err||'no reason given')+'</span></p>'+
@@ -13275,6 +13290,7 @@ async function init(){
     }catch(e){
       // Rather than fall back to the demo and bury it, say so and offer the copies.
       S = seedLeague(10); buildWeek(1); S.meta.demo = true; S.meta.loadError = e.message;
+      applyHomeLeague();
       route = 'dash'; render();
       setTimeout(()=> modal('Your league would not open',
         '<p class="hint bad">'+esc(e.message)+'</p>'+
@@ -13284,6 +13300,7 @@ async function init(){
       return;
     }
     if(!S.live.games.length) buildWeek(S.live.week||1);
+    applyHomeLeague();
     keepBackup(S, 'opened');
   } else if(homeLeagueOn() && !openedFromFile()){
     // Nothing stored, but this address belongs to a league. No demo: start from
@@ -13292,8 +13309,7 @@ async function init(){
     // (Opened straight from a file there is no signing in, so that case falls
     // through to the practice league below rather than showing a blank app.)
     S = blankLeague();
-    S.settings.supa = Object.assign({}, S.settings.supa,
-      {on:true, url:HOME_LEAGUE.url, anonKey:HOME_LEAGUE.anonKey, leagueId:HOME_LEAGUE.leagueId});
+    applyHomeLeague();
     S.meta.joining = true;
   } else {
     // Genuinely nothing stored. Put a demo up but do not commit it to storage —
@@ -13301,6 +13317,7 @@ async function init(){
     S = seedLeague(10);
     buildWeek(1);
     S.meta.demo = true;
+    applyHomeLeague();
     notify('Welcome', 'A ten-team demo is on screen so nothing is blank. Nothing has been saved yet — import your league or make a change and it becomes yours.');
   }
   const h = location.hash.slice(1);
