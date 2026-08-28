@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14u · works with your database';
+const APP_BUILD = '2026-08-14y · fix deals showing $0';
 
 /* ============================================================
    HOME LEAGUE
@@ -1194,7 +1194,8 @@ function irModeLine(b){
 function grossHit(p, year){
   const c = p && p.contract; if(!c) return 0;
   const i = year - c.startYear;
-  return (i>=0 && i<c.years) ? (+c.salaries[i]||0) : 0;
+  const sal = c.salaries;
+  return (Array.isArray(sal) && i>=0 && i<c.years) ? (+sal[i]||0) : 0;
 }
 /* Salary a former team agreed to keep paying, for a year. */
 function retainedOn(p, year){
@@ -4251,7 +4252,15 @@ ACT.rmRetain = (d)=>{
   logIt(teamName(tid)+' stopped paying retained salary on '+p.name, {type:'cap', teams:[tid], players:[d.pid]});
   save(); render();
 };
-function freeAgents(){ return S.players.filter(p=> (!p.contract || isOrphan(p)) && !isRetired(p)); }
+/* On somebody's roster only if the contract names a team that actually exists.
+   A contract left pointing at a team that is gone (ids change when a league is
+   imported or adopted from the server) used to make a player vanish from both
+   the roster and the free agent list. */
+function onSomeRoster(p){
+  return !!(p && p.contract && p.contract.teamId && byId(S.teams, p.contract.teamId));
+}
+/* Anyone not on a roster and not retired is a free agent. */
+function freeAgents(){ return S.players.filter(p=> !onSomeRoster(p) && !isRetired(p)); }
 /* The lineup editor. Slot by slot, only players who can actually play there,
    and nobody in two places at once. */
 function lineupForm(teamId, week){
@@ -5020,7 +5029,22 @@ function contractSummary(){
       ? 'Every figure is yours to set, so an existing league can be copied across exactly. Shorten the deal and the extra years are put aside, not thrown away — lengthen it again and they come back.'
       : 'Bars show the shape of the deal. Change the structure to move money between years — the total never changes.'}</div>
     ${Math.min.apply(null, sal) < (+S.settings.contracts.minSalary||0)
-      ? '<div class="hint bad">At least one year falls under the league minimum of '+money(S.settings.contracts.minSalary)+'. Raise the total or shorten the deal.</div>' : ''}`;
+      ? '<div class="hint bad">At least one year falls under the league minimum of '+money(S.settings.contracts.minSalary)+'. Raise the total or shorten the deal.</div>' : ''}
+    ${(()=>{
+      /* A deal is only counted in the years it actually covers. If its window
+         ends before this season, every year on the cap ladder reads $0 even
+         though the total looks right — which is what a sheet import does when
+         its first year column is an older season. */
+      const last = cd.startYear + cd.years - 1;
+      if(last < S.league.season)
+        return '<div class="hint bad">This deal runs '+cd.startYear+'\u2013'+last+', which is over before '+
+          S.league.season+'. It will show <b>$0 in every year</b> on the cap ladder however you set the figures. '+
+          'Change <b>First year</b> above to '+S.league.season+' to have it count.</div>';
+      if(cd.startYear > S.league.season)
+        return '<div class="hint warn">This deal does not begin until '+cd.startYear+
+          ', so it shows nothing before then.</div>';
+      return '';
+    })()}`;
 }
 ACT.claimOrphan = (d)=>{
   const p = byId(S.players,d.id), tid = currentTeamId(), y = S.league.season;
@@ -11351,6 +11375,18 @@ VIEWS.settings = function(){
         <p class="muted" style="margin:0">Everything lives in this browser. Export a copy before you make big changes, and to move the league to another device.</p>
         <button class="btn pri" data-a="exportJSON">Download the league file</button>
         <label class="f"><span>Load a league file</span><input type="file" accept=".json" id="jsonFile"></label>
+        <div class="hint">Loading a file <b>replaces</b> this league entirely — teams, members and all.</div>
+        <div class="hr"></div>
+        <div class="flabel">Bring in just the contracts</div>
+        <p class="muted tiny" style="margin:0">Copies the deals from another copy of the league onto the players
+          here, and leaves your teams, members and settings exactly as they are. Use this to move contract work
+          onto the live league without starting it over.</p>
+        <label class="f"><span>Contracts from a league file</span><input type="file" accept=".json" id="contractsFile"></label>
+        <button class="btn" data-a="mergeContracts">Bring in the contracts</button>
+        ${(()=>{ const n = staleContracts().length; return n
+          ? '<div class="hint bad">'+n+' deal'+(n>1?'s':'')+' show $0 in every year even though the total is right.</div>'+
+            '<button class="btn pri" data-a="fixStaleYears">Fix '+n+' deal'+(n>1?'s':'')+' showing $0</button>'
+          : '<div class="hint ok">Every deal is counting in at least one year.</div>'; })()}
         <div class="hr"></div>
         <button class="btn" data-a="openBackups">Saved copies</button>
         <button class="btn" data-a="rollSeason">Start the ${S.league.season+1} season</button>
@@ -11473,6 +11509,135 @@ document.addEventListener('change', e=>{
   };
   rd.readAsText(f.files[0]);
 });
+/* Bring contracts across from another copy of the league WITHOUT replacing
+   anything else. Loading a whole league file overwrites teams, members and
+   settings; this only copies each player's deal onto the matching player here,
+   so the live league keeps its rosters and everyone who has signed in. */
+function normName(x){
+  return String(x||'').toLowerCase().replace(/[^a-z]/g,'');
+}
+function mergeContractsFrom(j){
+  if(!j || !Array.isArray(j.players)) throw new Error('that is not a league file');
+  /* Match on id first; fall back to name + position, since ids differ between
+     copies that were imported separately. */
+  const byIdHere = {}, byNameHere = {};
+  S.players.forEach(p=>{
+    byIdHere[p.id] = p;
+    byNameHere[normName(p.name)+'|'+String(p.pos||'').toUpperCase()] = p;
+  });
+  /* Their team names, so a contract can be pointed at the same team here. */
+  const theirTeam = {};
+  (j.teams||[]).forEach(t=> theirTeam[t.id] = t);
+  const teamHereByName = {};
+  S.teams.forEach(t=>{
+    teamHereByName[normName(t.name)] = t;
+    if(t.abbr) teamHereByName['abbr:'+normName(t.abbr)] = t;
+  });
+
+  let matched=0, copied=0, noPlayer=0, noTeam=0;
+  (j.players||[]).forEach(src=>{
+    if(!src || !src.contract) return;
+    const hit = byIdHere[src.id] || byNameHere[normName(src.name)+'|'+String(src.pos||'').toUpperCase()];
+    if(!hit){ noPlayer++; return; }
+    matched++;
+    const c = deep(src.contract);
+    if(c.teamId){
+      /* Point the deal at the same team in THIS league, by name. */
+      const t = theirTeam[c.teamId];
+      const here = t ? (teamHereByName[normName(t.name)] || teamHereByName['abbr:'+normName(t.abbr||'')]) : byId(S.teams, c.teamId);
+      if(here) c.teamId = here.id;
+      else { c.teamId = null; noTeam++; }     /* keep the deal, cut loose */
+    }
+    hit.contract = c;
+    if(src.nflPractice!=null) hit.nflPractice = src.nflPractice;
+    copied++;
+  });
+  return {matched, copied, noPlayer, noTeam};
+}
+/* Contracts whose years finish before the current season. They keep a correct
+   total but read $0 in every year on the cap ladder, because a year only counts
+   when it falls inside startYear..startYear+years-1. A sheet import produces
+   these whenever its first year column is an older season. */
+function staleContracts(){
+  const y = S.league.season;
+  const out = [];
+  S.players.forEach(p=>{
+    const c = p.contract;
+    if(!c || !(c.years > 0)) return;
+    const sal = Array.isArray(c.salaries) ? c.salaries : null;
+    const paid = sal ? sum(sal.slice(0, c.years).map(v=> +v||0)) : 0;
+    if((c.startYear + c.years - 1) < y){ out.push({p, why:'past'}); return; }
+    /* Right years, but nothing set against them — the total is stored on its own
+       so it still reads correctly while every year shows $0. */
+    if(!sal || sal.length < c.years || paid <= 0){ out.push({p, why:'blank'}); return; }
+  });
+  return out;
+}
+ACT.fixStaleYears = ()=>{
+  const list = staleContracts();
+  if(!list.length) return toast('Nothing to fix — every deal is counting','good');
+  const past = list.filter(x=>x.why==='past'), blank = list.filter(x=>x.why==='blank');
+  const row = (x)=>'<tr><td>'+esc(x.p.name)+'</td><td class="num dim">'+
+      x.p.contract.startYear+'\u2013'+(x.p.contract.startYear+x.p.contract.years-1)+'</td>'+
+      '<td class="num right">'+money(x.p.contract.total)+'</td>'+
+      '<td class="tiny dim">'+(x.why==='past'?'years have passed':'no figures set')+'</td></tr>';
+  modal(list.length+' deal'+(list.length>1?'s':'')+' showing $0',
+    '<p class="muted" style="margin:0 0 8px">Each of these has a total but reads $0 in every year:</p>'+
+    '<div class="scrollx" style="max-height:220px;overflow:auto"><table><tbody>'+
+    list.slice(0,40).map(row).join('')+
+    '</tbody></table></div>'+
+    (list.length>40? '<div class="tiny dim">\u2026and '+(list.length-40)+' more</div>':'')+
+    '<div class="hint">'+
+      (past.length? past.length+' finish'+(past.length===1?'es':'')+' before '+S.league.season+
+        ' — the first year moves to '+S.league.season+', keeping the figures. ':'')+
+      (blank.length? blank.length+' ha'+(blank.length===1?'s':'ve')+' no figures against the years — '+
+        'the total is spread across them using the deal\'s structure. ':'')+
+      'Totals and lengths are left alone. Check the list before you go ahead.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave them</button>'+
+    '<button class="btn pri" data-a="fixStaleYearsGo">Fix these '+list.length+'</button>');
+};
+ACT.fixStaleYearsGo = ()=>{
+  const list = staleContracts(), y = S.league.season;
+  let moved=0, filled=0;
+  list.forEach(x=>{
+    const c = x.p.contract;
+    if(x.why==='past'){ c.startYear = y; moved++; }
+    else {
+      /* Spread the total across the years the deal actually runs. */
+      c.salaries = salariesFor(c.total, c.years, c.structId);
+      c.byYear = false;
+      filled++;
+    }
+  });
+  const bits = [];
+  if(moved) bits.push(moved+' moved onto '+y);
+  if(filled) bits.push(filled+' given year-by-year figures');
+  logIt('Repaired deals showing $0 — '+bits.join(', '), {type:'admin'});
+  closeModal(); save(); render();
+  toast(bits.join(' · '),'good');
+};
+ACT.mergeContracts = ()=>{
+  const f = $('#contractsFile');
+  if(!f || !f.files || !f.files[0]) return toast('Choose a league file first','bad');
+  const rd = new FileReader();
+  rd.onload = ()=>{
+    let r;
+    try{ r = mergeContractsFrom(JSON.parse(rd.result)); }
+    catch(err){ return toast('Could not read that — '+err.message,'bad'); }
+    save(true); render();
+    modal('Contracts brought in',
+      '<div class="kv">'+
+      '<dt>Deals copied</dt><dd>'+r.copied+'</dd>'+
+      '<dt>Players matched</dt><dd>'+r.matched+'</dd>'+
+      (r.noPlayer? '<dt>Not found here</dt><dd>'+r.noPlayer+'</dd>':'')+
+      (r.noTeam? '<dt>Team not found (left cut free)</dt><dd>'+r.noTeam+'</dd>':'')+
+      '</div>'+
+      '<div class="hint">Your teams, members and settings were left alone. If this league is online, '+
+      'press <b>Send my copy up</b> on the Server tab so everyone else gets these deals.</div>',
+      '<button class="btn ghost" data-a="closeModal">Close</button>');
+  };
+  rd.readAsText(f.files[0]);
+};
 ACT.clearLimits = ()=>{ S.settings.contracts.limits = {}; save(); render(); };
 ACT.clearRookieOv = ()=>{ S.settings.rookie.overrides = {}; save(); render(); toast('Back to the formula'); };
 ACT.clearCompOv = ()=>{ S.settings.comp.overrides = {}; save(); render(); toast('Back to the formula'); };
