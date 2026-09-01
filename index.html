@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-15e · pull in free agents';
+const APP_BUILD = '2026-08-15g · import keeps deals + free agents';
 
 /* ============================================================
    HOME LEAGUE
@@ -832,14 +832,22 @@ const sum = (a)=> a.reduce((x,y)=>x+(+y||0),0);
 const byId = (arr,id)=> arr.find(x=>x.id===id);
 const deep = (o)=> JSON.parse(JSON.stringify(o));
 
-function decimals(){ const i = S.settings.cap.increment; return i<0.1?2:(i<1?1:0); }
+function centsOn(){ return ((S.settings.cap||{}).cents) !== false; }   /* on unless turned off */
+function decimals(){
+  if(centsOn()) return 2;
+  const i = S.settings.cap.increment; return i<0.1?2:(i<1?1:0);
+}
 function money(n,opts){
   const d = decimals();
   const v = Number(n||0);
   const s = Math.abs(v).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
   return (v<0?'-':(opts&&opts.plus&&v>0?'+':'')) + S.settings.cap.symbol + s;
 }
-function roundInc(n){ const i = S.settings.cap.increment||1; return Math.round(n/i)*i; }
+function roundInc(n){
+  /* Keeping cents means never snapping a figure to the league's bid increment. */
+  if(centsOn()) return +(+n||0).toFixed(2);
+  const i = S.settings.cap.increment||1; return Math.round(n/i)*i;
+}
 /* Exactly what was typed, to the penny — used where a figure is entered by
    hand rather than derived from the league's cap increment. */
 function fixCents(n){ return +(+n||0).toFixed(2); }
@@ -1000,6 +1008,8 @@ function defaultState(){
       },
       cap:{
         base:250, growthMode:'pct', growthValue:5, overrides:{}, increment:1, symbol:'$',
+        /* Work to the penny everywhere. Turn off for a whole-dollar league. */
+        cents:true,
         deadCapPct:50, deadCapSpread:true, floorPct:0, projectYears:10,
         rollover:{ on:false, mode:'pct', value:10, max:'' },
         /* You may finish the current year up to this far below zero. Stay
@@ -1096,7 +1106,7 @@ function structPct(st, years){
 function salariesFor(total, years, structId){
   years = clamp(years|0, 1, 20);
   const p = structPct(structById(structId), years);
-  const inc = +S.settings.cap.increment || 1;
+  const inc = centsOn() ? 0.01 : (+S.settings.cap.increment || 1);
   const rule = +S.settings.contracts.minSalary || 0;
   // The league minimum can't be honoured if the whole deal is worth less than
   // one minimum per year — in that case the total wins and the UI flags it.
@@ -9725,6 +9735,32 @@ ACT.sleeperGo = async ()=>{
       keepBackup(S, 'before the Sleeper import');
       const byUser = {};
       users.forEach(u=> byUser[u.user_id] = u);
+      /* Keep every deal that already exists. Sleeper decides WHERE a player
+         sits; it does not get to change what he is paid. Matched on the Sleeper
+         id first, then on name and position for anything added by hand. */
+      const keyOf = (n,ps)=> String(n||'').toLowerCase().replace(/[^a-z]/g,'')+'|'+String(ps||'').toUpperCase();
+      const oldDeals = {}, oldById = {};
+      S.players.forEach(op=>{
+        if(!op.contract) return;
+        const keep = {c:deep(op.contract), slot:op.slot||null, exp:op.exp, nflPractice:op.nflPractice};
+        if(op.sleeperId) oldById[String(op.sleeperId)] = keep;
+        oldDeals[keyOf(op.name, op.pos)] = keep;
+      });
+      let kept = 0, freshDeals = 0;
+      const reuse = (p, teamId)=>{
+        const had = (p.sleeperId && oldById[String(p.sleeperId)]) || oldDeals[keyOf(p.name, p.pos)];
+        if(had){
+          p.contract = had.c;
+          p.contract.teamId = teamId;          /* moved, terms untouched */
+          if(had.slot) p.slot = had.slot;
+          if(p.exp==null && had.exp!=null) p.exp = had.exp;
+          if(had.nflPractice) p.nflPractice = true;
+          kept++;
+        } else {
+          p.contract = makeContract(teamId, +S.settings.contracts.minSalary||1, 1, 'ev', season);
+          freshDeals++;
+        }
+      };
       S.teams=[]; S.players=[]; S.picks=[]; S.auctions=[]; S.faAuctions=[]; S.trades=[];
       S.live = {week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0};
       S.dvp = {}; S.season = {year:season, byPlayer:{}};
@@ -9752,10 +9788,32 @@ ACT.sleeperGo = async ()=>{
                anyone marking it by hand. */
             if(pl){ const st = String(pl.status||pl.roster_status||'').toLowerCase();
               if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true; }
-            p.contract = makeContract(t.id, +S.settings.contracts.minSalary||1, 1, 'ev', season);
+            reuse(p, t.id);
             S.players.push(p);
           });
       });
+      /* Free agents: anyone Sleeper knows who is not on a roster in that league.
+         They come across too, so the pool is not empty. */
+      const taken = {};
+      S.players.forEach(x=>{ if(x.sleeperId) taken[String(x.sleeperId)] = true; });
+      let fa = 0;
+      Object.keys(players).forEach(pid=>{
+        if(taken[String(pid)]) return;
+        const pl = players[pid]; if(!pl) return;
+        const raw = pl.position || (pl.fantasy_positions||[])[0];
+        if(!/^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(String(raw||''))) return;
+        if(!pl.team && raw!=='DEF') return;              /* not on an NFL club */
+        const p = {id:uid('p'), sleeperId:pid, name:sleeperName(pl,pid), pos:raw,
+          nfl:pl.team||'', age:+pl.age||0, value:1, contract:null,
+          exp:(pl.years_exp!=null) ? (+pl.years_exp||0) : null};
+        if(pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+        const st = String(pl.status||pl.roster_status||'').toLowerCase();
+        if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
+        reuse(p, null);                                   /* free agent, deal kept if he had one */
+        S.players.push(p);
+        fa++;
+      });
+      ui.tmp.slKept = kept; ui.tmp.slFresh = freshDeals; ui.tmp.slFA = fa;
       S.league.name = league.name || S.league.name;
       S.league.season = season;
       if(S.teams[0]){ S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
@@ -9785,7 +9843,8 @@ ACT.sleeperGo = async ()=>{
     logIt('Imported "'+(league.name||id)+'" from Sleeper — '+S.teams.length+' teams, '+
       S.players.length+' players, '+scored+' scoring categories', {type:'admin'});
     ui.tmp.slBusy = false;
-    ui.tmp.slDone = {name:league.name, teams:S.teams.length, players:S.players.length, scored, unknownSlots, season};
+    ui.tmp.slDone = {name:league.name, teams:S.teams.length, players:S.players.length, scored, unknownSlots, season,
+      kept:ui.tmp.slKept||0, fresh:ui.tmp.slFresh||0, freeAgents:ui.tmp.slFA||0};
     ui.sub = 'price';
     save(true); render();
     toast('Sleeper league imported','good');
@@ -9857,6 +9916,8 @@ VIEWS.import = function(){
         ${done?`<div class="kv">
             <dt>League</dt><dd>${esc(done.name||'—')}</dd><dt>Season</dt><dd>${done.season}</dd>
             <dt>Teams</dt><dd>${done.teams}</dd><dt>Players</dt><dd>${done.players}</dd>
+            <dt>Free agents</dt><dd>${done.freeAgents||0}</dd>
+            <dt>Deals kept</dt><dd>${done.kept||0}${done.fresh?' <span class="dim">· '+done.fresh+' new on the minimum</span>':''}</dd>
             <dt>Scoring categories</dt><dd>${done.scored}</dd></div>
           ${done.unknownSlots && done.unknownSlots.length?'<div class="hint">Slots this app does not know were skipped: '+
             esc(done.unknownSlots.join(', '))+'. Add them by hand under Settings › Roster.</div>':''}
@@ -11229,6 +11290,11 @@ VIEWS.settings = function(){
           <label class="f"><span>${S.league.season} cap</span><input type="number" step="${c.cap.increment}" data-set="settings.cap.base" value="${c.cap.base}"></label>
           <label class="f"><span>Symbol</span><input type="text" data-set="settings.cap.symbol" value="${esc(c.cap.symbol)}"></label>
         </div>
+        <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.cents" ${centsOn()?'checked':''}>
+          <span>Keep exact cents everywhere <span class="dim">— figures are stored and shown to the penny</span></span></label>
+        <div class="hint">${centsOn()
+          ? 'Nothing is rounded to the dollar. The step below only sets how much a bid moves at a time.'
+          : 'Money is rounded to the step below.'}</div>
         <label class="f"><span>Round salaries to</span><select data-set="settings.cap.increment">
           ${[0.01,0.1,0.5,1,5,10,100,1000,100000,1000000].map(v=>'<option value="'+v+'"'+(+c.cap.increment===v?' selected':'')+'>'+v+'</option>').join('')}</select></label>
         <div class="seg"><button class="${c.cap.growthMode==='pct'?'on':''}" data-a="growthMode" data-m="pct">Rises by percent</button>
