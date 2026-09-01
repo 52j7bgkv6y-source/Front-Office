@@ -665,7 +665,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-14y · fix deals showing $0';
+const APP_BUILD = '2026-08-15e · pull in free agents';
 
 /* ============================================================
    HOME LEAGUE
@@ -840,6 +840,9 @@ function money(n,opts){
   return (v<0?'-':(opts&&opts.plus&&v>0?'+':'')) + S.settings.cap.symbol + s;
 }
 function roundInc(n){ const i = S.settings.cap.increment||1; return Math.round(n/i)*i; }
+/* Exactly what was typed, to the penny — used where a figure is entered by
+   hand rather than derived from the league's cap increment. */
+function fixCents(n){ return +(+n||0).toFixed(2); }
 function fixInc(n){ const d=decimals(); return +(+n).toFixed(d); }
 function pct(n){ return (Math.round(n*10)/10) + '%'; }
 function dstr(ms){ if(!ms) return '—'; const d=new Date(ms); return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
@@ -999,6 +1002,10 @@ function defaultState(){
         base:250, growthMode:'pct', growthValue:5, overrides:{}, increment:1, symbol:'$',
         deadCapPct:50, deadCapSpread:true, floorPct:0, projectYears:10,
         rollover:{ on:false, mode:'pct', value:10, max:'' },
+        /* You may finish the current year up to this far below zero. Stay
+           negative when the year ends and the shortfall is charged against
+           next year's cap, multiplied by overdraftPenalty. */
+        overdraft:10, overdraftPenalty:2,
         backload:{ on:true, pct:100, credit:false, when:'now' }
       },
       contracts:{
@@ -1016,7 +1023,10 @@ function defaultState(){
         posWeights:{QB:1, RB:0.9, WR:1, TE:0.8, K:0.25, DEF:0.3, DL:0.5, LB:0.5, DB:0.5}
       },
       waivers:{ on:true, deadline:(season)+'-11-15', salary:1, blockExtensions:true, clearAtRollover:true },
-      taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2 },
+      taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2,
+        /* Most years of NFL experience a player may have and still be taxi
+           eligible. '' means no limit. */
+        maxExp:3 },
       ir:{ mode:'games', fixed:0 },
       join:{ holdForCommish:true },
       rookie:{ on:true, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
@@ -1283,7 +1293,7 @@ function slotRoom(teamId, slot){
   return cap - slotPlayers(teamId, slot).length;
 }
 function teamDead(teamId,year){ const t=byId(S.teams,teamId); return t? fixInc(sum((t.dead||[]).filter(d=>d.year===year).map(d=>d.amount))) : 0; }
-function teamAdj(teamId,year){ const t=byId(S.teams,teamId); return t? fixInc(sum((t.adj||[]).filter(d=>d.year===year).map(d=>d.amount))) : 0; }
+function teamAdj(teamId,year){ const t=byId(S.teams,teamId); return t? fixCents(sum((t.adj||[]).filter(d=>d.year===year).map(d=>+d.amount||0))) : 0; }
 function teamCommitted(teamId, year){
   return fixInc(sum(teamPlayers(teamId).map(p=> capHit(p,year)))
     + teamDead(teamId,year) + teamAdj(teamId,year) + teamRetained(teamId,year));
@@ -1292,26 +1302,61 @@ function teamCommitted(teamId, year){
 let capCache = {}, dppCache = null;
 function clearCapCache(){ capCache = {}; }
 function rolloverInto(teamId, year){
-  const r = S.settings.cap.rollover;
-  if(!r || !r.on || year <= S.league.season) return 0;
+  const c = S.settings.cap || {};
+  const r = c.rollover;
+  if(year <= S.league.season) return 0;
+  const mult = Math.max(1, +c.overdraftPenalty || 1);
+  const penaltyOn = Math.abs(+c.overdraft || 0) > 0;
+  /* Nothing to work out if neither carrying spare room nor charging for a
+     shortfall is switched on. */
+  if((!r || !r.on) && !penaltyOn) return 0;
   const k = teamId+':'+year;
   if(capCache[k]!=null) return capCache[k];
   capCache[k] = 0;                                  // guards against a loop
   const prev = year-1;
   const unused = teamCapForYear(teamId, prev) - teamCommitted(teamId, prev);
   let out = 0;
-  if(unused > 0){
+  if(unused > 0 && r && r.on){
     const cap = capForYear(prev);
     const lim = r.mode==='all' ? unused : r.mode==='pct' ? cap*(+r.value||0)/100 : (+r.value||0);
     let carry = Math.min(unused, Math.max(0, lim));
     if(r.max!=='' && r.max!=null && !isNaN(+r.max)) carry = Math.min(carry, Math.max(0, +r.max));
     out = fixInc(carry);
+  } else if(unused < 0 && penaltyOn){
+    /* Finished the year in the red: the shortfall comes off next year's cap,
+       multiplied. -9.5 at a multiplier of 2 costs 19 next year. */
+    out = fixInc(unused * mult);
   }
   capCache[k] = out;
   return out;
 }
 function teamCapForYear(teamId, year){ return fixInc(capForYear(year) + rolloverInto(teamId, year)); }
+/* Years in the league. Imports carry it; anything we were never told is
+   unknown, and an unknown never blocks a move. */
+function playerExp(p){
+  const v = p && p.exp;
+  return (v==null || v==='' || isNaN(+v)) ? null : Math.max(0, +v);
+}
+/* May this player sit on the taxi squad? Returns null when he may, or a reason
+   when he may not. */
+function taxiIneligible(p){
+  const cap = (S.settings.taxi||{}).maxExp;
+  if(cap==='' || cap==null) return null;          /* no limit set */
+  const lim = +cap; if(isNaN(lim)) return null;
+  const e = playerExp(p);
+  if(e==null) return null;                         /* we do not know, so allow it */
+  if(e <= lim) return null;
+  return esc(p.name)+' has '+e+' year'+(e===1?'':'s')+' of experience; the taxi squad is for '+
+    lim+' or fewer.';
+}
 function capSpace(teamId, year){ return fixInc(teamCapForYear(teamId,year) - teamCommitted(teamId,year)); }
+/* How far below zero a team is allowed to sit in the current year. Held as a
+   negative number, so -10 means you may run $10 in the red. */
+function capFloor(){ return -Math.abs(+((S.settings.cap||{}).overdraft)||0); }
+/* What a team can still take on this year before it breaks the rule. */
+function capRoom(teamId, year){ return fixInc(capSpace(teamId, year) - capFloor()); }
+/* Past the line — not merely negative, but below what the league allows. */
+function overCapFloor(teamId, year){ return capSpace(teamId, year) < capFloor() - 1e-9; }
 // A projection can never run past the longest contract the league allows —
 // there would be nothing on the books to show.
 function maxProjYears(){ return clamp(+S.settings.contracts.maxYears||10, 1, 10); }
@@ -3665,7 +3710,18 @@ VIEWS.teams = function(){
           <td>${posTag(p.pos)}</td><td class="hide-xs num">${p.age||'—'}</td>
           <td class="tiny">${sparkFor(c.structId,c.years)} <span class="muted">${esc(st.name.replace(' — ',' '))}</span></td>
           <td class="right num">${yearsLeft(c)}</td>
-          ${yrs.map(yy=>{ const h=capHit(p,yy); return '<td class="right num '+(h?'':'dim')+'">'+(h?money(h):'—')+'</td>'; }).join('')}
+          ${yrs.map(yy=>{
+            const h=capHit(p,yy);
+            if(h) return '<td class="right num">'+money(h)+'</td>';
+            /* Under contract this year? Then show a figure even if it is $0 —
+               a dash is reserved for years the deal does not cover. */
+            const covered = c && c.years > 0 && yy >= c.startYear && yy < (c.startYear + c.years);
+            if(!covered) return '<td class="right num dim">—</td>';
+            const owed = grossHit(p,yy);
+            if(offCap(p)) return '<td class="right num dim" title="'+esc(p.name)+' is off the cap this year — '+
+              money(owed)+' owed, not counted">'+money(owed)+'</td>';
+            return '<td class="right num dim" title="under contract in '+yy+' at '+money(owed)+'">'+money(owed)+'</td>';
+          }).join('')}
           <td class="right money">${money(c.total)}</td>
           <td class="right nowrap">
             ${isWaiver(p)?'':'<button class="btn sm ghost'+(canExtend(p).ok?'':' danger')+'" data-a="extend" data-id="'+p.id+'" title="'+
@@ -3945,7 +4001,9 @@ VIEWS.teams = function(){
         ${(t.dead||[]).length?sortRows('dc', (t.dead||[]),
           {name:d=>d.name||'', year:d=>+d.year||0, amt:d=>+d.amount||0}, {key:'year',dir:1})
           .map(d=>`<tr><td>${esc(d.name||'—')}</td><td class="right num">${d.year}</td>
-          <td class="right num bad">${money(d.amount)}</td><td class="right"><button class="btn sm ghost" data-a="rmDead" data-i="${(t.dead||[]).indexOf(d)}">Remove</button></td></tr>`).join('')
+          <td class="right num ${+d.amount>0?'bad':'dim'}">${money(d.amount)}</td><td class="right">
+          ${isCommish() && +d.amount>0 ? '<button class="btn sm ghost" data-a="zeroDead" data-i="'+(t.dead||[]).indexOf(d)+'" title="Another team took the whole contract on">Force $0</button> ' : ''}
+          <button class="btn sm ghost" data-a="rmDead" data-i="${(t.dead||[]).indexOf(d)}">Remove</button></td></tr>`).join('')
           :'<tr><td colspan="4" class="dim center" style="padding:20px">No dead money. Nice.</td></tr>'}
         </tbody></table></div></div>
       <div class="panel"><div class="ph"><h3>Manual adjustments</h3><div class="spacer"></div>
@@ -3961,7 +4019,7 @@ VIEWS.teams = function(){
             data-oninput="adjField" data-i="${i}" data-f="note" data-k="adjn${i}"></td>
           <td class="right"><input type="number" step="1" value="${+d.year||S.league.season}" style="width:78px;text-align:right"
             data-oninput="adjField" data-i="${i}" data-f="year" data-k="adjy${i}"></td>
-          <td class="right"><input type="number" step="${S.settings.cap.increment}" value="${+d.amount||0}" style="width:96px;text-align:right"
+          <td class="right"><input type="number" step="0.01" value="${d.amount==null?0:d.amount}" style="width:96px;text-align:right"
             data-oninput="adjField" data-i="${i}" data-f="amount" data-k="adja${i}"></td>
           <td class="right"><button class="btn sm ghost danger" data-a="rmAdj" data-i="${i}">Remove</button></td></tr>`;
           }).join('')
@@ -4220,7 +4278,7 @@ ACT.saveAdj = ()=>{
      this season and the amount is snapped to the cap's precision. */
   (t.adj||[]).forEach(r=>{
     r.year = Math.round(+r.year) || S.league.season;
-    r.amount = fixInc(+r.amount||0);
+    r.amount = fixCents(r.amount);
   });
   save();
   if(typeof Sync==='object' && Sync.ready && Sync.ready()) Sync.push && Sync.push();
@@ -4241,10 +4299,40 @@ ACT.adjField = (d, el)=>{
   const row = (t.adj||[])[+d.i]; if(!row) return;
   if(d.f==='note') row.note = el.value;
   else if(d.f==='year') row.year = Math.round(+el.value) || S.league.season;
-  else if(d.f==='amount') row.amount = fixInc(+el.value||0);
+  else if(d.f==='amount') row.amount = fixCents(el.value);
   save();
 };
 ACT.rmAdj = (d)=>{ const t=byId(S.teams,currentTeamId()); t.adj.splice(+d.i,1); save(); render(); };
+ACT.zeroDead = (d)=>{
+  const tid = currentTeamId();
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const t = byId(S.teams, tid); if(!t) return;
+  const row = (t.dead||[])[+d.i]; if(!row) return;
+  if(!(+row.amount > 0)) return toast('That charge is already $0');
+  modal('Write off '+esc(row.name||'this charge')+'?',
+    '<p class="muted" style="margin:0 0 8px">'+money(row.amount)+' in '+row.year+' against '+esc(t.name)+'.</p>'+
+    '<div class="hint">Use this when another team took the whole contract on, so this side should carry nothing. '+
+    'The row stays on the books at $0 so the history still shows it.</div>',
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    '<button class="btn pri" data-a="zeroDeadGo" data-i="'+(+d.i)+'">Write it off</button>');
+};
+ACT.zeroDeadGo = (d)=>{
+  const tid = currentTeamId();
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const t = byId(S.teams, tid); if(!t) return;
+  const row = (t.dead||[])[+d.i]; if(!row) return;
+  const was = +row.amount || 0;
+  row.amount = 0;
+  row.waived = true;
+  row.waivedBy = currentActorName();
+  row.name = (row.name||'') + (/written off/.test(row.name||'') ? '' : ' (written off)');
+  logIt(teamName(tid)+' had '+money(was)+' of dead money in '+row.year+
+        ' written off — the contract was taken on elsewhere'+
+        (row.waivedBy? ' · by '+row.waivedBy : ''),
+        {type:'cap', teams:[tid]});
+  closeModal(); save(); render();
+  toast(money(was)+' written off','good');
+};
 ACT.rmDead = (d)=>{ const t=byId(S.teams,currentTeamId()); t.dead.splice(+d.i,1); save(); render(); };
 ACT.rmRetain = (d)=>{
   const p = byId(S.players,d.pid), tid = currentTeamId();
@@ -4411,12 +4499,18 @@ ACT.setSlot = (d)=>{
   const tid = p.contract.teamId;
   if(slot!=='active' && slotRoom(tid, slot) <= 0)
     return toast('No '+SLOT_LABEL[slot].toLowerCase()+' room left','bad');
+  /* The taxi squad is for young players. A commissioner may still override. */
+  if(slot==='taxi'){
+    const no = taxiIneligible(p);
+    if(no && !isCommish()) return toast(no,'bad');
+    if(no) toast('Commissioner override — '+no,'warn');
+  }
   if(slot==='active'){
     if(p.ir && p.ir.seasonEnding && p.ir.year===S.league.season && !isCommish())
       return toast('Season-ending IR holds until the year turns over','bad');
     const was = playerSlot(p);
     p.slot = 'active'; delete p.ir;
-    if(S.settings.trades.capMustBeLegal && capSpace(tid, S.league.season) < 0){
+    if(S.settings.trades.capMustBeLegal && overCapFloor(tid, S.league.season)){
       p.slot = was; return toast('His salary does not fit under the cap','bad');
     }
     if(slotRoom(tid,'active') < 0){ p.slot = was; return toast('No room on the active roster','bad'); }
@@ -4714,7 +4808,7 @@ function claimCanLand(c){
   const p = byId(S.players, c.playerId);
   if(slotRoom(c.toTeam,'active') <= 0) return 'no room on the active roster';
   const hit = fixInc(Math.max(0, grossHit(p, S.league.season) - retainedOn(p, S.league.season)));
-  if(S.settings.trades.capMustBeLegal && hit > capSpace(c.toTeam, S.league.season))
+  if(S.settings.trades.capMustBeLegal && hit > capRoom(c.toTeam, S.league.season))
     return 'cannot fit the '+money(hit)+' salary under the cap';
   return null;
 }
@@ -4800,7 +4894,7 @@ ACT.taxiDefend = (d)=>{
   const c = byId(S.taxiClaims, d.id), p = byId(S.players, c.playerId);
   if(slotRoom(c.fromTeam,'active') <= 0) return toast('No active roster room to promote him into','bad');
   p.slot = 'active';
-  if(S.settings.trades.capMustBeLegal && capSpace(c.fromTeam, S.league.season) < 0){
+  if(S.settings.trades.capMustBeLegal && overCapFloor(c.fromTeam, S.league.season)){
     p.slot = 'taxi'; return toast('His salary will not fit under your cap','bad');
   }
   c.status='defended'; c.reason='promoted to the active roster';
@@ -5307,7 +5401,9 @@ VIEWS.cap = function(){
             '<span class="tiny '+(s<0?'bad':'good')+'">'+money(s,{plus:true})+'</span></div>';
         }).join('')}</div>
         <div class="capline"><div>Cap</div>${yrs.map(y=>'<div class="money">'+money(teamCapForYear(tid,y))+
-          (S.settings.cap.rollover.on&&rolloverInto(tid,y)?'<div class="tiny good">+'+money(rolloverInto(tid,y))+' carried</div>':'')+'</div>').join('')}</div>
+          (()=>{ const rv=rolloverInto(tid,y); if(!rv) return '';
+            return rv>0 ? '<div class="tiny good">+'+money(rv)+' carried</div>'
+                        : '<div class="tiny bad">'+money(rv)+' carried against you</div>'; })()+'</div>').join('')}</div>
       </div>
     </div></div>
     <div class="hint">Each bar is one year of one contract, scaled against the biggest single-year hit on the roster. A front loaded deal steps down, a back loaded deal steps up. Hatched cells are years the contract does not cover.</div>
@@ -5802,6 +5898,10 @@ ACT.forceSettle = (d)=>{ const auc=byId(S.auctions,d.id); auc.clock.remain=0; se
 ACT.setActAs = (d,el)=>{ ui.tmp.actAs = el.value; render(); };
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]'); if(s){ ui.tmp.actAs=s.value; render(); } });
 document.addEventListener('change', e=>{
+  const k = e.target.closest('[data-a="faKeep"]');
+  if(k && ACT.faKeep){ ACT.faKeep(k.dataset, k, e); return; }
+});
+document.addEventListener('change', e=>{
   const t = e.target.closest('[data-a="notifyToggle"]');
   if(t && ACT.notifyToggle) ACT.notifyToggle(t.dataset, t, e);
 });
@@ -5985,7 +6085,7 @@ ACT.faBidGo = ()=>{
   if(b.aav < floor) return toast('The floor is '+money(floor),'bad');
   const y1 = faYearOne(b);
   if(y1 > faLeft(me, a.id)) return toast('Not enough free agent budget left','bad');
-  if(y1 > capSpace(me, S.league.season)) return toast('That does not fit under your cap','bad');
+  if(y1 > capRoom(me, S.league.season)) return toast('That does not fit under your cap','bad');
   const bid = {id:uid('b'), teamId:me, aav:fixInc(b.aav), years:b.years, structId:b.structId, at:Date.now()};
   a.bids.unshift(bid);
   a.leading = bid;
@@ -9473,6 +9573,136 @@ function sleeperName(pl, id){
   if(pos==='DEF') return (pl.last_name || pl.team || id) + ' D/ST';
   return pl.full_name || [pl.first_name, pl.last_name].filter(Boolean).join(' ') || String(id);
 }
+/* ---- Top up free agents from Sleeper ---------------------------------------
+   Adds anyone Sleeper knows about who is not already in this league, as a free
+   agent. Existing teams, rosters and contracts are left exactly as they are.
+   Where a player sits on a roster here but is a free agent in Sleeper, we ask
+   rather than decide. */
+function faSleeperMatchKey(name, pos){
+  return String(name||'').toLowerCase().replace(/[^a-z]/g,'')+'|'+String(pos||'').toUpperCase();
+}
+function faIndexHere(){
+  const byId = {}, byName = {};
+  S.players.forEach(p=>{
+    if(p.sleeperId) byId[String(p.sleeperId)] = p;
+    byName[faSleeperMatchKey(p.name, p.pos)] = p;
+  });
+  return {byId, byName};
+}
+ACT.faPullGo = async ()=>{
+  const id = sleeperLeagueId(($('#faSlId')||{}).value || ui.tmp.faSlId || '');
+  if(!id) return toast('Paste your Sleeper league id, or the address','bad');
+  ui.tmp.faSlId = ($('#faSlId')||{}).value || '';
+  ui.tmp.faBusy = true; ui.tmp.faErr = null; render();
+  try{
+    impProgress('Reading the rosters\u2026', 20);
+    const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
+    impProgress('Reading the player list\u2026', 50);
+    const players = await sleeperPlayerMap();
+    impProgress('Working out who is free\u2026', 80);
+
+    /* Everyone on a Sleeper roster. Anyone else Sleeper lists is free. */
+    const rostered = {};
+    rosters.forEach(r=> [].concat(r.players||[], r.taxi||[], r.reserve||[])
+      .forEach(pid=>{ if(pid) rostered[String(pid)] = true; }));
+
+    const idx = faIndexHere();
+    const added = [], conflicts = [];
+    const minSal = +S.settings.contracts.minSalary || 1;
+
+    Object.keys(players).forEach(pid=>{
+      const pl = players[pid];
+      if(!pl) return;
+      const raw = pl.position || (pl.fantasy_positions||[])[0];
+      if(!/^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(String(raw||''))) return;
+      if(!pl.team && raw!=='DEF') return;                 /* not on an NFL club */
+      const isFreeInSleeper = !rostered[String(pid)];
+      const here = idx.byId[String(pid)] || idx.byName[faSleeperMatchKey(sleeperName(pl,pid), raw)];
+
+      if(!here){
+        if(!isFreeInSleeper) return;                      /* on a roster there, not here: leave it alone */
+        added.push({pid, pl, pos:raw});
+        return;
+      }
+      /* Known here already. Only interesting when he is free in Sleeper but on
+         somebody's roster here. */
+      if(isFreeInSleeper && here.contract && here.contract.teamId && byId(S.teams, here.contract.teamId)){
+        conflicts.push({playerId:here.id, name:here.name, pos:here.pos,
+          teamId:here.contract.teamId, keep:true});
+      }
+    });
+
+    /* Bring the genuinely new free agents in. */
+    added.forEach(a=>{
+      const pl = a.pl;
+      const p = {id:uid('p'), sleeperId:a.pid, name:sleeperName(pl,a.pid), pos:a.pos,
+        nfl:pl.team||'', age:+pl.age||0, value:1,
+        exp:(pl.years_exp!=null) ? (+pl.years_exp||0) : null,
+        contract: makeContract(null, minSal, 1, 'ev', S.league.season)};
+      if(pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+      const st = String(pl.status||pl.roster_status||'').toLowerCase();
+      if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
+      S.players.push(p);
+    });
+
+    /* Anyone already here with no deal at all gets the minimum, so the pool is
+       priced. Existing contracts are never touched. */
+    let priced = 0;
+    S.players.forEach(p=>{
+      if(!p.contract){
+        p.contract = makeContract(null, minSal, 1, 'ev', S.league.season);
+        priced++;
+      }
+    });
+
+    impProgress('', 100);
+    ui.tmp.faBusy = false;
+    ui.tmp.faConflicts = conflicts;
+    logIt('Pulled '+added.length+' free agent'+(added.length===1?'':'s')+' in from Sleeper', {type:'admin'});
+    save(); render();
+
+    if(conflicts.length) ACT.faReview();
+    else toast(added.length+' free agents added'+(priced?', '+priced+' priced at '+money(minSal):''),'good');
+  }catch(e){
+    ui.tmp.faBusy = false; ui.tmp.faErr = e.message; impProgress('', 0); render();
+    toast('Could not read that league — '+e.message,'bad');
+  }
+};
+/* Ask about each player who is free in Sleeper but rostered here. */
+ACT.faReview = ()=>{
+  const list = ui.tmp.faConflicts || [];
+  if(!list.length) return toast('Nothing to review','good');
+  modal(list.length+' player'+(list.length===1?' is':'s are')+' free in Sleeper but on a roster here',
+    '<p class="muted" style="margin:0 0 8px">Tick the ones you want to keep on their team. Anything left '+
+    'unticked is moved to free agency, keeping whatever deal it already has.</p>'+
+    '<div class="scrollx" style="max-height:300px;overflow:auto"><table><tbody>'+
+    list.map((c,i)=>'<tr><td><label class="check"><input type="checkbox" data-a="faKeep" data-i="'+i+'"'+
+      (c.keep?' checked':'')+'><span>'+esc(c.name)+' <span class="dim">'+esc(c.pos)+'</span></span></label></td>'+
+      '<td class="dim tiny">on '+esc(teamName(c.teamId))+'</td></tr>').join('')+
+    '</tbody></table></div>',
+    '<button class="btn ghost" data-a="faKeepAll">Keep them all</button>'+
+    '<button class="btn pri" data-a="faReviewGo">Apply</button>');
+};
+ACT.faKeep = (d, el)=>{
+  const list = ui.tmp.faConflicts || [];
+  if(list[+d.i]) list[+d.i].keep = el ? !!el.checked : !list[+d.i].keep;
+};
+ACT.faKeepAll = ()=>{ (ui.tmp.faConflicts||[]).forEach(c=> c.keep = true); ACT.faReviewGo(); };
+ACT.faReviewGo = ()=>{
+  const list = ui.tmp.faConflicts || [];
+  let freed = 0;
+  list.forEach(c=>{
+    if(c.keep) return;
+    const p = byId(S.players, c.playerId); if(!p || !p.contract) return;
+    p.contract.teamId = null;      /* to free agency, deal intact */
+    p.slot = null;
+    freed++;
+  });
+  if(freed) logIt(freed+' player'+(freed===1?'':'s')+' moved to free agency to match Sleeper', {type:'admin'});
+  ui.tmp.faConflicts = [];
+  closeModal(); save(); render();
+  toast(freed? freed+' moved to free agency' : 'Everyone kept where they were','good');
+};
 ACT.sleeperGo = async ()=>{
   const id = sleeperLeagueId(($('#slId')||{}).value);
   if(!id) return toast('Paste your league id, or the sleeper.com address','bad');
@@ -9514,7 +9744,8 @@ ACT.sleeperGo = async ()=>{
             const raw = (pl && (pl.position || (pl.fantasy_positions||[])[0])) || 'WR';
             const p = {id:uid('p'), sleeperId:pid, name:sleeperName(pl,pid),
               pos: /^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(raw) ? raw : 'WR',
-              nfl:(pl && pl.team) || '', age:(pl && +pl.age) || 0, value:1, contract:null};
+              nfl:(pl && pl.team) || '', age:(pl && +pl.age) || 0, value:1, contract:null,
+              exp:(pl && pl.years_exp!=null) ? (+pl.years_exp||0) : null};
             if(pl && pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
             /* Sleeper reports a roster status; "PS"/"Practice Squad" sets our flag
                so a taxi player on a real practice squad can be cut free without
@@ -9608,6 +9839,19 @@ VIEWS.import = function(){
         ${ui.tmp.slErr?`<div class="hint bad">${esc(ui.tmp.slErr)}<br>
           If that says "Failed to fetch", the browser blocked the call — open the app from your Netlify address
           rather than a file on your desktop.</div>`:''}
+        <div class="hr"></div>
+        <div class="flabel">Just the free agents</div>
+        <p class="muted tiny" style="margin:0">Adds anyone in Sleeper who is not in this league yet, as a free
+          agent. Your teams, rosters and contracts are left alone — nothing is replaced.</p>
+        <label class="f"><span>League id, or just paste the address</span>
+          <input type="text" id="faSlId" data-k="faSlId" placeholder="1234567890123456789"
+            value="${esc(ui.tmp.faSlId||ui.tmp.slIdVal||'')}"></label>
+        <button class="btn wide" data-a="faPullGo" ${ui.tmp.faBusy?'disabled':''}>${ui.tmp.faBusy?'Working…':'Pull in the free agents'}</button>
+        <div class="hint">Free agents come in on ${money(+S.settings.contracts.minSalary||1)} for one year. Anyone who
+          already has a deal keeps it exactly as it is. If someone is free in Sleeper but on a roster here, you will be
+          asked whether to keep him or let him go.</div>
+        ${ui.tmp.faErr?`<div class="hint bad">${esc(ui.tmp.faErr)}</div>`:''}
+        ${(ui.tmp.faConflicts||[]).length?`<button class="btn sm" data-a="faReview">Review ${(ui.tmp.faConflicts||[]).length} still to decide</button>`:''}
       </div></div>
       <div class="panel"><div class="ph"><h3>${done?'What came across':'What this does'}</h3></div><div class="pb">
         ${done?`<div class="kv">
@@ -10391,6 +10635,16 @@ VIEWS.settings = function(){
           <label class="f"><span>Free practice-squad cut limit <span class="dim">— 0 for no limit</span></span><input type="number" min="0" step="${S.settings.cap.increment}" data-set="settings.roster.practiceCutMax" value="${c.roster.practiceCutMax||0}"></label>
           <label class="f"><span>Most players allowed</span><input type="number" min="0" data-set="settings.roster.maxRoster" value="${c.roster.maxRoster}"></label>
           <label class="f"><span>Weeks in the season</span><input type="number" min="1" max="25" data-set="settings.roster.seasonWeeks" value="${c.roster.seasonWeeks||17}"></label>
+          <label class="f" style="grid-column:1/-1"><span>Who may go on the taxi squad</span>
+            <select data-set="settings.taxi.maxExp">
+              ${[['','No limit — anyone'],['0','Rookies only'],['1','1 year of experience or less'],
+                 ['2','2 years or less'],['3','3 years or less'],['4','4 years or less'],['5','5 years or less']]
+                .map(([v,l])=>'<option value="'+v+'"'+((S.settings.taxi.maxExp==null?'':String(S.settings.taxi.maxExp))===v?' selected':'')+'>'+l+'</option>').join('')}
+            </select></label>
+          <div class="hint" style="grid-column:1/-1">${(S.settings.taxi.maxExp==='' || S.settings.taxi.maxExp==null)
+            ? 'Anyone may be put on the taxi squad.'
+            : 'Only players with '+(+S.settings.taxi.maxExp)+' year'+((+S.settings.taxi.maxExp)===1?'':'s')+
+              ' of NFL experience or fewer. Someone whose experience was never imported is let through, and a commissioner can override.'}</div>
           <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.taxi.claimsOn" ${S.settings.taxi.claimsOn?'checked':''}>
             <span>Let teams claim players off each other's taxi squads</span></label>
           <label class="f"><span>Claim window (hours)</span><input type="number" min="1" data-set="settings.taxi.windowHours" value="${S.settings.taxi.windowHours}"></label>
@@ -10984,6 +11238,22 @@ VIEWS.settings = function(){
         <div class="hint">${projYears().map(y=>y+': '+money(capForYear(y))).join(' · ')}</div>
       </div></div>
       <div class="panel"><div class="ph"><h3>Releases and projections</h3></div><div class="pb stack">
+        <div class="flabel">Going into the red</div>
+        <div class="grid g2">
+          <label class="f"><span>How far under you may finish</span>
+            <input type="number" min="0" step="${c.cap.increment}" data-set="settings.cap.overdraft"
+              value="${c.cap.overdraft}"></label>
+          <label class="f"><span>Charged back at</span>
+            <input type="number" min="1" step="0.5" data-set="settings.cap.overdraftPenalty"
+              value="${c.cap.overdraftPenalty}"></label>
+        </div>
+        <div class="hint">${+c.cap.overdraft>0
+          ? 'A team may run up to '+money(c.cap.overdraft)+' below zero during the season. Whatever it is still '+
+            'short by when the year ends comes off the next year\'s cap at '+(+c.cap.overdraftPenalty||1)+
+            '\u00d7 \u2014 finish '+money(9.5)+' in the red and you start the next year '+
+            money(9.5*(+c.cap.overdraftPenalty||1))+' down.'
+          : 'Teams must stay at or above zero.'}</div>
+        <div class="hr"></div>
         <div class="flabel">Carrying unused cap forward</div>
         <label class="check"><input type="checkbox" data-set="settings.cap.rollover.on" ${c.cap.rollover.on?'checked':''}>
           <span>Roll leftover cap space into next season</span></label>
