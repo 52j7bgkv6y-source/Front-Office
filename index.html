@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16e · price list follows the seasons rule';
+const APP_BUILD = '2026-08-16f · price list overhaul';
 
 /* ============================================================
    HOME LEAGUE
@@ -10231,7 +10231,7 @@ function pricePlan(){
     /* The sheet's own total and years, so the seasons can be checked against them. */
     const sheetTotal = parseFloat(String(get(r,'total')).replace(/[^0-9.\-]/g,''));
     const sheetYears = parseInt(String(get(r,'years')).replace(/[^0-9]/g,''), 10);
-    if(isNaN(money) && !perYear.length) return;
+    if(isNaN(money) && !perYear.length && isNaN(sheetYears)) return;
 
     const hit = matchOne(idx, nm, get(r,'pos'));
     if(!hit.p){ missed.push(nm); return; }
@@ -10239,9 +10239,33 @@ function pricePlan(){
     seen[hit.p.id] = 1;
 
     const now = hit.p.contract ? capHit(hit.p, S.league.season) : null;
+    /* THE RULE
+       - Base Salary is what an even year costs.
+       - A season column overrides the base for that year.
+       - Total contract years says how long the deal runs; if it is missing we
+         take the length from the seasons that carry money.
+       - The seasons then have to add up to the total column, and their count to
+         the years column, or the row is flagged. */
+    const base = isNaN(money) ? null : money;
+    const seasons = {};                      /* year -> figure from the sheet */
+    cols.forEach((c,i)=>{
+      const v = parseFloat(String(r[c.i]==null?'':r[c.i]).replace(/[^0-9.\-]/g,''));
+      if(!isNaN(v) && v!==0) seasons[c.year] = v;
+    });
+    const seasonYears = Object.keys(seasons).map(Number).sort((a,b)=>a-b);
+    const firstYear = seasonYears.length ? seasonYears[0] : S.league.season;
+    let years = !isNaN(sheetYears) && sheetYears>0 ? sheetYears
+              : (seasonYears.length ? (seasonYears[seasonYears.length-1] - firstYear + 1) : null);
+    if(!years) years = hit.p.contract ? hit.p.contract.years : 1;
+    const built = [];
+    for(let i=0;i<years;i++){
+      const y = firstYear + i;
+      built.push(fixCents(seasons[y]!=null ? seasons[y] : (base!=null ? base : 0)));
+    }
+    const builtTotal = fixCents(sum(built));
     rows.push({
       p:hit.p, file:nm, how:hit.how, ambiguous:hit.ambiguous,
-      want: isNaN(money) ? (perYear.length ? perYear[0] : 0) : money,
+      want: builtTotal, base, years, firstYear, built,
       perYear, now, startsAt, sheetTotal, sheetYears
     });
   });
@@ -10821,7 +10845,37 @@ VIEWS.import = function(){
       </div></div>`;
 
       const plan = pricePlan();
-      const changed = plan ? plan.rows.filter(r=> r.now==null || Math.abs(r.want - r.now) > 0.004) : [];
+      /* Years shown across the preview: this season out to the last one anybody
+         in the file is paid for. */
+      const previewYears = (()=>{
+        let last = S.league.season + 5;
+        (plan? plan.rows : []).forEach(r=>{
+          const end = (r.firstYear||S.league.season) + (r.years||1) - 1;
+          if(end > last) last = end;
+          const c = r.p.contract; if(c) { const ce = c.startYear + c.years - 1; if(ce > last) last = ce; }
+        });
+        const out = []; for(let y=S.league.season; y<=last; y++) out.push(y);
+        return out;
+      })();
+      /* What a player is on today, year by year. */
+      const nowFor = (p, y)=>{
+        const c = p.contract; if(!c) return null;
+        const i = y - c.startYear;
+        return (i>=0 && i<c.years) ? fixCents(+((c.salaries||[])[i])||0) : null;
+      };
+      /* What the file would make him, year by year. */
+      const newFor = (r, y)=>{
+        const i = y - (r.firstYear||S.league.season);
+        return (i>=0 && i<(r.years||0)) ? fixCents(r.built[i]) : null;
+      };
+      /* Different only if some year actually moves. */
+      const rowDiffers = (r)=> previewYears.some(y=>{
+        const a = nowFor(r.p, y), b = newFor(r, y);
+        if(a==null && b==null) return false;
+        if(a==null || b==null) return true;
+        return Math.abs(a-b) > 0.004;
+      });
+      const changed = plan ? plan.rows.filter(rowDiffers) : [];
       return `
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Which row holds the headings</h3><div class="spacer"></div>
         <button class="btn ghost sm" data-a="matchReset">Start again</button></div>
@@ -10842,9 +10896,9 @@ VIEWS.import = function(){
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Which column is which</h3></div>
         <div class="pb grid g3">
           ${[['name','Player name'],['pos','Position <span class="dim">(optional)</span>'],
-             ['price','Price'],
-             ['total','Total contract <span class="dim">(optional, checked against the seasons)</span>'],
-             ['years','Contract years <span class="dim">(optional, checked against the seasons)</span>']
+             ['price','Base salary <span class="dim">(what an even year costs)</span>'],
+             ['total','Total contract <span class="dim">(checked)</span>'],
+             ['years','Total contract years <span class="dim">(checked)</span>']
             ].map(([k,label])=>`<label class="f"><span>${label}</span>
             <select data-a="matchMap" data-k="${k}">
               <option value="">— none —</option>
@@ -10857,7 +10911,7 @@ VIEWS.import = function(){
           column, so you can see at a glance whether it is the right one.</div></div>
         ${yearColumns(m.headers).length?`<div class="pb" style="padding-top:0">
           <label class="check"><input type="checkbox" data-a="matchYearCols" ${m.useYearCols?'checked':''}>
-            <span>Use the season columns and set each year exactly</span></label>
+            <span>Let the season columns override the base salary for those years</span></label>
           <div class="row" style="margin-top:6px">${yearColumns(m.headers).map(c=>'<span class="chip">'+esc(c.head)+
             ' <span class="dim">→ '+c.year+'</span></span>').join('')}</div>
         </div>`:''}
@@ -10873,21 +10927,31 @@ VIEWS.import = function(){
       </div>
 
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What would change</h3><div class="spacer"></div>
-        <label class="check"><input type="checkbox" data-a="matchOnlyDiff" ${m.onlyDiff?'checked':''}>
-          <span class="tiny">only show changes</span></label></div>
-        <div class="pb tight scrollx" style="max-height:46vh;overflow:auto"><table>
-        <thead><tr><th>In the file</th><th>Matched to</th><th class="right">Now</th><th class="right">Becomes</th><th></th></tr></thead>
-        <tbody>${(m.onlyDiff?changed:(plan?plan.rows:[])).slice(0,400).map(r=>`<tr>
+        <span class="tiny dim">${changed.length} of ${plan?plan.rows.length:0} matched \u2014 only the ones that move are listed</span></div>
+        <div class="pb tight scrollx" style="max-height:52vh;overflow:auto"><table>
+        <thead><tr><th>In the file</th><th>Matched to</th>
+          ${previewYears.map(y=>'<th class="right">'+y+'</th>').join('')}
+          <th class="right">Total</th></tr></thead>
+        <tbody>${changed.slice(0,400).map(r=>{
+          const oldTotal = r.p.contract ? fixCents(sum((r.p.contract.salaries||[]).slice(0, r.p.contract.years))) : null;
+          return `<tr>
           <td class="tiny">${esc(r.file)}</td>
           <td>${esc(r.p.name)} ${posTag(r.p.pos)}
             ${r.how!=='name'?'<span class="pill warn" title="matched on '+esc(r.how)+'">loose</span>':''}
             ${r.ambiguous?'<span class="pill live" title="more than one player fits that name">check</span>':''}
             <div class="tiny dim">${r.p.contract?esc(teamName(r.p.contract.teamId)):'free agent'}</div></td>
-          <td class="right num dim">${r.now==null?'—':money(r.now)}</td>
-          <td class="right money">${money(r.want)}${r.perYear.length>1?'<div class="tiny dim">'+r.perYear.length+' years set</div>':''}</td>
-          <td class="right tiny ${r.now!=null && r.want>r.now?'bad':r.now!=null && r.want<r.now?'good':'dim'}">
-            ${r.now==null?'new':money(r.want-r.now,{plus:true})}</td>
-        </tr>`).join('') || '<tr><td colspan="5" class="dim center" style="padding:18px">Nothing to show.</td></tr>'}
+          ${previewYears.map(y=>{
+            const a = nowFor(r.p, y), b = newFor(r, y);
+            const same = (a==null&&b==null) || (a!=null&&b!=null&&Math.abs(a-b)<=0.004);
+            if(a==null && b==null) return '<td class="right dim">\u2014</td>';
+            if(same) return '<td class="right num dim">'+money(a)+'</td>';
+            return '<td class="right num"><span class="dim" style="text-decoration:line-through">'+
+              (a==null?'\u2014':money(a))+'</span><br><b class="'+((b||0)>(a||0)?'bad':'good')+'">'+
+              (b==null?'\u2014':money(b))+'</b></td>';
+          }).join('')}
+          <td class="right num"><span class="dim">${oldTotal==null?'\u2014':money(oldTotal)}</span><br>
+            <b>${money(r.want)}</b></td>
+        </tr>`;}).join('') || '<tr><td colspan="'+(previewYears.length+3)+'" class="dim center" style="padding:18px">Nothing differs \u2014 the file matches your league.</td></tr>'}
         </tbody></table></div>
       </div>
 
@@ -10899,20 +10963,11 @@ VIEWS.import = function(){
           ${plan.missed.length>60?'<span class="tiny dim">and '+(plan.missed.length-60)+' more</span>':''}</div>
       </div></div>`:''}
 
-      <div class="panel"><div class="ph"><h3>How to apply it</h3></div><div class="pb stack">
-        <label class="f"><span>What the price means</span>
-          <select data-a="matchMode">
-            <option value="aav"${m.mode==='aav'?' selected':''}>a yearly salary — keep everyone's current length</option>
-            <option value="total"${m.mode==='total'?' selected':''}>the whole contract — keep everyone's current length</option>
-            <option value="value"${m.mode==='value'?' selected':''}>what he is worth — do not touch any contracts</option>
-          </select></label>
-        <label class="check"><input type="checkbox" data-a="matchFA" ${m.doFA?'checked':''}>
-          <span>Set the asking price on free agents too</span></label>
-        <div class="hint">${m.mode==='value'
-          ? 'Nothing under contract is altered — this only moves the model\'s idea of what each man is worth.'
-          : 'Contracts keep their length and shape; only the money changes. '+
-            (m.useYearCols && yearColumns(m.headers).length ? 'Season columns override that and set each year exactly.' : '')}</div>
-        <div class="hint">A copy of the league is kept first, so this can be undone from Settings › Data › Saved copies.</div>
+      <div class="panel"><div class="pb stack">
+        <div class="hint">The base salary fills every year of a deal; a season column overrides that year.
+          Total contract and total contract years are checked against the result, and anything that does not
+          add up is listed afterwards. A copy of the league is kept first, so this can be undone from
+          Settings \u203a Data \u203a Saved copies.</div>
         <div class="row">
           <button class="btn pri" data-a="matchApply">Apply to ${changed.length} player${changed.length===1?'':'s'}</button>
           <button class="btn ghost" data-a="matchReset">Cancel</button>
@@ -11252,57 +11307,42 @@ ACT.matchApply = ()=>{
   if(!plan) return toast('Nothing to apply','bad');
   keepBackup(S, 'before matching a price list');
 
-  let touched = 0, skipped = 0;
-  const flags = [];   /* rows whose seasons disagree with the sheet's own totals */
+  let touched = 0;
+  const flags = [];
   plan.rows.forEach(r=>{
-    const p = r.p, want = fixInc(Math.max(0, r.want));
-    if(m.mode==='value'){
-      p.value = Math.max(1, Math.round(want));
-      touched++; return;
-    }
-    if(!p.contract){
-      p.value = Math.max(1, Math.round(want));
-      if(m.doFA) touched++; else skipped++;
-      return;
-    }
-    if(m.useYearCols && r.perYear.length){
-      /* The season columns are the truth for those years, taken exactly as
-         written and starting at the first season that carries money. The
-         sheet's own total and years are then checked against them. */
-      const startY = r.startsAt != null ? r.startsAt : (yearColumns(m.headers)[0]||{}).year || S.league.season;
-      p.contract.startYear = startY;
-      p.contract.years = r.perYear.length;
-      p.contract.salaries = r.perYear.map(v=> fixCents(v));
-      p.contract.total = fixCents(sum(p.contract.salaries));
-      p.contract.byYear = true;
-      const notes = [];
-      if(!isNaN(r.sheetTotal) && Math.abs(r.sheetTotal - p.contract.total) > 0.011)
-        notes.push('the seasons add to '+money(p.contract.total)+' but the total column says '+money(r.sheetTotal));
-      if(!isNaN(r.sheetYears) && r.sheetYears !== p.contract.years)
-        notes.push('the seasons cover '+p.contract.years+' year'+(p.contract.years===1?'':'s')+
-          ' but the years column says '+r.sheetYears);
-      if(notes.length) flags.push({name:p.name, team:teamName((p.contract||{}).teamId)||'', why:notes.join('; '),
-        used:money(p.contract.total)+' over '+p.contract.years+' yr from '+startY});
-    } else {
-      const yrs = Math.max(1, +p.contract.years||1);
-      const total = m.mode==='total' ? want : fixInc(want * yrs);
-      p.contract.total = total;
-      p.contract.salaries = salariesFor(total, yrs, p.contract.structId);
-      delete p.contract.byYear;
-    }
-    p.value = Math.max(1, Math.round(fixInc(p.contract.total / Math.max(1,p.contract.years))));
+    const p = r.p;
+    if(!p.contract) p.contract = makeContract(null, 0, 1, S.settings.contracts.defaultStruct, r.firstYear);
+    /* Straight from the rule: the base salary fills every year of the deal, and
+       a season column overrides that year. */
+    p.contract.startYear = r.firstYear;
+    p.contract.years     = r.years;
+    p.contract.salaries  = r.built.map(v=> fixCents(v));
+    p.contract.total     = fixCents(sum(p.contract.salaries));
+    p.contract.byYear    = true;
+    p.value = Math.max(1, Math.round(p.contract.total / Math.max(1, p.contract.years)));
+
+    /* Then check the sheet against itself. */
+    const notes = [];
+    if(!isNaN(r.sheetTotal) && Math.abs(r.sheetTotal - p.contract.total) > 0.011)
+      notes.push('the years add to '+money(p.contract.total)+' but the total contract column says '+money(r.sheetTotal));
+    if(!isNaN(r.sheetYears) && r.sheetYears !== p.contract.years)
+      notes.push('this is '+p.contract.years+' year'+(p.contract.years===1?'':'s')+
+        ' but the total contract years column says '+r.sheetYears);
+    if(notes.length) flags.push({name:p.name, team:teamName(p.contract.teamId)||'',
+      why:notes.join('; '),
+      used:money(p.contract.total)+' over '+p.contract.years+' yr from '+r.firstYear});
     touched++;
   });
 
   clearCapCache();
   logIt('Matched a price list — '+touched+' player'+(touched===1?'':'s')+' repriced'+
     (plan.missed.length?', '+plan.missed.length+' not recognised':'')+
-    (flags.length?', '+flags.length+' did not reconcile':''), {type:'admin'});
+    (flags.length?', '+flags.length+' did not add up':''), {type:'admin'});
   ui.tmp.impFlags = flags;
   ui.tmp.match = null;
-  save(); render();
-  if(flags.length){ save(true); render(); return ACT.impFlags(); }
-  toast(touched+' repriced'+(skipped?', '+skipped+' free agents left alone':''),'good');
+  save(true); render();
+  if(flags.length) return ACT.impFlags();
+  toast(touched+' player'+(touched===1?'':'s')+' updated','good');
 };
 /* Rows where the season columns did not agree with the sheet's own total or
    years. The seasons were used as written — this is the list to look at. */
