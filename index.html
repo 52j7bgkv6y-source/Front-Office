@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16b · seasons rule, mismatches flagged';
+const APP_BUILD = '2026-08-16d · stay signed in across deploys';
 
 /* ============================================================
    HOME LEAGUE
@@ -811,7 +811,19 @@ const Store = {
   async set(k,v){
     const s = JSON.stringify(v); MEM[k]=v;
     try{ if(window.storage && window.storage.set){ await window.storage.set(k,s); return true; } }catch(e){}
-    try{ localStorage.setItem(k,s); return true; }catch(e){ return false; }
+    try{ localStorage.setItem(k,s); return true; }
+    catch(e){
+      /* Out of room. Saved copies are the first thing to give up — the live
+         league and the sign-in token matter more. */
+      try{
+        for(let i=BAKS; i>=2; i--){
+          try{ localStorage.removeItem(bakKey(i)); }catch(_){}
+          try{ localStorage.setItem(k,s); return true; }catch(_){}
+        }
+        try{ localStorage.removeItem(bakKey(1)); }catch(_){}
+        localStorage.setItem(k,s); return true;
+      }catch(e2){ return false; }
+    }
   },
   async del(k){
     delete MEM[k];
@@ -820,20 +832,63 @@ const Store = {
   }
 };
 const KEY = 'frontoffice.league.v1';
-const BAKS = 24;   /* enough to go back a good way, not just the last few */
+const BAKS = 24;              /* the most we will ever keep */
+const BAK_BUDGET = 1600000;   /* about 1.6MB of copies, so the browser has room for everything else */
 const bakKey = (i)=> KEY + '.bak' + i;
 
 /* A rolling set of copies, kept every time the league is loaded and whenever
    anything drastic is about to happen. Nothing here is ever overwritten by an
    update, because updating only replaces the page, never the stored league. */
+/* Keys that must never be cleared to make room: the sign-in session lives here,
+   and losing it means signing in again after every deploy. */
+function isProtectedKey(k){ return /auth-token|^sb-|supabase/i.test(String(k||'')); }
+/* Roughly how much of the browser's allowance is in use, and what is taking it. */
+function storageReport(){
+  let total = 0, baks = 0, league = 0, auth = 0;
+  try{
+    for(let i=0; i<localStorage.length; i++){
+      const k = localStorage.key(i);
+      const n = (k||'').length + String(localStorage.getItem(k)||'').length;
+      total += n;
+      if(/bak/i.test(k)) baks += n;
+      else if(isProtectedKey(k)) auth += n;
+      else if(k===KEY) league += n;
+    }
+  }catch(e){}
+  return {total, baks, league, auth};
+}
+/* How big one saved copy is, roughly. */
+function bakSize(o){ try{ return JSON.stringify(o).length; }catch(e){ return 0; } }
+/* Drop the oldest copies until the set fits the budget. Called before writing a
+   new one, and again if the browser ever refuses a write. */
+async function trimBackups(room){
+  let total = 0, kept = [];
+  for(let i=1; i<=BAKS; i++){
+    const b = await Store.get(bakKey(i));
+    if(b) kept.push({i, size:bakSize(b)});
+  }
+  kept.forEach(k=> total += k.size);
+  const budget = Math.max(0, BAK_BUDGET - (room||0));
+  for(let n = kept.length-1; n >= 0 && total > budget; n--){
+    await Store.del(bakKey(kept[n].i));
+    total -= kept[n].size;
+  }
+}
 async function keepBackup(state, why){
   if(!state || !(state.teams||[]).length) return;
+  const entry = {at:Date.now(), why:why||'', rev:state.rev||0, state};
+  const size = bakSize(entry);
+  /* A single league bigger than the whole budget is not worth keeping copies of
+     — the live save matters more than the history. */
+  if(size > BAK_BUDGET) return;
   try{
+    await trimBackups(size);
     for(let i=BAKS-1; i>=1; i--){
       const prev = await Store.get(bakKey(i));
       if(prev) await Store.set(bakKey(i+1), prev);
     }
-    await Store.set(bakKey(1), {at:Date.now(), why:why||'', rev:state.rev||0, state});
+    const ok = await Store.set(bakKey(1), entry);
+    if(!ok){ await trimBackups(size*2); await Store.set(bakKey(1), entry); }
   }catch(e){}
 }
 async function listBackups(){
@@ -7805,6 +7860,25 @@ ACT.chatFile = (d, el)=>{
   rd.onload = ()=>{ (ui.tmp.chat = ui.tmp.chat||{}).media = {kind: isVid?'video':'image', src: rd.result, name:f.name}; render(); };
   rd.readAsDataURL(f);
 };
+/* Pictures and clips are held inside the league, so they count against the
+   browser's allowance. Keep the most recent and drop the pictures off older
+   messages — the words always stay. */
+const CHAT_MEDIA_BUDGET = 1200000;   /* about 1.2MB of pictures and clips */
+function trimChatMedia(){
+  const withMedia = (S.chat||[]).filter(m=> m.media && m.media.src);
+  let total = 0;
+  withMedia.forEach(m=> total += String(m.media.src).length);
+  if(total <= CHAT_MEDIA_BUDGET) return 0;
+  let dropped = 0;
+  for(let i=0; i<withMedia.length && total > CHAT_MEDIA_BUDGET; i++){
+    const m = withMedia[i];                       /* oldest first */
+    total -= String(m.media.src).length;
+    m.media = null;
+    m.mediaGone = true;
+    dropped++;
+  }
+  return dropped;
+}
 ACT.chatSend = ()=>{
   const c = ui.tmp.chat || {};
   const text = ($('#chatText')||{}).value || c.text || '';
@@ -7814,6 +7888,7 @@ ACT.chatSend = ()=>{
   const notify = c.notify || 'none';
   S.chat = S.chat || [];
   S.chat.push({id:uid('c'), at:Date.now(), teamId:me.id, text:text.trim().slice(0,1000), media, notify});
+  trimChatMedia();
   if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
   /* By default a message just posts to the chat and notifies no one. It only
      pushes a notification if the sender picked one — and that still respects each
@@ -7852,6 +7927,7 @@ function chatBubble(mm){
         '<span class="dim tiny">'+dstr(mm.at)+'</span></div>'+
       (mm.text? '<div class="chattext">'+esc(mm.text)+'</div>':'')+
       chatMediaHTML(mm)+
+      (mm.mediaGone? '<div class="tiny dim">(picture cleared to save room)</div>' : '')+
       pinged+
     '</div></div>';
 }
@@ -12236,6 +12312,14 @@ VIEWS.settings = function(){
             <div id="buildStamp" class="num" style="font-size:15px;word-break:break-word">${esc(APP_BUILD)}</div></div>
           <div><div class="flabel">League this file points at</div>
             <div class="num" style="word-break:break-all">${esc(HOME_LEAGUE.leagueId || (S.settings.supa||{}).leagueId || 'not set')}</div></div>
+          ${(()=>{ const r = storageReport(); const mb=(n)=> (n/1048576).toFixed(2)+'MB';
+            const tight = r.total > 4200000;
+            return '<div><div class="flabel">Room used in this browser</div>'+
+              '<div class="'+(tight?'bad':'dim')+'">'+mb(r.total)+' in all \u2014 '+mb(r.league)+' league, '+
+              mb(r.baks)+' saved copies'+(r.auth?', '+mb(r.auth)+' sign-in':'')+'</div>'+
+              (tight? '<div class="hint bad">This browser is nearly full. Saved copies are released automatically '+
+                'when room is needed, so signing in will still work.</div>' : '')+
+            '</div>'; })()}
           <button class="btn sm" data-a="serverReport">Run a server report</button>
           <button class="btn sm" data-a="forceMine">This copy is the right one — send it up</button>
           <div class="hint">If someone is seeing the wrong league, have them read this Build line back to you.
