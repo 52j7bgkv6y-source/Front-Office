@@ -643,6 +643,37 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .chatscroll{max-height:48vh}
   .chatbub img,.chatbub video{max-height:200px}
 }
+
+/* Live scoring: your game up top, everyone else's along a strip */
+.scorecard{margin-bottom:10px}
+.scorerow{display:flex;align-items:center;gap:10px}
+.scoreside{flex:1;min-width:0}
+.scorename{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--mute)}
+.scorename.win{color:var(--bone)}
+.scorepts{font-size:30px;font-variant-numeric:tabular-nums;line-height:1.1;color:var(--mute)}
+.tickgame.mine{border-color:var(--brass)}
+.tickgame{cursor:pointer}
+.tickgame:hover{border-color:var(--chalk)}
+.tickrow.win .tickpts{color:var(--sage)}
+.scorepts.win{color:var(--sage)}
+.scoreside:last-child{text-align:right}
+.scorevs{text-align:center;font-variant-numeric:tabular-nums;font-size:13px;color:var(--mute);min-width:56px}
+.tickerwrap{overflow-x:auto;overflow-y:hidden;margin-bottom:14px;-webkit-overflow-scrolling:touch;
+  scroll-snap-type:x proximity;padding-bottom:4px}
+.tickerwrap::-webkit-scrollbar{height:6px}
+.tickerwrap::-webkit-scrollbar-thumb{background:#22384A;border-radius:3px}
+.ticker{display:flex;gap:8px;min-width:min-content}
+.tickgame{flex:0 0 auto;min-width:170px;background:#16232F;border:1px solid #22384A;border-radius:10px;
+  padding:8px 10px;scroll-snap-align:start}
+.tickrow{display:flex;justify-content:space-between;gap:10px;color:var(--mute);font-size:13px;line-height:1.5}
+.tickrow.win{color:var(--bone);font-weight:600}
+.tickname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
+.tickpts{font-variant-numeric:tabular-nums}
+@media (max-width:560px){
+  .scorepts{font-size:24px}
+  .tickgame{min-width:150px}
+  .tickname{max-width:92px}
+}
 </style>
 </head>
 <body>
@@ -665,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-15g · import keeps deals + free agents';
+const APP_BUILD = '2026-08-15u · live scores + auto projections';
 
 /* ============================================================
    HOME LEAGUE
@@ -789,7 +820,7 @@ const Store = {
   }
 };
 const KEY = 'frontoffice.league.v1';
-const BAKS = 5;
+const BAKS = 24;   /* enough to go back a good way, not just the last few */
 const bakKey = (i)=> KEY + '.bak' + i;
 
 /* A rolling set of copies, kept every time the league is loaded and whenever
@@ -1020,6 +1051,9 @@ function defaultState(){
       },
       contracts:{
         minYears:1, maxYears:10, structures:defaultStructures(), defaultStruct:'ev',
+        /* Small deals stay flat: under this total, front and back loading are
+           not allowed. And some lengths are always flat, listed here. */
+        loadMinTotal:10, flatYears:[],
         minSalary:1, allowRestructure:true, tagPct:120, rookieScale:false,
         limits:{}, extendExtra:2, decideHours:0, defaultYears:1,
         minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null },
@@ -1072,7 +1106,7 @@ function defaultState(){
     },
     rev:0, season:{year:season, byPlayer:{}}, history:{}, dvp:{}, faAuctions:[],
     bbd:{ status:'idle', round:1, clock:null, bids:[], rounds:[] }, taxiClaims:[],
-    news:{ at:0, items:[] }, pending:[], h2h:{}, schedule:[], lineups:{}, signings:[],
+    news:{ at:0, items:[] }, pending:[], h2h:{}, schedule:[], fixtures:[], lineups:{}, signings:[],
     bracketResults:{ playoff:{}, loser:{} },
     teams:[], players:[], picks:[], auctions:[], trades:[], rules:[], notices:[], log:[],
     live:{ week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0 }
@@ -1084,8 +1118,26 @@ function defaultState(){
    ============================================================ */
 function structById(id){ const a=S.settings.contracts.structures; return byId(a,id) || a[0]; }
 
+/* May a deal of this size and length be front or back loaded? Returns null when
+   it may, or the reason it may not. */
+function loadingBlocked(total, years){
+  const c = S.settings.contracts || {};
+  const yrs = clamp(years|0, 1, 20);
+  const flat = (c.flatYears||[]).map(Number);
+  if(flat.indexOf(yrs) >= 0)
+    return yrs+'-year deals are paid evenly in this league.';
+  const min = +c.loadMinTotal || 0;
+  if(min > 0 && +total < min)
+    return 'Deals under '+money(min)+' are paid evenly — this one is '+money(total)+'.';
+  return null;
+}
 /* Percentage of total value paid in each year of a contract. */
-function structPct(st, years){
+function structPct(st, years, total){
+  /* A deal the league says must be flat ignores the chosen shape. */
+  if(total!=null && loadingBlocked(total, years)) st = {mode:'even', ratio:1};
+  return structPctRaw(st, years);
+}
+function structPctRaw(st, years){
   years = clamp(years|0, 1, 20);
   const ov = st.overrides && st.overrides[years];
   let w;
@@ -1105,7 +1157,7 @@ function structPct(st, years){
 /* Split a total into per-year salaries; largest-remainder keeps the sum exact. */
 function salariesFor(total, years, structId){
   years = clamp(years|0, 1, 20);
-  const p = structPct(structById(structId), years);
+  const p = structPct(structById(structId), years, total);
   const inc = centsOn() ? 0.01 : (+S.settings.cap.increment || 1);
   const rule = +S.settings.contracts.minSalary || 0;
   // The league minimum can't be honoured if the whole deal is worth less than
@@ -1638,6 +1690,8 @@ const NAV = [
   {id:'cap',      ic:'▥', label:'Cap Ladder'},
   {id:'block',    ic:'⚑', label:'Trade Block'},
   {id:'trades',   ic:'⇄', label:'Trades'},
+  {id:'find',     ic:'⌕', label:'Find a Player'},
+  {id:'schedule', ic:'▦', label:'Schedule'},
   {id:'chat',     ic:'💬', label:'League Chat'},
   {id:'tx',       ic:'≡', label:'Transactions'},
   {id:'rules',    ic:'§', label:'League Rules'},
@@ -1779,7 +1833,28 @@ function needsGate(){
   if(ui.tmp.gateOff) return false;
   return !!(c.leagueId || (S.meta && S.meta.pendingInvite) || homeLeagueOn());
 }
+let pressing = false, pressT = null, renderQueued = false;
+function pressStart(){
+  pressing = true;
+  clearTimeout(pressT);
+  /* Safety net: if the release is never seen (pointer left the window, and so
+     on) do not hold redraws forever. */
+  pressT = setTimeout(pressEnd, 1500);
+}
+function pressEnd(){
+  clearTimeout(pressT);
+  if(!pressing) return;
+  pressing = false;
+  if(renderQueued){ renderQueued = false; setTimeout(render, 0); }
+}
+document.addEventListener('pointerdown', pressStart, true);
+document.addEventListener('pointerup', pressEnd, true);
+document.addEventListener('pointercancel', pressEnd, true);
+document.addEventListener('touchstart', pressStart, true);
+document.addEventListener('touchend', pressEnd, true);
 function render(){
+  /* Mid-press: queue it and redraw the moment they let go. */
+  if(pressing){ renderQueued = true; return; }
   clearCapCache(); dppCache = null;
   const ae = document.activeElement;
   const k = ae && ae.dataset ? (ae.dataset.k || ae.dataset.set || null) : null;
@@ -2259,9 +2334,19 @@ document.addEventListener('change', e=>{
     else S.settings.comp.overrides[m[1]+'.'+m[2]] = v;
     save(); render(); return;
   }
+  /* A date box reads empty until every segment is filled. While it still has
+     focus that means "mid-typing", not "cleared" — leave the stored value be. */
+  if(t.type==='date' && val(t)==='' && document.activeElement===t) return;
   setPath(t.dataset.set, val(t));
   save();
   if(t.dataset.norender===undefined) render();
+});
+document.addEventListener('focusout', e=>{
+  const t = e.target && e.target.closest && e.target.closest('[data-set]');
+  if(t && t.type==='date' && t.dataset.norender!==undefined){
+    setPath(t.dataset.set, val(t));
+    save(); render();
+  }
 });
 document.addEventListener('input', e=>{
   const t = e.target.closest('[data-oninput]');
@@ -2570,6 +2655,17 @@ function weighted(list){
   return list.length ? list[list.length-1].v : null;
 }
 
+/* The fixtures for one week, if the league has a schedule of its own. */
+function fixturesFor(week){
+  return (S.fixtures||[]).filter(g=> +g.week===+week && byId(S.teams,g.home) && byId(S.teams,g.away))
+    .map(g=> ({home:g.home, away:g.away}));
+}
+/* Every week this league has fixtures for. */
+function fixtureWeeks(){
+  const w = {};
+  (S.fixtures||[]).forEach(g=> w[+g.week]=true);
+  return Object.keys(w).map(Number).sort((a,b)=>a-b);
+}
 function buildWeek(week){
   const ids = S.teams.map(t=>t.id).slice();
   if(ids.length % 2) ids.push(null);
@@ -2579,7 +2675,9 @@ function buildWeek(week){
   const ordered = [arr[0]].concat(rot.slice(shift), rot.slice(0,shift));
   const m=[];
   for(let i=0;i<n/2;i++){ const a=ordered[i], b=ordered[n-1-i]; if(a&&b) m.push({home:a, away:b}); }
-  S.live.matchups = m;
+  /* A schedule the league actually set beats the generated rotation. */
+  const set = fixturesFor(week);
+  S.live.matchups = set.length ? set : m;
 
   const codes = nflCodes().slice();
   for(let i=codes.length-1;i>0;i--){ const j=(i*7+week*3)%(i+1); const t=codes[i]; codes[i]=codes[j]; codes[j]=t; }
@@ -2724,7 +2822,13 @@ const BAND_KEYS = {};
 
 function fpts(pid){
   const s = S.live.stats[pid]; if(!s) return 0;
-  const p = byId(S.players,pid), c = S.settings.scoring;
+  return scoreLine(s, byId(S.players,pid));
+}
+/* Score any stat line with this league's own settings — the live feed, a past
+   week, or a projection. */
+function scoreLine(s, p){
+  if(!s) return 0;
+  const c = S.settings.scoring;
   let t = 0;
   /* Straight rate categories: the stat and the setting share a name. */
   for(const k in c){
@@ -2902,6 +3006,42 @@ function statsUrl(){
   if(cfg.endpoint) return cfg.endpoint;
   const b = Sync.base();
   return b ? b+'/stats?week='+(S.live.week||1) : '';
+}
+/* ---- Live from Sleeper -----------------------------------------------------
+   Real stat lines for the week, scored with this league's settings, refreshed
+   on a timer. Projections come down the same way and refresh when the week
+   changes, so nobody has to press anything. */
+let lastSleeperStats = 0, lastProjWeek = null, sleeperBusy = false;
+async function pollSleeperStats(){
+  if(sleeperBusy) return;
+  const season = S.league.season, week = S.live.week || 1;
+  sleeperBusy = true;
+  try{
+    const j = await getJSON(SLEEPER+'/stats/nfl/regular/'+season+'/'+week);
+    if(j && typeof j==='object'){
+      let n = 0;
+      S.players.forEach(p=>{
+        const line = p.sleeperId ? j[String(p.sleeperId)] : null;
+        if(!line) return;
+        S.live.stats[p.id] = Object.assign({}, line);
+        n++;
+      });
+      if(n){
+        S.live.statsAt = Date.now();
+        if(route==='live') render();
+      }
+    }
+  }catch(e){ /* a missed poll is not worth interrupting anyone over */ }
+  sleeperBusy = false;
+}
+/* Projections for the current week, fetched once per week automatically. */
+async function autoProjections(){
+  const week = S.live.week || 1;
+  if(lastProjWeek === week) return;
+  const st = projStore();
+  if(st.week === week && st.byPlayer && Object.keys(st.byPlayer).length){ lastProjWeek = week; return; }
+  lastProjWeek = week;                       /* only one attempt per week */
+  try{ await ACT.projPull(); }catch(e){}
 }
 async function pollEndpoint(){
   const u = statsUrl();
@@ -3471,11 +3611,18 @@ document.addEventListener('input', e=>{
 VIEWS.live = function(){
   const t = myTeam(); if(!t) return '<div class="empty-state"><h3>No league loaded</h3></div>';
   const cfg = S.settings.live;
-  const mine = S.live.matchups.find(m=> m.home===t.id || m.away===t.id);
-  const oppId = mine ? (mine.home===t.id ? mine.away : mine.home) : null;
+  const myGame = S.live.matchups.find(m=> m.home===t.id || m.away===t.id);
+  /* You can open any game in the league; yours is what you get by default. */
+  const watchId = ui.tmp.watch;
+  const watched = watchId ? S.live.matchups.find(m=> m.home===watchId || m.away===watchId) : null;
+  const mine = watched || myGame;
+  const away = !!watched && (!myGame || (watched.home!==t.id && watched.away!==t.id));
+  /* Whose side of the table we read as "ours" on this screen. */
+  const meId = away ? (watched.home===watchId ? watched.home : watched.away) : t.id;
+  const oppId = mine ? (mine.home===meId ? mine.away : mine.home) : null;
   /* What each side actually has starting — the saved lineup, or the best one
      if nobody set it. lineupFor() already resolves that. */
-  const A = lineupFor(t.id), B = oppId ? lineupFor(oppId) : null;
+  const A = lineupFor(meId), B = oppId ? lineupFor(oppId) : null;
   const live = S.live.games.filter(g=>g.status==='live').length;
 
   const lineupRows = A.slots.map((s,i)=>{
@@ -3493,16 +3640,57 @@ VIEWS.live = function(){
   return `
   <div class="section">
     <header>
-      <div><div class="eyebrow">Week ${S.live.week} · ${cfg.mode==='demo'?'Simulated feed':cfg.mode==='endpoint'?'Live endpoint':'Manual entry'}</div>
+      <div><div class="eyebrow">Week ${S.live.week} · ${cfg.mode==='demo'?'Simulated feed':cfg.mode==='sleeper'?'Live from Sleeper':cfg.mode==='endpoint'?'Live endpoint':'Manual entry'}</div>
       <h1>Live scoring</h1></div>
       <div class="spacer"></div>
       ${live?'<span class="pill live">'+live+' games in progress</span>':''}
+      <button class="btn ghost" data-a="go" data-r="schedule">Schedule</button>
       <button class="btn" data-a="editLineup" data-team="${t.id}" data-w="${+S.live.week||1}">Set lineup</button>
       ${cfg.mode==='demo' ? `<button class="btn ${cfg.running?'':'pri'}" data-a="simToggle">${cfg.running?'Pause feed':'Start feed'}</button>
         <button class="btn ghost" data-a="simReset">New week</button>` :
         `<button class="btn pri" data-a="pollNow">Refresh now</button>
          <button class="btn ghost" data-a="closeWeek">Close out week ${S.live.week}</button>`}
     </header>
+
+    ${(()=>{
+      /* Your game, big, then everyone else's along a strip you can slide. */
+      const all = (S.live.matchups||[]).map(mm=>{
+        const hp = (lineupFor(mm.home)||{}).total||0, ap = (lineupFor(mm.away)||{}).total||0;
+        return {home:mm.home, away:mm.away, hp, ap, mine: mm.home===t.id || mm.away===t.id};
+      });
+      const you = all.find(g=> g.home===meId || g.away===meId);
+      const rest = all.filter(g=> g!==you);
+      const side = (id, pts, lead)=>{
+        const pr = teamProjected(id);
+        return '<div class="scoreside"><div class="scorename'+(lead?' win':'')+'">'+esc(teamName(id))+'</div>'+
+        '<div class="scorepts'+(lead?' win':'')+'">'+pts.toFixed(1)+'</div>'+
+        (pr!=null? '<div class="tiny dim">'+pr.toFixed(1)+' projected</div>' : '')+'</div>';
+      };
+      const head = you ? '<div class="panel scorecard"><div class="pb">'+
+          '<div class="scorerow">'+
+            side(you.home===meId?you.home:you.away, you.home===meId?you.hp:you.ap,
+                 (you.home===meId?you.hp:you.ap) > (you.home===meId?you.ap:you.hp))+
+            '<div class="scorevs">'+(Math.abs(you.hp-you.ap)).toFixed(1)+'<div class="tiny dim">'+
+              ((you.home===meId?you.hp:you.ap) >= (you.home===meId?you.ap:you.hp) ? 'ahead' : 'behind')+'</div></div>'+
+            side(you.home===meId?you.away:you.home, you.home===meId?you.ap:you.hp,
+                 (you.home===meId?you.ap:you.hp) > (you.home===meId?you.hp:you.ap))+
+          '</div></div></div>' : '';
+      const banner = away
+        ? '<div class="panel" style="margin-bottom:10px;border-color:var(--brass)"><div class="pb" '+
+          'style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div>You are watching <b>'+esc(teamName(mine.home))+'</b> against <b>'+esc(teamName(mine.away))+'</b>.</div>'+
+          '<div class="spacer"></div>'+
+          '<button class="btn sm pri" data-a="watchMine">Back to my matchup</button></div></div>'
+        : '';
+      const strip = rest.length ? '<div class="tickerwrap"><div class="ticker">'+
+        rest.map(g=>'<div class="tickgame'+(g.mine?' mine':'')+'" data-a="watchGame" data-id="'+g.home+'" title="Open this matchup">'+
+          '<div class="tickrow'+(g.hp>g.ap?' win':'')+'"><span class="tickname">'+esc(teamName(g.home))+'</span>'+
+            '<span class="tickpts">'+g.hp.toFixed(1)+'</span></div>'+
+          '<div class="tickrow'+(g.ap>g.hp?' win':'')+'"><span class="tickname">'+esc(teamName(g.away))+'</span>'+
+            '<span class="tickpts">'+g.ap.toFixed(1)+'</span></div>'+
+        '</div>').join('')+'</div></div>' : '';
+      return banner + head + strip;
+    })()}
 
     ${mine ? `<div class="panel" style="margin-bottom:14px">
       <div class="ph"><div style="flex:1"><div class="eyebrow">Your matchup</div>
@@ -3585,10 +3773,19 @@ VIEWS.live = function(){
 
         <div class="panel"><div class="ph"><h3>Feed source</h3></div><div class="pb stack">
           <div class="seg">
+            <button class="${cfg.mode==='sleeper'?'on':''}" data-a="setLiveMode" data-m="sleeper">Sleeper (live)</button>
             <button class="${cfg.mode==='demo'?'on':''}" data-a="setLiveMode" data-m="demo">Simulated</button>
             <button class="${cfg.mode==='endpoint'?'on':''}" data-a="setLiveMode" data-m="endpoint">League server</button>
             <button class="${cfg.mode==='manual'?'on':''}" data-a="setLiveMode" data-m="manual">Paste JSON</button>
           </div>
+          ${cfg.mode==='sleeper'?`
+            <div class="hint">Real scores are pulled from Sleeper every ${Math.max(15,+cfg.pollSec||30)} seconds
+              and scored with your settings. Projections come down on their own when the week changes.
+              ${S.live.statsAt?'Last updated '+dstr(S.live.statsAt)+'.':'Waiting for the first update…'}</div>
+            <label class="f"><span>How often to check (seconds)</span>
+              <input type="number" min="15" max="300" data-set="settings.live.pollSec" value="${+cfg.pollSec||30}"></label>
+            <div class="hint">Players are matched by their Sleeper id, so run a Sleeper import first if you have
+              not already.</div>`:''}
           ${cfg.mode==='demo'?`<label class="f"><span>Simulation speed</span>
             <input type="number" min="1" max="30" data-set="settings.live.speed" value="${cfg.speed}"></label>
             <div class="hint">The simulator generates plays from your own player pool and scores them with your scoring settings. It is here so the screen works out of the box — swap it for a real feed on the other two tabs.</div>`:''}
@@ -4669,7 +4866,178 @@ ACT.freeCut = (d)=>{
   }
   closeModal(); save(); render(); toast('Done','good');
 };
+/* Every week this player has a line for, this season or a past one. */
+function playerLog(p, year){
+  const y = year || S.league.season;
+  const src = (y===S.league.season ? (S.season||{}).byPlayer : ((S.history||{})[y]||{})) || {};
+  const line = src[p.id];
+  if(!line || !line.weeks) return [];
+  return Object.keys(line.weeks).map(Number).sort((a,b)=>a-b)
+    .map(w=> ({week:w, fpts:line.weeks[w].fpts, stats:line.weeks[w].stats}));
+}
+/* Which seasons we hold anything for. */
+function playerYears(p){
+  const ys = [];
+  if(((S.season||{}).byPlayer||{})[p.id]) ys.push(S.league.season);
+  Object.keys(S.history||{}).forEach(y=>{ if((S.history[y]||{})[p.id]) ys.push(+y); });
+  return ys.sort((a,b)=>b-a);
+}
+/* Everything the league log has said about this player. */
+function playerHistory(p){
+  return (S.log||[]).filter(l=> (l.players||[]).indexOf(p.id) >= 0);
+}
+/* Where he sits on his NFL club, as Sleeper has it. */
+function depthAt(p){
+  const club = p.nfl; if(!club) return [];
+  return S.players.filter(x=> x.nfl===club && x.pos===p.pos && x.depth!=null)
+    .sort((a,b)=> a.depth - b.depth);
+}
+ACT.findType = (d, el)=>{ ui.tmp.findQ = el.value; render(); };   /* data-k keeps the caret */
+ACT.pcYear = (d)=>{ ui.tmp.pcYear = +d.y; const id=ui.tmp.pcId; if(id) ACT.playerCard({id}); };
+/* Tell the owner what you would give for him, straight into league chat. */
+ACT.askFor = (d)=>{
+  const p = byId(S.players, d.id); if(!p || !p.contract) return;
+  const owner = p.contract.teamId;
+  ui.tmp.ask = {playerId:p.id, offer:''};
+  modal('Ask '+esc(teamName(owner))+' about '+esc(p.name),
+    '<p class="muted" style="margin:0 0 8px">'+esc(p.name)+' is on '+esc(teamName(owner))+
+    ' at '+money(capHit(p,S.league.season))+' this year, through '+(p.contract.startYear+p.contract.years-1)+'.</p>'+
+    '<label class="f"><span>What you would give up</span>'+
+    '<textarea id="askOffer" class="chatinput" rows="3" data-oninput="askType" '+
+    'placeholder="Players, positions you would move, picks\u2026"></textarea></label>'+
+    '<div class="hint">This posts in the league chat and notifies '+esc(teamName(owner))+
+    ' if they have chat notifications on. Work the actual swap out on the Trades page.</div>',
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    '<button class="btn pri" data-a="askSend" data-id="'+p.id+'">Send it</button>');
+};
+ACT.askType = (d, el)=>{ (ui.tmp.ask = ui.tmp.ask||{}).offer = el.value; };
+ACT.askSend = (d)=>{
+  const p = byId(S.players, d.id); if(!p || !p.contract) return;
+  const owner = p.contract.teamId;
+  const me = myTeam(); if(!me) return;
+  const txt = (($('#askOffer')||{}).value || (ui.tmp.ask||{}).offer || '').trim();
+  if(!txt) return toast('Say what you would give up','bad');
+  S.chat = S.chat || [];
+  S.chat.push({id:uid('c'), at:Date.now(), teamId:me.id, notify:owner,
+    text:'Asking about '+p.name+' — '+txt});
+  maybeNotify('chat', me.name+' \u2192 you', 'Asking about '+p.name, 'info', owner);
+  logIt(me.name+' asked '+teamName(owner)+' about '+p.name, {type:'admin', teams:[me.id, owner], players:[p.id]});
+  closeModal(); save(); render();
+  toast('Sent to '+teamName(owner),'good');
+};
+/* Depth charts, straight from Sleeper. Only the depth numbers are written. */
+ACT.depthPull = async ()=>{
+  ui.tmp.depthBusy = true; ui.tmp.depthErr = null; render();
+  try{
+    impProgress('Reading the player list\u2026', 40);
+    const map = await sleeperPlayerMap();
+    let set = 0;
+    S.players.forEach(pl=>{
+      const src = pl.sleeperId ? map[String(pl.sleeperId)] : null;
+      if(!src) return;
+      if(src.depth_chart_order!=null){ pl.depth = +src.depth_chart_order||0; set++; }
+      if(src.team && !pl.nfl) pl.nfl = src.team;
+    });
+    impProgress('', 100);
+    ui.tmp.depthBusy = false;
+    logIt('Depth chart positions brought in for '+set+' players', {type:'admin'});
+    save(); render();
+    toast(set+' players placed on their depth charts','good');
+  }catch(e){
+    ui.tmp.depthBusy = false; ui.tmp.depthErr = e.message; impProgress('', 0); render();
+    toast('Could not read that — '+e.message,'bad');
+  }
+};
+ACT.watchGame = (d)=>{ ui.tmp.watch = d.id; render(); };
+ACT.watchMine = ()=>{ ui.tmp.watch = null; render(); };
+/* What a team's set starters are projected to score this week. */
+function teamProjected(teamId, week){
+  const L = lineupFor(teamId); if(!L || !L.slots) return null;
+  let any = false, tot = 0;
+  L.slots.forEach(x=>{ if(!x.p) return; const v = projFor(x.p, week); if(v!=null){ any = true; tot += v; } });
+  return any ? Math.round(tot*10)/10 : null;
+}
+/* ---- Projections --------------------------------------------------------
+   Sleeper publishes a projected stat line per player per week. We score those
+   raw stats with THIS league's settings, so the number reflects your rules
+   rather than somebody else's. Where there is no projection we fall back to
+   what the player has actually averaged here. */
+function projStore(){
+  S.proj = S.proj || {season:S.league.season, week:0, byPlayer:{}, at:0, source:''};
+  return S.proj;
+}
+/* What we think he will score this week. */
+function projFor(p, week){
+  const w = week || S.live.week || 1;
+  const st = projStore();
+  if(st.week===w && st.byPlayer && st.byPlayer[p.id]!=null) return +st.byPlayer[p.id];
+  return projFromForm(p);
+}
+/* No projection to hand: use his own average here, which is honest about what
+   it is rather than inventing a number. */
+function projFromForm(p){
+  const log = playerLog(p);
+  if(!log.length) return null;
+  const recent = log.slice(-4);
+  const avg = recent.reduce((n,w)=> n + (+w.fpts||0), 0) / recent.length;
+  return Math.round(avg*10)/10;
+}
+function projLabel(p, week){
+  const v = projFor(p, week);
+  if(v==null) return '—';
+  return v.toFixed(1);
+}
+/* Where a shown projection came from, so nobody mistakes a guess for a forecast. */
+function projSource(p, week){
+  const w = week || S.live.week || 1, st = projStore();
+  if(st.week===w && st.byPlayer && st.byPlayer[p.id]!=null) return 'projected';
+  return projFromForm(p)!=null ? 'his average here' : null;
+}
+ACT.projPull = async ()=>{
+  ui.tmp.projBusy = true; ui.tmp.projErr = null; render();
+  const season = S.league.season, week = S.live.week || 1;
+  const tries = [
+    SLEEPER+'/projections/nfl/regular/'+season+'/'+week,
+    'https://api.sleeper.app/projections/nfl/'+season+'/'+week+'?season_type=regular'
+  ];
+  try{
+    let raw = null, used = '';
+    for(const u of tries){
+      try{
+        impProgress('Asking for week '+week+' projections\u2026', 40);
+        const j = await getJSON(u);
+        if(j && (Array.isArray(j) ? j.length : Object.keys(j).length)){ raw = j; used = u; break; }
+      }catch(e){ /* try the next shape */ }
+    }
+    if(!raw) throw new Error('no projections came back for week '+week);
+
+    /* Sleeper returns either a map keyed by player id, or a list of rows. */
+    const byId = {};
+    if(Array.isArray(raw)) raw.forEach(r=>{ const k = r.player_id || (r.player||{}).player_id; if(k) byId[String(k)] = r.stats || r; });
+    else Object.keys(raw).forEach(k=>{ byId[String(k)] = raw[k] && raw[k].stats ? raw[k].stats : raw[k]; });
+
+    const st = projStore();
+    st.season = season; st.week = week; st.byPlayer = {}; st.at = Date.now(); st.source = used;
+    let n = 0;
+    S.players.forEach(p=>{
+      const line = p.sleeperId ? byId[String(p.sleeperId)] : null;
+      if(!line) return;
+      st.byPlayer[p.id] = Math.round(scoreLine(line, p)*10)/10;
+      n++;
+    });
+    impProgress('', 100);
+    ui.tmp.projBusy = false;
+    logIt('Projections pulled for week '+week+' — '+n+' players, scored on this league\u2019s settings', {type:'admin'});
+    save(); render();
+    toast(n? n+' players projected for week '+week : 'Nothing matched — are the Sleeper ids in?', n?'good':'warn');
+  }catch(e){
+    ui.tmp.projBusy = false; ui.tmp.projErr = e.message; impProgress('', 0); render();
+    toast('Could not get projections — '+e.message,'bad');
+  }
+};
 ACT.playerCard = (d)=>{
+  ui.tmp.pcId = d.id;
+  if(ui.tmp.pcYear && playerYears(byId(S.players,d.id)||{}).indexOf(ui.tmp.pcYear)<0) ui.tmp.pcYear = null;
   const p = byId(S.players, d.id); if(!p) return;
   const news = playerNews(p), m = matchupFor(p), b = valueBreakdown(p);
   const c = p.contract;
@@ -4710,8 +5078,63 @@ ACT.playerCard = (d)=>{
       : '<div class="hint">'+(S.news.items.length
           ? 'Nothing in the last '+S.news.items.length+' stories mentions him.'
           : 'No news loaded yet. Press refresh above.')+'</div>'}
-    ${stale!=null?'<div class="hint">Feed last checked '+(stale<60?stale+' minutes':Math.round(stale/60)+' hours')+' ago.</div>':''}`,
+    ${stale!=null?'<div class="hint">Feed last checked '+(stale<60?stale+' minutes':Math.round(stale/60)+' hours')+' ago.</div>':''}
+
+    ${(()=>{
+      const v = projFor(p), src = projSource(p);
+      if(v==null) return '';
+      return '<div class="hr"></div><div class="flabel">Week '+(S.live.week||1)+' projection</div>'+
+        '<div class="row" style="gap:10px;align-items:baseline">'+
+          '<div class="num" style="font-size:26px">'+v.toFixed(1)+'</div>'+
+          '<div class="tiny dim">'+esc(src)+', on this league\u2019s scoring</div>'+
+        '</div>';
+    })()}
+
+    ${(()=>{
+      /* ---- Game log ---- */
+      const yr = ui.tmp.pcYear || S.league.season;
+      const years = playerYears(p);
+      const log = playerLog(p, yr);
+      const keys = {};
+      log.forEach(w=> Object.keys(w.stats||{}).forEach(k=>{ if(+w.stats[k]) keys[k]=true; }));
+      const cols = Object.keys(keys).slice(0,7);
+      return '<div class="hr"></div><div class="flabel">Game log</div>'+
+        (years.length>1 ? '<div class="row" style="gap:6px;margin-bottom:6px">'+
+          years.map(y=>'<button class="btn sm '+(y===yr?'':'ghost')+'" data-a="pcYear" data-y="'+y+'">'+y+'</button>').join('')+
+          '</div>' : '')+
+        (log.length
+          ? '<div class="scrollx"><table><thead><tr><th>Wk</th><th class="right">Pts</th>'+
+            cols.map(k=>'<th class="right">'+esc(k)+'</th>').join('')+'</tr></thead><tbody>'+
+            log.map(w=>'<tr><td class="num">'+w.week+'</td><td class="right num">'+w.fpts.toFixed(1)+'</td>'+
+              cols.map(k=>'<td class="right num dim">'+(w.stats[k]||0)+'</td>').join('')+'</tr>').join('')+
+            '</tbody></table></div>'
+          : '<div class="hint">No weeks recorded for '+yr+' yet. Weeks are logged from the point this build went in, as each one is closed out.</div>');
+    })()}
+
+    ${(()=>{
+      /* ---- Transaction history ---- */
+      const h = playerHistory(p);
+      return '<div class="hr"></div><div class="flabel">His history in this league</div>'+
+        (h.length
+          ? '<div class="stack" style="max-height:220px;overflow:auto">'+h.map(l=>
+              '<div class="tiny"><span class="dim">'+dstr(l.at)+'</span> '+
+              '<span class="dim">'+(TX_TYPES[l.type||'admin']||TX_TYPES.admin).ic+'</span> '+esc(l.text)+'</div>').join('')+'</div>'
+          : '<div class="hint">Nothing logged against him yet.</div>');
+    })()}
+
+    ${(()=>{
+      /* ---- Depth chart ---- */
+      const dc = depthAt(p);
+      return '<div class="hr"></div><div class="flabel">Depth chart'+(p.nfl?' · '+esc(p.nfl):'')+'</div>'+
+        (dc.length
+          ? '<table><tbody>'+dc.map(x=>'<tr'+(x.id===p.id?' style="font-weight:600"':'')+'>'+
+              '<td class="num dim" style="width:36px">'+(x.depth)+'</td><td>'+esc(x.name)+'</td>'+
+              '<td class="right dim tiny">'+esc(x.pos)+'</td></tr>').join('')+'</tbody></table>'
+          : '<div class="hint">No depth chart held for '+(p.nfl||'his club')+'. Pull one in on the Import page — it comes from Sleeper.</div>');
+    })()}`,
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    (c && c.teamId && c.teamId!==S.league.myTeamId
+      ? '<button class="btn" data-a="askFor" data-id="'+p.id+'">Ask about him</button>' : '')+
     (c && !isWaiver(p)?'<button class="btn" data-a="extend" data-id="'+p.id+'">Extend</button>':'')+
     '<button class="btn pri" data-a="editContract" data-id="'+p.id+'">'+(c?'Edit contract':'Sign him')+'</button>');
 };
@@ -5068,7 +5491,7 @@ function cdShares(){
     if(tot > 0) return v.map(x=> x/tot);
     return v.map(()=> 1/Math.max(1,cd.years));
   }
-  return structPct(structById(cd.structId), cd.years).map(x=> x/100);
+  return structPct(structById(cd.structId), cd.years, cd.total).map(x=> x/100);
 }
 /* The most this deal could be worth and still leave the team level or better
    in every year it runs. Null when nothing binds it. */
@@ -5118,7 +5541,7 @@ function contractSummary(){
   return `
     <div class="scrollx"><table><thead><tr><th>Year</th>${sal.map((_,i)=>'<th class="right">'+(cd.startYear+i)+'</th>').join('')}</tr></thead>
       <tbody><tr><td class="dim">Salary</td>${sal.map(s=>'<td class="right money">'+money(s)+'</td>').join('')}</tr>
-      ${cd.byYear?'':'<tr><td class="dim">Share</td>'+structPct(st,cd.years).map(x=>'<td class="right num dim">'+pct(x)+'</td>').join('')+'</tr>'}
+      ${cd.byYear?'':'<tr><td class="dim">Share</td>'+structPct(st,cd.years,cd.total).map(x=>'<td class="right num dim">'+pct(x)+'</td>').join('')+'</tr>'}
       <tr><td class="dim">Space after</td>${sal.map((s,i)=>{
         const yy=cd.startYear+i;
         if(yy<S.league.season) return '<td class="right dim">—</td>';
@@ -5133,7 +5556,17 @@ function contractSummary(){
       ? 'Every figure is yours to set, so an existing league can be copied across exactly. Shorten the deal and the extra years are put aside, not thrown away — lengthen it again and they come back.'
       : 'Bars show the shape of the deal. Change the structure to move money between years — the total never changes.'}</div>
     ${Math.min.apply(null, sal) < (+S.settings.contracts.minSalary||0)
-      ? '<div class="hint bad">At least one year falls under the league minimum of '+money(S.settings.contracts.minSalary)+'. Raise the total or shorten the deal.</div>' : ''}
+      ? '<div class="hint '+(isCommish()?'warn':'bad')+'">At least one year falls under the league minimum of '+
+        money(S.settings.contracts.minSalary)+'. '+(isCommish()
+          ? 'You can save it anyway \u2014 you will be asked to confirm.'
+          : 'Raise the total or shorten the deal.')+'</div>' : ''}
+    ${(()=>{
+      const why = loadingBlocked(cd.total, cd.years);
+      const st2 = structById(cd.structId);
+      if(why && st2 && st2.mode!=='even')
+        return '<div class="hint warn">'+esc(why)+' The '+esc(st2.name)+' shape is ignored here \u2014 it will be paid evenly.</div>';
+      return '';
+    })()}
     ${(()=>{
       /* A deal is only counted in the years it actually covers. If its window
          ends before this season, every year on the cap ladder reads $0 even
@@ -5179,9 +5612,25 @@ ACT.liftWaiver = (d)=>{
   logIt('Waiver tag lifted from '+p.name, {type:'waiver', teams:[p.contract?p.contract.teamId:null].filter(Boolean), players:[p.id]});
   closeModal(); save(); render(); toast('Tag lifted');
 };
+/* Commissioner said yes to a deal with no money on it. */
+ACT.saveContractZero = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  (ui.tmp.cd = ui.tmp.cd || {}).forceZero = true;
+  ACT.saveContract();
+};
 ACT.saveContract = ()=>{
   const cd = ui.tmp.cd, p = byId(S.players,cd.pid);
-  if(cd.total<=0) return toast('Give the deal a value','bad');
+  if(cd.total<=0 && !cd.forceZero){
+    if(!isCommish()) return toast('Give the deal a value','bad');
+    return modal('Put '+esc(p.name)+' on nothing?',
+      '<p class="muted" style="margin:0 0 8px">This deal has no money against it — '+
+      money(0)+' across '+cd.years+' year'+(cd.years===1?'':'s')+'.</p>'+
+      '<div class="hint">He will sit on the roster at '+money(0)+' and count nothing against the cap. '+
+      'Use this when another team has taken the whole contract on. Anyone other than a commissioner has to '+
+      'put a value in.</div>',
+      '<button class="btn ghost" data-a="closeModal">Go back</button>'+
+      '<button class="btn pri" data-a="saveContractZero">Save it at '+money(0)+'</button>');
+  }
   const lp = limitProblemFor('signings', cd.teamId, cd.years, p.id);
   if(lp) return toast(teamName(cd.teamId)+' already has '+lp.have+' deals of '+lp.length+' years or longer and is allowed '+lp.allow,'bad');
   const c = makeContract(cd.teamId, cd.total, cd.years, cd.structId, cd.startYear);
@@ -5203,7 +5652,9 @@ ACT.saveContract = ()=>{
   /* A contract edit is silent in the log unless the user asked to be notified. */
   if(before) maybeNotify('contractEdits', 'Contract edited',
     (who?who+' ':'')+'changed '+p.name+"'s deal — "+money(c.total)+' over '+c.years+' yr');
-  closeModal(); save(); render(); toast('Contract saved','good');
+  const wasZero = cd.forceZero; cd.forceZero = false;
+  closeModal(); save(); render();
+  toast(wasZero? p.name+' is on '+money(0) : 'Contract saved','good');
 };
 function applyExtension(p, addYears, aav, structId){
   const c = p.contract;
@@ -5907,6 +6358,10 @@ ACT.cancelAuction = (d)=>{
 ACT.forceSettle = (d)=>{ const auc=byId(S.auctions,d.id); auc.clock.remain=0; settleAuction(auc); save(); render(); };
 ACT.setActAs = (d,el)=>{ ui.tmp.actAs = el.value; render(); };
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]'); if(s){ ui.tmp.actAs=s.value; render(); } });
+document.addEventListener('change', e=>{
+  const fy = e.target.closest('[data-a="flatYear"]');
+  if(fy && ACT.flatYear){ ACT.flatYear(fy.dataset, fy, e); return; }
+});
 document.addEventListener('change', e=>{
   const k = e.target.closest('[data-a="faKeep"]');
   if(k && ACT.faKeep){ ACT.faKeep(k.dataset, k, e); return; }
@@ -7099,6 +7554,7 @@ ACT.sendTrade = ()=>{
     const teams = legTeams({legs});
     if(teams.length < 2) return toast('A trade needs at least two teams','bad');
     const tr = {id:uid('tr'), type:'multi', legs:deep(legs), teams, status:'proposed',
+      by:actingTeam(),
       accepted:[actingTeam()], createdAt:Date.now(), clock:null, counters:[],
       log:[{at:Date.now(), text:'Proposed by '+teamName(actingTeam())+' — '+teams.length+' teams'}]};
     S.trades.unshift(tr);
@@ -7114,6 +7570,7 @@ ACT.sendTrade = ()=>{
   if(!tb.a.players.length && !tb.a.picks.length && !tb.a.cash && !tb.b.players.length && !tb.b.picks.length && !tb.b.cash)
     return toast('Put something in the deal','bad');
   const tr = {id:uid('tr'), type:'standard', a:deep(tb.a), b:deep(tb.b), status:'proposed',
+    by:actingTeam(),                       /* who put it up — they cannot accept it */
     createdAt:Date.now(), clock:null, counters:[], log:[{at:Date.now(), text:'Proposed by '+teamName(tb.a.teamId)}]};
   S.trades.unshift(tr);
   notify('Trade offer', teamName(tb.a.teamId)+' sent '+teamName(tb.b.teamId)+' an offer.');
@@ -7146,8 +7603,23 @@ ACT.multiReject = (d)=>{
   logIt('Multi-team trade rejected', {type:'trade', teams:tr.teams});
   save(); render();
 };
+/* Who put this offer up. Older trades did not record it, so fall back to the
+   side that is giving — that is always the proposer on a standard trade. */
+function tradeProposer(tr){ return tr && (tr.by || (tr.a && tr.a.teamId) || null); }
+/* An offer has to be accepted by the other side. */
+function canAcceptTrade(tr){
+  if(!tr) return 'that offer has gone';
+  const me = actingTeam();
+  if(me === tradeProposer(tr)) return 'you put this offer up — '+
+    (tr.type==='multi' ? 'the other teams' : teamName((tr.b||{}).teamId)) + ' has to accept it';
+  if(tr.type!=='multi' && tr.b && tr.b.teamId && me !== tr.b.teamId)
+    return 'only '+teamName(tr.b.teamId)+' can accept this one';
+  return null;
+}
 ACT.acceptTrade = (d)=>{
   const tr = byId(S.trades,d.id);
+  const no = canAcceptTrade(tr);
+  if(no) return toast(no.charAt(0).toUpperCase()+no.slice(1),'bad');
   tr.status='review'; tr.acceptedAt=Date.now(); tr.clock=newClock(S.settings.trades.reviewHours);
   tr.log.unshift({at:Date.now(), text:'Accepted by '+teamName(tr.b.teamId)+' — '+S.settings.trades.reviewHours+'h review window opened'});
   notify('Trade accepted', 'In review for '+S.settings.trades.reviewHours+' hours'+(S.settings.trades.counters.on?'. Counters are open.':'.'),'warn');
@@ -7401,6 +7873,94 @@ VIEWS.chat = function(){
   </section>`;
 };
 
+/* Who you play and when, across the season. */
+function scheduleRows(teamId){
+  const weeks = fixtureWeeks();
+  const list = weeks.length ? weeks : Array.from({length:seasonWeeks()},(_,i)=>i+1);
+  return list.map(w=>{
+    const set = fixturesFor(w);
+    const g = set.find(x=> x.home===teamId || x.away===teamId);
+    const played = (S.schedule||[]).find(x=> +x.week===+w && (x.home===teamId || x.away===teamId));
+    if(!g && !played) return {week:w, opp:null};
+    const home = g ? g.home===teamId : played.home===teamId;
+    const opp  = g ? (home? g.away : g.home) : (home? played.away : played.home);
+    let mine=null, theirs=null;
+    if(played){
+      mine   = home ? played.hp : played.ap;
+      theirs = home ? played.ap : played.hp;
+    }
+    return {week:w, opp, home, mine, theirs, done:!!played};
+  });
+}
+/* Find a player anywhere in the league, whoever holds him. */
+VIEWS.find = function(){
+  const q = String(ui.tmp.findQ||'').trim().toLowerCase();
+  const hits = !q ? [] : S.players.filter(p=>
+      String(p.name||'').toLowerCase().indexOf(q)>=0 ||
+      String(p.nfl||'').toLowerCase()===q ||
+      String(p.pos||'').toLowerCase()===q
+    ).slice(0,60);
+  return `
+  <section class="wrap">
+    <div class="head"><h1>Find a player</h1></div>
+    <div class="panel"><div class="pb stack">
+      <label class="f"><span>Name, NFL club or position</span>
+        <input type="text" id="findQ" data-k="findQ" value="${esc(ui.tmp.findQ||'')}"
+          data-oninput="findType" placeholder="e.g. Amon-Ra, or DET, or WR" autocomplete="off"></label>
+      ${!q ? '<div class="hint">Type a name to see who holds him, what he is on and until when.</div>' : ''}
+      ${q && !hits.length ? '<div class="hint">Nobody matches that.</div>' : ''}
+      ${hits.length?`<div class="scrollx"><table>
+        <thead><tr><th>Player</th><th></th><th>Held by</th><th class="right">This year</th><th class="right">Through</th><th></th></tr></thead>
+        <tbody>${hits.map(p=>{
+          const c=p.contract, held = c && c.teamId && byId(S.teams,c.teamId);
+          return '<tr><td><a href="#" data-a="playerCard" data-id="'+p.id+'" style="color:inherit">'+esc(p.name)+'</a> '+
+            injuryTag(p)+' '+slotTag(p)+'</td>'+
+            '<td class="dim tiny">'+esc(p.pos||'')+' '+esc(p.nfl||'')+'</td>'+
+            '<td>'+(held? esc(teamName(c.teamId)) : '<span class="good">free agent</span>')+'</td>'+
+            '<td class="right num">'+(c? money(capHit(p,S.league.season)) : '—')+'</td>'+
+            '<td class="right num dim">'+(c? (c.startYear+c.years-1) : '—')+'</td>'+
+            '<td class="right"><button class="btn sm ghost" data-a="playerCard" data-id="'+p.id+'">Open</button></td></tr>';
+        }).join('')}</tbody></table></div>`:''}
+    </div></div>
+  </section>`;
+};
+VIEWS.schedule = function(){
+  const tid = currentTeamId();
+  const t = byId(S.teams, tid);
+  if(!t) return '<section class="wrap"><p class="muted">No team selected.</p></section>';
+  const rows = scheduleRows(tid);
+  const wins = rows.filter(r=>r.done && r.mine>r.theirs).length;
+  const loss = rows.filter(r=>r.done && r.mine<r.theirs).length;
+  const tie  = rows.filter(r=>r.done && r.mine===r.theirs).length;
+  const next = rows.find(r=> !r.done && r.opp);
+  return `
+  <section class="wrap">
+    <div class="head"><h1>Schedule</h1><div class="spacer"></div>
+      ${S.teams.length>1?`<select data-a="pickTeamView">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===tid?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select>`:''}
+    </div>
+    <div class="panel"><div class="ph"><h3>${esc(t.name)} · ${S.league.season}</h3><div class="spacer"></div>
+      <span class="pill">${wins}-${loss}${tie?'-'+tie:''}</span></div>
+      <div class="pb">
+        ${next? '<div class="hint">Next up: week '+next.week+' '+(next.home?'at home to':'away at')+' <b>'+esc(teamName(next.opp))+'</b>.</div>' : ''}
+        ${fixtureWeeks().length? '' : '<div class="hint">No schedule has been set, so these are the rotation the app works out for itself. A commissioner can bring the real one in from Sleeper on the Import page.</div>'}
+        <div class="scrollx"><table>
+          <thead><tr><th>Week</th><th></th><th>Opponent</th><th class="right">Score</th><th class="right">Result</th></tr></thead>
+          <tbody>${rows.map(r=>{
+            if(!r.opp) return '<tr><td class="num">'+r.week+'</td><td colspan="4" class="dim">No game</td></tr>';
+            const res = !r.done ? '' : r.mine>r.theirs ? '<span class="good">W</span>'
+                       : r.mine<r.theirs ? '<span class="bad">L</span>' : '<span class="dim">T</span>';
+            return '<tr'+(!r.done && next && r.week===next.week?' style="background:rgba(197,160,90,.08)"':'')+'>'+
+              '<td class="num">'+r.week+'</td>'+
+              '<td class="dim tiny">'+(r.home?'vs':'at')+'</td>'+
+              '<td>'+esc(teamName(r.opp))+'</td>'+
+              '<td class="right num">'+(r.done? r.mine.toFixed(1)+' – '+r.theirs.toFixed(1) : '<span class="dim">—</span>')+'</td>'+
+              '<td class="right">'+res+'</td></tr>';
+          }).join('')}</tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>`;
+};
 VIEWS.trades = function(){
   const me = actingTeam(), sub = ui.sub || 'review';
   const inbox = S.trades.filter(t=> t.status==='proposed');
@@ -7462,8 +8022,17 @@ VIEWS.trades = function(){
         ${retainNote(tr.a)}${retainNote(tr.b)}
         ${tr.reason?'<div class="hint bad">'+esc(tr.reason)+'</div>':''}
         <div class="row" style="margin-top:12px">
-          ${tr.status==='proposed' && (me===tr.b.teamId||isCommish()) ?
-            '<button class="btn pri" data-a="acceptTrade" data-id="'+tr.id+'">Accept</button><button class="btn ghost" data-a="rejectTrade" data-id="'+tr.id+'">Turn it down</button>':''}
+          ${tr.status==='proposed' ? (()=>{
+            const no = canAcceptTrade(tr);
+            if(!no) return '<button class="btn pri" data-a="acceptTrade" data-id="'+tr.id+'">Accept</button>'+
+              '<button class="btn ghost" data-a="rejectTrade" data-id="'+tr.id+'">Turn it down</button>';
+            /* The side that offered can pull it, but not accept it. */
+            return '<span class="tiny dim" style="align-self:center">Waiting on '+
+              esc(teamName((tr.b||{}).teamId||''))+'</span>'+
+              (actingTeam()===tradeProposer(tr)
+                ? '<div class="spacer"></div><button class="btn ghost" data-a="rejectTrade" data-id="'+tr.id+'">Pull the offer</button>'
+                : '');
+          })() : ''}
           ${canCounter ? sides.map(s=>'<button class="btn" data-a="counter" data-id="'+tr.id+'" data-side="'+s+'">Counter '+esc(teamName(tr[s].teamId))+'</button>').join('') : ''}
           ${tr.status==='review' && isCommish() ? '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button><button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button>':''}
           ${undoWindowLeft(tr) ? '<button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button>':''}
@@ -7562,7 +8131,15 @@ VIEWS.trades = function(){
    ============================================================ */
 function seasonLine(pid){ return ((S.season||{}).byPlayer||{})[pid] || null; }
 function foldWeekIntoSeason(){
-  if(!S.season || S.season.year!==S.league.season) S.season = {year:S.league.season, byPlayer:{}};
+  if(!S.season || S.season.year!==S.league.season){
+    /* Put the season that just finished into the record before starting a new
+       one, so a player's past years stay readable. */
+    if(S.season && S.season.year && Object.keys(S.season.byPlayer||{}).length){
+      S.history = S.history || {};
+      S.history[S.season.year] = S.season.byPlayer;
+    }
+    S.season = {year:S.league.season, byPlayer:{}};
+  }
   const stats = S.live.stats||{};
   Object.keys(stats).forEach(pid=>{
     const src = stats[pid]; let any=false;
@@ -7571,7 +8148,11 @@ function foldWeekIntoSeason(){
     const line = S.season.byPlayer[pid] = S.season.byPlayer[pid] || {gp:0, fpts:0, stats:{}};
     Object.keys(src).forEach(k=>{ if(+src[k]) line.stats[k] = Math.round(((line.stats[k]||0) + +src[k])*100)/100; });
     line.gp++;
-    line.fpts = Math.round((line.fpts + fpts(pid))*100)/100;
+    const wk = +S.live.week||1, got = fpts(pid);
+    line.fpts = Math.round((line.fpts + got)*100)/100;
+    /* the week-by-week log */
+    line.weeks = line.weeks || {};
+    line.weeks[wk] = {fpts: Math.round(got*100)/100, stats: Object.assign({}, src)};
   });
 }
 /* Every week folded away also lands on the defense that gave it up, so the
@@ -9334,7 +9915,7 @@ VIEWS.dues = function(){
             <label class="f"><span>Amount per team</span><input type="number" data-set="settings.dues.amount" value="${d.amount}"></label>
             <label class="f"><span>Symbol</span><input type="text" data-set="settings.dues.symbol" value="${esc(d.symbol)}"></label>
           </div>
-          <label class="f"><span>Due date</span><input type="date" data-set="settings.dues.dueDate" value="${esc(d.dueDate||'')}"></label>
+          <label class="f"><span>Due date</span><input type="date" data-norender data-set="settings.dues.dueDate" value="${esc(d.dueDate||'')}"></label>
           <label class="f"><span>Pay to</span><input type="text" data-set="settings.dues.payTo" value="${esc(d.payTo||'')}" placeholder="Venmo @commissioner"></label>
           <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>
         </div></div>
@@ -9599,6 +10180,67 @@ function faIndexHere(){
   });
   return {byId, byName};
 }
+/* Bring the season's fixtures across from Sleeper. Only the schedule is
+   touched — rosters, contracts, teams and settings are left alone. */
+ACT.schedPullGo = async ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const id = sleeperLeagueId(($('#schedSlId')||{}).value || ui.tmp.schedSlId || '');
+  if(!id) return toast('Paste your Sleeper league id, or the address','bad');
+  ui.tmp.schedSlId = ($('#schedSlId')||{}).value || ui.tmp.schedSlId || '';
+  ui.tmp.schedBusy = true; ui.tmp.schedErr = null; render();
+  try{
+    impProgress('Reading the rosters\u2026', 10);
+    const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
+    /* Sleeper roster_id -> a team here. The main import names teams t<roster_id>,
+       so that lines up; fall back to the order they come in. */
+    const teamFor = {};
+    rosters.forEach((r,i)=>{
+      teamFor[r.roster_id] = (byId(S.teams,'t'+r.roster_id) || S.teams[i] || {}).id || null;
+    });
+    const weeks = seasonWeeks();
+    const out = [];
+    for(let w=1; w<=weeks; w++){
+      impProgress('Week '+w+' of '+weeks+'\u2026', Math.round(10 + (w/weeks)*85));
+      let ms;
+      try{ ms = await getJSON(SLEEPER+'/league/'+id+'/matchups/'+w); }
+      catch(e){ break; }                      /* past the end of their season */
+      if(!ms || !ms.length) continue;
+      /* Two rosters sharing a matchup_id are playing each other. */
+      const pair = {};
+      ms.forEach(m=>{
+        if(m.matchup_id==null) return;
+        (pair[m.matchup_id] = pair[m.matchup_id] || []).push(m.roster_id);
+      });
+      Object.keys(pair).forEach(k=>{
+        const [a,b] = pair[k];
+        const ha = teamFor[a], aw = teamFor[b];
+        if(ha && aw) out.push({week:w, home:ha, away:aw});
+      });
+    }
+    impProgress('', 100);
+    ui.tmp.schedBusy = false;
+    if(!out.length){
+      ui.tmp.schedErr = 'That league did not return any fixtures.';
+      render(); return toast('No fixtures found','bad');
+    }
+    S.fixtures = out;                          /* the only thing written */
+    if(S.live && S.live.week) buildWeek(S.live.week);
+    const wks = fixtureWeeks();
+    logIt('Schedule brought in from Sleeper — '+out.length+' games across '+wks.length+' weeks', {type:'admin'});
+    save(); render();
+    toast(out.length+' games across '+wks.length+' weeks','good');
+  }catch(e){
+    ui.tmp.schedBusy = false; ui.tmp.schedErr = e.message; impProgress('', 0); render();
+    toast('Could not read that league — '+e.message,'bad');
+  }
+};
+ACT.schedClear = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  S.fixtures = [];
+  if(S.live && S.live.week) buildWeek(S.live.week);
+  logIt('Schedule cleared — back to the rotation the app works out', {type:'admin'});
+  save(); render(); toast('Schedule cleared');
+};
 ACT.faPullGo = async ()=>{
   const id = sleeperLeagueId(($('#faSlId')||{}).value || ui.tmp.faSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
@@ -9728,7 +10370,7 @@ ACT.sleeperGo = async ()=>{
     const players = await sleeperPlayerMap();
     impProgress('Putting it together…', 85);
 
-    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true};
+    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
     const season = parseInt(league.season,10) || S.league.season;
 
     if(o.teams){
@@ -9792,12 +10434,11 @@ ACT.sleeperGo = async ()=>{
             S.players.push(p);
           });
       });
-      /* Free agents: anyone Sleeper knows who is not on a roster in that league.
-         They come across too, so the pool is not empty. */
+      /* Free agents: anyone Sleeper knows who is not on a roster in that league. */
       const taken = {};
       S.players.forEach(x=>{ if(x.sleeperId) taken[String(x.sleeperId)] = true; });
       let fa = 0;
-      Object.keys(players).forEach(pid=>{
+      Object.keys(o.freeAgents ? players : {}).forEach(pid=>{
         if(taken[String(pid)]) return;
         const pl = players[pid]; if(!pl) return;
         const raw = pl.position || (pl.fantasy_positions||[])[0];
@@ -9813,7 +10454,37 @@ ACT.sleeperGo = async ()=>{
         S.players.push(p);
         fa++;
       });
+      /* Depth charts — only the ordering is written. */
+      let depthSet = 0;
+      if(o.depth){
+        impProgress('Depth charts\u2026', 90);
+        S.players.forEach(pl=>{
+          const src = pl.sleeperId ? players[String(pl.sleeperId)] : null;
+          if(src && src.depth_chart_order!=null){ pl.depth = +src.depth_chart_order||0; depthSet++; }
+        });
+      }
+      /* The schedule — fixtures only, nothing else touched. */
+      let fixtures = 0;
+      if(o.schedule){
+        const teamForRoster = {};
+        rosters.forEach((r,i)=>{ teamForRoster[r.roster_id] = (byId(S.teams,'t'+r.roster_id) || S.teams[i] || {}).id || null; });
+        const weeks = seasonWeeks(), out = [];
+        for(let w=1; w<=weeks; w++){
+          impProgress('Schedule, week '+w+'\u2026', 92);
+          let ms; try{ ms = await getJSON(SLEEPER+'/league/'+id+'/matchups/'+w); }catch(e){ break; }
+          if(!ms || !ms.length) continue;
+          const pair = {};
+          ms.forEach(mm=>{ if(mm.matchup_id==null) return;
+            (pair[mm.matchup_id] = pair[mm.matchup_id] || []).push(mm.roster_id); });
+          Object.keys(pair).forEach(k=>{
+            const a = teamForRoster[pair[k][0]], b = teamForRoster[pair[k][1]];
+            if(a && b) out.push({week:w, home:a, away:b});
+          });
+        }
+        if(out.length){ S.fixtures = out; fixtures = out.length; }
+      }
       ui.tmp.slKept = kept; ui.tmp.slFresh = freshDeals; ui.tmp.slFA = fa;
+      ui.tmp.slDepth = depthSet; ui.tmp.slFixtures = fixtures;
       S.league.name = league.name || S.league.name;
       S.league.season = season;
       if(S.teams[0]){ S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
@@ -9844,7 +10515,8 @@ ACT.sleeperGo = async ()=>{
       S.players.length+' players, '+scored+' scoring categories', {type:'admin'});
     ui.tmp.slBusy = false;
     ui.tmp.slDone = {name:league.name, teams:S.teams.length, players:S.players.length, scored, unknownSlots, season,
-      kept:ui.tmp.slKept||0, fresh:ui.tmp.slFresh||0, freeAgents:ui.tmp.slFA||0};
+      kept:ui.tmp.slKept||0, fresh:ui.tmp.slFresh||0, freeAgents:ui.tmp.slFA||0,
+      depth:ui.tmp.slDepth||0, fixtures:ui.tmp.slFixtures||0};
     ui.sub = 'price';
     save(true); render();
     toast('Sleeper league imported','good');
@@ -9854,7 +10526,7 @@ ACT.sleeperGo = async ()=>{
   }
 };
 ACT.slOpt = (d)=>{
-  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true};
+  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
   ui.tmp.slOpts[d.k] = !ui.tmp.slOpts[d.k];
   render();
 };
@@ -9876,7 +10548,7 @@ VIEWS.import = function(){
     </div>
 
     ${sub==='sleeper'?(()=>{
-      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true};
+      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
       const done = ui.tmp.slDone;
       return `<div class="grid g2">
       <div class="panel"><div class="ph"><h3>Pull it straight from Sleeper</h3></div><div class="pb stack">
@@ -9893,11 +10565,45 @@ VIEWS.import = function(){
           <span>Scoring settings <span class="dim">— every category, exactly as you have them</span></span></label>
         <label class="check"><input type="checkbox" ${o.roster?'checked':''} data-a="slOpt" data-k="roster">
           <span>Starting lineup, bench, IR and taxi sizes</span></label>
+        <label class="check"><input type="checkbox" ${o.freeAgents?'checked':''} data-a="slOpt" data-k="freeAgents">
+          <span>Free agents <span class="dim">— everyone on nobody's roster, on the minimum</span></span></label>
+        <label class="check"><input type="checkbox" ${o.schedule?'checked':''} data-a="slOpt" data-k="schedule">
+          <span>The schedule <span class="dim">— who plays who, week by week</span></span></label>
+        <label class="check"><input type="checkbox" ${o.depth?'checked':''} data-a="slOpt" data-k="depth">
+          <span>Depth charts <span class="dim">— where each player sits on his NFL club</span></span></label>
         <button class="btn pri wide" data-a="sleeperGo" ${ui.tmp.slBusy?'disabled':''}>${ui.tmp.slBusy?'Working…':'Pull the league'}</button>
         <div id="slProg"></div>
         ${ui.tmp.slErr?`<div class="hint bad">${esc(ui.tmp.slErr)}<br>
           If that says "Failed to fetch", the browser blocked the call — open the app from your Netlify address
           rather than a file on your desktop.</div>`:''}
+        <div class="hr"></div>
+        <div class="flabel">Just the projections</div>
+        <p class="muted tiny" style="margin:0">Pulls this week's projected stat lines and scores them with
+          <b>your</b> scoring settings, so the number matches your rules rather than a generic one.</p>
+        <button class="btn" data-a="projPull" ${ui.tmp.projBusy?'disabled':''}>${ui.tmp.projBusy?'Working…':'Pull in week '+(S.live.week||1)+' projections'}</button>
+        ${(S.proj&&S.proj.week)?`<div class="hint ok">Week ${S.proj.week} projections are in for ${Object.keys(S.proj.byPlayer||{}).length} players.</div>`:''}
+        ${ui.tmp.projErr?`<div class="hint bad">${esc(ui.tmp.projErr)}</div>`:''}
+        <div class="hr"></div>
+        <div class="flabel">Just the depth charts</div>
+        <p class="muted tiny" style="margin:0">Marks where each player sits on his NFL club, so you can see the
+          pecking order on a player's card. Only that is written — nothing else changes.</p>
+        <button class="btn" data-a="depthPull" ${ui.tmp.depthBusy?'disabled':''}>${ui.tmp.depthBusy?'Working…':'Pull in the depth charts'}</button>
+        ${ui.tmp.depthErr?`<div class="hint bad">${esc(ui.tmp.depthErr)}</div>`:''}
+        <div class="hr"></div>
+        <div class="flabel">Just the schedule</div>
+        <p class="muted tiny" style="margin:0">Brings this season's fixtures across so everyone can see who they
+          play and when. Nothing else is touched — rosters, contracts and settings are left exactly as they are.</p>
+        ${isCommish()?`
+          <label class="f"><span>League id, or just paste the address</span>
+            <input type="text" id="schedSlId" data-k="schedSlId" placeholder="1234567890123456789"
+              value="${esc(ui.tmp.schedSlId||ui.tmp.slIdVal||'')}"></label>
+          <div class="row" style="gap:6px">
+            <button class="btn" data-a="schedPullGo" ${ui.tmp.schedBusy?'disabled':''}>${ui.tmp.schedBusy?'Working…':'Pull in the schedule'}</button>
+            ${(S.fixtures||[]).length?`<button class="btn ghost sm" data-a="schedClear">Clear it</button>`:''}
+          </div>
+          ${(S.fixtures||[]).length?`<div class="hint ok">${(S.fixtures||[]).length} games across ${fixtureWeeks().length} weeks are set.</div>`:''}
+          ${ui.tmp.schedErr?`<div class="hint bad">${esc(ui.tmp.schedErr)}</div>`:''}
+        `:'<div class="hint">Only a commissioner can bring the schedule in.</div>'}
         <div class="hr"></div>
         <div class="flabel">Just the free agents</div>
         <p class="muted tiny" style="margin:0">Adds anyone in Sleeper who is not in this league yet, as a free
@@ -9917,6 +10623,8 @@ VIEWS.import = function(){
             <dt>League</dt><dd>${esc(done.name||'—')}</dd><dt>Season</dt><dd>${done.season}</dd>
             <dt>Teams</dt><dd>${done.teams}</dd><dt>Players</dt><dd>${done.players}</dd>
             <dt>Free agents</dt><dd>${done.freeAgents||0}</dd>
+            <dt>Schedule</dt><dd>${done.fixtures?done.fixtures+' games':'<span class="dim">not brought across</span>'}</dd>
+            <dt>Depth charts</dt><dd>${done.depth?done.depth+' players':'<span class="dim">not brought across</span>'}</dd>
             <dt>Deals kept</dt><dd>${done.kept||0}${done.fresh?' <span class="dim">· '+done.fresh+' new on the minimum</span>':''}</dd>
             <dt>Scoring categories</dt><dd>${done.scored}</dd></div>
           ${done.unknownSlots && done.unknownSlots.length?'<div class="hint">Slots this app does not know were skipped: '+
@@ -10748,6 +11456,22 @@ VIEWS.settings = function(){
         <label class="f"><span>Shortest deal (years)</span><input type="number" min="1" max="10" data-set="settings.contracts.minYears" value="${ct.minYears}"></label>
         <label class="f"><span>Longest deal (years)</span><input type="number" min="1" max="10" data-set="settings.contracts.maxYears" value="${ct.maxYears}"></label>
         <label class="f"><span>Minimum yearly salary</span><input type="number" step="${c.cap.increment}" data-set="settings.contracts.minSalary" value="${ct.minSalary}"></label>
+        <label class="f"><span>Loading allowed from <span class="dim">— smaller deals stay flat</span></span>
+          <input type="number" min="0" step="0.01" data-set="settings.contracts.loadMinTotal" value="${ct.loadMinTotal??0}"></label>
+        <label class="f" style="grid-column:1/-1"><span>Lengths that must be paid evenly</span>
+          <div class="row" style="gap:10px;flex-wrap:wrap">
+            ${Array.from({length:(+ct.maxYears||10)},(_,i)=>i+1).map(y=>
+              '<label class="check" style="margin:0"><input type="checkbox" data-a="flatYear" data-y="'+y+'"'+
+              (((ct.flatYears||[]).map(Number).indexOf(y)>=0)?' checked':'')+'><span>'+y+'</span></label>').join('')}
+          </div></label>
+        <div class="hint" style="grid-column:1/-1">${(()=>{
+          const f=(ct.flatYears||[]).map(Number).sort((a,b)=>a-b);
+          const bits=[];
+          if(+ct.loadMinTotal>0) bits.push('deals under '+money(+ct.loadMinTotal)+' are paid evenly');
+          if(f.length) bits.push((f.length===1?'':'')+f.join('- and ')+'-year deals are paid evenly');
+          return bits.length? bits.join('; ')+'. A front or back loaded shape is ignored on those.'
+            : 'Every deal may be front or back loaded.';
+        })()}</div>
         <label class="f"><span>Structure used by default</span><select data-set="settings.contracts.defaultStruct">
           ${ct.structures.map(s=>'<option value="'+s.id+'"'+(ct.defaultStruct===s.id?' selected':'')+'>'+esc(s.name)+'</option>').join('')}</select></label>
       </div></div>
@@ -10867,7 +11591,7 @@ VIEWS.settings = function(){
             <label class="check"><input type="checkbox" data-set="settings.waivers.on" ${S.settings.waivers.on?'checked':''}>
               <span>Run a waiver deadline</span></label>
             <div class="grid g2">
-              <label class="f"><span>Deadline</span><input type="date" data-set="settings.waivers.deadline" value="${esc(S.settings.waivers.deadline||'')}"></label>
+              <label class="f"><span>Deadline</span><input type="date" data-norender data-set="settings.waivers.deadline" value="${esc(S.settings.waivers.deadline||'')}"></label>
               <label class="f"><span>Waiver salary</span><input type="number" step="${c.cap.increment}" data-set="settings.waivers.salary" value="${S.settings.waivers.salary}"></label>
             </div>
             <label class="check"><input type="checkbox" data-set="settings.waivers.blockExtensions" ${S.settings.waivers.blockExtensions?'checked':''}>
@@ -11396,6 +12120,7 @@ VIEWS.settings = function(){
           <div><div class="flabel">League this file points at</div>
             <div class="num" style="word-break:break-all">${esc(HOME_LEAGUE.leagueId || (S.settings.supa||{}).leagueId || 'not set')}</div></div>
           <button class="btn sm" data-a="serverReport">Run a server report</button>
+          <button class="btn sm" data-a="forceMine">This copy is the right one — send it up</button>
           <div class="hint">If someone is seeing the wrong league, have them read this Build line back to you.
             It should match the newest one deployed. If it does not, they are on an old cached copy \u2014
             pull down to refresh the page, or close the tab and open the link again.</div>
@@ -11973,6 +12698,17 @@ ACT.mergeContracts = ()=>{
       '<button class="btn ghost" data-a="closeModal">Close</button>');
   };
   rd.readAsText(f.files[0]);
+};
+ACT.flatYear = (d, el)=>{
+  const c = S.settings.contracts;
+  const list = (c.flatYears||[]).map(Number);
+  const y = +d.y;
+  const on = el ? !!el.checked : list.indexOf(y)<0;
+  const i = list.indexOf(y);
+  if(on && i<0) list.push(y);
+  if(!on && i>=0) list.splice(i,1);
+  c.flatYears = list.sort((a,b)=>a-b);
+  save(); render();
 };
 ACT.clearLimits = ()=>{ S.settings.contracts.limits = {}; save(); render(); };
 ACT.clearRookieOv = ()=>{ S.settings.rookie.overrides = {}; save(); render(); toast('Back to the formula'); };
@@ -13178,8 +13914,8 @@ ACT.openBackups = async ()=>{
   const list = await listBackups();
   modal('Saved copies of your league',
     (list.length
-      ? '<p class="muted" style="margin-top:0">A copy is kept every time the app opens with a league loaded, and before '+
-        'anything drastic. The newest is at the top.</p>'+
+      ? '<p class="muted" style="margin-top:0">A copy is kept every half hour while you are working, every time the '+
+        'app opens, and before anything drastic. The last '+BAKS+' are kept, newest at the top.</p>'+
         '<div class="scrollx"><table><thead><tr><th>When</th><th>League</th><th class="right">Teams</th>'+
         '<th class="right">Contracts</th><th></th></tr></thead><tbody>'+
         list.map(b=>'<tr><td class="tiny">'+dstr(b.at)+'<div class="dim">'+esc(b.why)+'</div></td>'+
@@ -13273,7 +14009,97 @@ const Sync = {
 /* Everything about *how this device connects* is local and must survive a pull.
    Adopting somebody else's copy of those would wipe the league code off this
    phone, and then there would be nothing to pull next time it opened. */
-function adoptRemote(state, rev){
+/* Two versions of the league exist. Show what each holds and let the user
+   decide, rather than quietly replacing one with the other. */
+function showConflict(){
+  const c = ui.tmp.conflict; if(!c) return;
+  const line = (t,p,r)=> '<td class="right num">'+t+'</td><td class="right num">'+p+'</td>'+
+    (r!=null?'<td class="right num dim">'+r+'</td>':'<td></td>');
+  modal('Two versions of this league',
+    '<p class="muted" style="margin:0 0 8px">Somebody else saved while you were working. Nothing has been '+
+    'changed yet \u2014 pick which one to keep.</p>'+
+    '<table><thead><tr><th></th><th class="right">Teams</th><th class="right">Players</th><th class="right">Rev</th><th class="right">Contracts</th></tr></thead>'+
+    '<tbody>'+
+      '<tr><td><b>Yours, on this device</b></td>'+line(c.mineTeams, c.minePlayers, c.mineRev)+
+        '<td class="right num">'+(c.mineWorth!=null?money(c.mineWorth):'')+'</td></tr>'+
+      '<tr><td>Theirs, on the server</td>'+line(c.theirTeams, c.theirPlayers, c.rev)+
+        '<td class="right num'+((c.theirWorth||0) < (c.mineWorth||0) ? ' bad':'')+'">'+
+        (c.theirWorth!=null?money(c.theirWorth):'')+'</td></tr>'+
+    '</tbody></table>'+
+    '<div class="hint">Either way a copy of what is on this device is kept, and Settings \u2192 Data can '+
+    'put it back.</div>',
+    '<button class="btn ghost" data-a="conflictTheirs">Take theirs</button>'+
+    '<button class="btn pri" data-a="conflictMine">Keep mine</button>');
+}
+/* "The copy on this device is the right one." Sends it up over whatever the
+   server holds, so the thinner copy stops coming back. */
+ACT.forceMine = ()=>{
+  if(!Supa.ready()) return toast('Not connected to the server','bad');
+  const mineWorth = dealsWorth(S);
+  modal('Send this copy up?',
+    '<p class="muted" style="margin:0 0 8px">Everything on this device \u2014 '+(S.teams||[]).length+' teams, '+
+    (S.players||[]).length+' players, '+money(mineWorth)+' of contracts \u2014 replaces what is on the server.</p>'+
+    '<div class="hint">Use this when the server keeps handing back an older copy. A backup of what is here is '+
+    'kept either way, in Settings \u2192 Data.</div>',
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    '<button class="btn pri" data-a="forceMineGo">Send it up</button>');
+};
+ACT.forceMineGo = async ()=>{
+  closeModal();
+  try{
+    keepBackup(deep(S), 'before sending this copy up');
+    /* Read the server revision and save on top of it. */
+    const r = await Supa.client.from('leagues').select('rev').eq('id', Supa.cfg().leagueId).maybeSingle();
+    if(r && r.data && (+r.data.rev||0) >= (+S.rev||0)) S.rev = +r.data.rev||0;
+    await Supa.push(true);
+    toast('Sent up — the server now has this copy','good');
+  }catch(e){ toast('Could not send it — '+e.message,'bad'); }
+};
+ACT.conflictMine = ()=>{
+  const c = ui.tmp.conflict; if(!c) return;
+  keepBackup(deep(S), 'before overwriting the server copy');
+  S.rev = c.rev;                      /* line up with the server, then save over it */
+  ui.tmp.conflict = null;
+  closeModal(); save(true);
+  /* They pressed a button, so send it now rather than on the usual delay. */
+  if(typeof Supa==='object' && Supa.ready()) Supa.push(true);
+  toast('Your version is being saved over theirs','good');
+};
+ACT.conflictTheirs = ()=>{
+  const c = ui.tmp.conflict; if(!c) return;
+  adoptRemote(c.state, c.rev, true);  /* forced: they chose it, and it is backed up */
+  ui.tmp.conflict = null;
+  closeModal(); render();
+  toast('Their version is loaded. Yours is in Settings \u2192 Data if you need it.','warn');
+};
+/* What the contracts in a league are worth, all in. Used to spot a server copy
+   that would wipe real deals and leave everyone on the minimum. */
+function dealsWorth(st){
+  return (st && st.players || []).reduce((n,p)=> n + (p.contract ? (+p.contract.total||0) : 0), 0);
+}
+/* Would taking this copy throw away real work? Not "is it different" — only a
+   copy that has lost most of the money on the books counts, which is what an
+   older import looks like when everyone is back on the minimum. */
+function adoptWouldLose(incoming){
+  const mine = dealsWorth(S), theirs = dealsWorth(incoming);
+  if(mine <= 0) return false;                 /* nothing here to lose */
+  return theirs < mine * 0.6;                 /* they have lost a big chunk of it */
+}
+function adoptRemote(state, rev, force){
+  /* A server copy that would wipe the contracts is never taken quietly, however
+     it arrived — a pull, the live feed, or a clash while saving. */
+  if(!force && adoptWouldLose(state)){
+    ui.tmp.conflict = {state, rev,
+      mineTeams:(S.teams||[]).length, minePlayers:(S.players||[]).length, mineRev:+S.rev||0,
+      theirTeams:((state||{}).teams||[]).length, theirPlayers:((state||{}).players||[]).length,
+      mineWorth:dealsWorth(S), theirWorth:dealsWorth(state)};
+    try{ keepBackup(deep(S), 'kept when the server offered a thinner copy'); }catch(e){}
+    showConflict();
+    return;
+  }
+  /* Whatever the reason, keep what is on this device before replacing it.
+     Settings - Data can put it back. */
+  try{ keepBackup(deep(S), 'before taking revision '+rev+' from the server'); }catch(e){}
   const keepSync = deep(S.settings.sync||{});
   const keepSupa = deep(S.settings.supa||{});
   const keepLive = deep(S.settings.live||{});
@@ -13603,9 +14429,15 @@ const Supa = {
       });
       if(error) throw error;
       if(data && data.conflict){
-        adoptRemote(data.state, +data.rev||0);
-        this.set('warn','Somebody saved first — took their copy');
-        render(); toast('Someone else saved first. Their version is loaded, redo your change.','bad');
+        /* Somebody else saved in between. Taking their copy silently would throw
+           away everything on this device, not just the change just made — so
+           show both and let the user pick. */
+        this.set('warn','Somebody saved first');
+        ui.tmp.conflict = {state:data.state, rev:+data.rev||0,
+          mineTeams:(S.teams||[]).length, minePlayers:(S.players||[]).length, mineRev:+S.rev||0,
+          theirTeams:((data.state||{}).teams||[]).length, theirPlayers:((data.state||{}).players||[]).length};
+        this.busy = false;
+        return showConflict();
       } else {
         S.rev = +(data && data.rev) || ((+S.rev||0)+1);
         this.lastPush = Date.now();
@@ -13810,6 +14642,12 @@ function tickAll(){
     const gap = Math.max(10, +S.settings.live.pollSec||30)*1000;
     if(Date.now()-lastPoll > gap){ lastPoll = Date.now(); pollEndpoint(); }
   }
+  /* Real scores straight from Sleeper, on the same timer. */
+  if(S.settings.live.mode==='sleeper'){
+    const gap = Math.max(15, +S.settings.live.pollSec||30)*1000;
+    if(Date.now()-lastSleeperStats > gap){ lastSleeperStats = Date.now(); pollSleeperStats(); }
+    autoProjections();
+  }
   if(Sync.ready() && !Supa.ready()){
     const gap = Math.max(5, +S.settings.sync.everySec||20)*1000;
     if(Date.now()-Sync.lastPull > gap && !Sync.busy){ Sync.lastPull = Date.now(); Sync.pull(); }
@@ -13831,6 +14669,21 @@ function tickAll(){
   if(needsRender) render();
   else if(dirty && Date.now()-(S.meta.savedAt||0) > 8000) save();
 }
+/* A copy every half hour, but only when something has actually changed since
+   the last one — so the list is real saves, not the same league twenty times. */
+let lastBakAt = 0, lastBakRev = null, lastBakSaved = null;
+setInterval(()=>{
+  try{
+    if(!S || !(S.teams||[]).length) return;
+    const rev = +S.rev||0, saved = S.meta && S.meta.savedAt || 0;
+    if(lastBakRev===null){ lastBakRev = rev; lastBakSaved = saved; lastBakAt = Date.now(); return; }
+    const changed = rev !== lastBakRev || saved !== lastBakSaved;
+    if(!changed) return;
+    if(Date.now() - lastBakAt < 30*60*1000) return;
+    keepBackup(deep(S), 'half-hourly copy');
+    lastBakAt = Date.now(); lastBakRev = rev; lastBakSaved = saved;
+  }catch(e){}
+}, 60000);
 setInterval(tickAll, 1000);
 /* Somebody sitting in the waiting room should not have to keep pressing a
    button. Only runs while they are actually waiting. */
