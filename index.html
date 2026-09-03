@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-15u · live scores + auto projections';
+const APP_BUILD = '2026-08-15x · right years + adjustments split out';
 
 /* ============================================================
    HOME LEAGUE
@@ -1356,9 +1356,12 @@ function slotRoom(teamId, slot){
 }
 function teamDead(teamId,year){ const t=byId(S.teams,teamId); return t? fixInc(sum((t.dead||[]).filter(d=>d.year===year).map(d=>d.amount))) : 0; }
 function teamAdj(teamId,year){ const t=byId(S.teams,teamId); return t? fixCents(sum((t.adj||[]).filter(d=>d.year===year).map(d=>+d.amount||0))) : 0; }
+/* What the contracts on the books cost: players, dead money and salary this team
+   is still paying on someone it traded away. Manual adjustments are NOT in here
+   — they are shown on their own line, and taken off in capSpace(). */
 function teamCommitted(teamId, year){
-  return fixInc(sum(teamPlayers(teamId).map(p=> capHit(p,year)))
-    + teamDead(teamId,year) + teamAdj(teamId,year) + teamRetained(teamId,year));
+  return fixCents(sum(teamPlayers(teamId).map(p=> capHit(p,year)))
+    + teamDead(teamId,year) + teamRetained(teamId,year));
 }
 /* Unused cap can be carried forward, within whatever limit the league voted. */
 let capCache = {}, dppCache = null;
@@ -1376,7 +1379,7 @@ function rolloverInto(teamId, year){
   if(capCache[k]!=null) return capCache[k];
   capCache[k] = 0;                                  // guards against a loop
   const prev = year-1;
-  const unused = teamCapForYear(teamId, prev) - teamCommitted(teamId, prev);
+  const unused = teamCapForYear(teamId, prev) - teamCommitted(teamId, prev) - teamAdj(teamId, prev);
   let out = 0;
   if(unused > 0 && r && r.on){
     const cap = capForYear(prev);
@@ -1411,7 +1414,9 @@ function taxiIneligible(p){
   return esc(p.name)+' has '+e+' year'+(e===1?'':'s')+' of experience; the taxi squad is for '+
     lim+' or fewer.';
 }
-function capSpace(teamId, year){ return fixInc(teamCapForYear(teamId,year) - teamCommitted(teamId,year)); }
+function capSpace(teamId, year){
+  return fixCents(teamCapForYear(teamId,year) - teamCommitted(teamId,year) - teamAdj(teamId,year));
+}
 /* How far below zero a team is allowed to sit in the current year. Held as a
    negative number, so -10 means you may run $10 in the red. */
 function capFloor(){ return -Math.abs(+((S.settings.cap||{}).overdraft)||0); }
@@ -2525,7 +2530,7 @@ VIEWS.dash = function(){
       <div class="pb tight scrollx">
         <table><thead><tr><th>Year</th><th class="right">Cap</th><th class="right">Committed</th><th class="right">Space</th><th class="right hide-xs">Players</th></tr></thead><tbody>
         ${yrs.map(yy=>{
-          const c=teamCapForYear(t.id,yy), u=teamCommitted(t.id,yy), s=c-u;
+          const c=teamCapForYear(t.id,yy), u=teamCommitted(t.id,yy), s=capSpace(t.id,yy);
           return `<tr><td class="num">${yy}</td><td class="right money">${money(c)}</td><td class="right num">${money(u)}</td>
             <td class="right num ${s<0?'bad':'good'}">${money(s,{plus:true})}</td>
             <td class="right num hide-xs">${roster.filter(p=>capHit(p,yy)>0).length}</td></tr>`;
@@ -3881,7 +3886,7 @@ VIEWS.teams = function(){
 
     <div class="grid g4 keep2" style="margin-bottom:16px">
       ${yrs.slice(0,4).map(yy=>{
-        const c=teamCapForYear(tid,yy), u=teamCommitted(tid,yy), s=c-u;
+        const c=teamCapForYear(tid,yy), u=teamCommitted(tid,yy), s=capSpace(tid,yy);
         return `<div class="tile"><div class="k">${yy}</div><div class="v ${s<0?'bad':''}">${money(s,{plus:true})}</div>${meter(u,c)}
         <div class="s">${money(u)} / ${money(c)}</div></div>`;
       }).join('')}
@@ -3941,7 +3946,20 @@ VIEWS.teams = function(){
       </tbody>
       <tfoot><tr class="tot"><td colspan="5" class="right">Committed</td>
         ${yrs.map(yy=>'<td class="right money">'+money(teamCommitted(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
+      ${(()=>{
+        /* Manual adjustments stand on their own rather than hiding inside the
+           committed figure, so it is clear what is contracts and what is not. */
+        const any = yrs.some(yy=> Math.abs(teamAdj(tid,yy)) > 0.001);
+        if(!any) return '';
+        return '<tr><td colspan="5" class="right dim">Cap adjustments</td>'+
+          yrs.map(yy=>{ const v = teamAdj(tid,yy);
+            return '<td class="right num '+(v>0?'bad':v<0?'good':'dim')+'">'+(v? money(v,{plus:true}) : '—')+'</td>'; }).join('')+
+          '<td></td><td></td></tr>';
+      })()}
       <tr><td colspan="5" class="right dim">Cap</td>${yrs.map(yy=>'<td class="right num dim">'+money(teamCapForYear(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
+      <tr class="tot"><td colspan="5" class="right">Space</td>
+        ${yrs.map(yy=>{ const sp=capSpace(tid,yy);
+          return '<td class="right money '+(sp<0?'bad':'good')+'">'+money(sp,{plus:true})+'</td>'; }).join('')}<td></td><td></td></tr>
       <tr><td colspan="5" class="right">Space</td>${yrs.map(yy=>{const s=capSpace(tid,yy);return '<td class="right num '+(s<0?'bad':'good')+'">'+money(s,{plus:true})+'</td>';}).join('')}<td></td><td></td></tr>
       </tfoot></table></div></div>` : ''}
 
@@ -5857,7 +5875,7 @@ VIEWS.cap = function(){
         ${rows || '<div class="empty-state">No contracts on the books.</div>'}
         ${deadRow}
         <div class="capline"><div>Committed</div>${yrs.map(y=>{
-          const u=teamCommitted(tid,y), cp=teamCapForYear(tid,y), s=cp-u;
+          const u=teamCommitted(tid,y), cp=teamCapForYear(tid,y), s=capSpace(tid,y);
           return '<div><span class="num">'+money(u)+'</span>'+meter(u,cp)+
             '<span class="tiny '+(s<0?'bad':'good')+'">'+money(s,{plus:true})+'</span></div>';
         }).join('')}</div>
@@ -9999,6 +10017,12 @@ function parseCSV(text){
   if(f.length||cur.length){ cur.push(f); rows.push(cur); }
   return rows.filter(r=> r.some(x=> String(x).trim()!==''));
 }
+/* A, B, C ... AA for a column with no heading, the way a spreadsheet labels them. */
+function colName(i){
+  let n = i, out = '';
+  do { out = String.fromCharCode(65 + (n % 26)) + out; n = Math.floor(n/26) - 1; } while(n >= 0);
+  return out;
+}
 function parseAny(text){
   const t = text.trim();
   if(t.startsWith('[') || t.startsWith('{')){
@@ -10008,7 +10032,15 @@ function parseAny(text){
     return {headers:heads, rows:j.map(o=> heads.map(h=> o[h]==null?'':String(o[h])))};
   }
   const rows = parseCSV(t);
-  return {headers:(rows[0]||[]).map(h=>String(h).trim()), rows:rows.slice(1)};
+  const raw = (rows[0]||[]).map(h=> String(h==null?'':h).trim());
+  const seen = {};
+  const headers = raw.map((h,i)=>{
+    let name = h || ('Column '+colName(i));       /* a blank heading is still a column */
+    if(seen[name]!=null){ seen[name]++; name = name+' ('+seen[name]+')'; }  /* keep repeats apart */
+    else seen[name] = 1;
+    return name;
+  });
+  return {headers, rows:rows.slice(1)};
 }
 const MAP_FIELDS = [
   ['name','Player name', /^(player|name|full.?name|player.?name)$/i],
@@ -10018,7 +10050,8 @@ const MAP_FIELDS = [
   ['owner','Owner name', /^(owner|manager|user|display.?name)$/i],
   ['age','Age', /^(age|yrs|years.?old)$/i],
   ['salary','Salary / price', /^(salary|price|cost|contract|amount|cap.?hit|aav|bid)$/i],
-  ['years','Contract years', /^(years|term|length|contract.?years|yrs.?left)$/i]
+  ['years','Contract years', /^(years|term|length|contract.?years|yrs.?left)$/i],
+  ['total','Total contract value', /^(total|total.?value|total.?contract|contract.?total|deal.?total|guaranteed|gtd)$/i]
 ];
 function autoMap(headers){
   const m = {};
@@ -10805,6 +10838,13 @@ VIEWS.import = function(){
       ${(()=>{ const cols = yearColumns(im.headers);
         return cols.length ? `<div class="panel" style="margin-bottom:14px;border-color:#5C4526">
           <div class="ph"><h3>Your file has a column per season</h3></div><div class="pb">
+          <div class="hint">Read ${im.headers.length} column${im.headers.length===1?'':'s'} from the header line${
+            im.headers.length?': '+im.headers.slice(0,12).map(h=>esc(h)).join(' · ')+(im.headers.length>12?' …':''):''}.
+            ${(()=>{ const yc=yearColumns(im.headers);
+              return yc.length? '<br>Season columns found: '+yc.map(c=>c.year).join(', ')+' — each year is taken exactly as written.'
+                : '<br>No season columns spotted, so the total and the shape below decide each year.'; })()}
+            ${im.map.total? '<br>Total contract read from <b>'+esc(im.map.total)+'</b>.' : ''}
+            ${im.map.years? '<br>Contract years read from <b>'+esc(im.map.years)+'</b>.' : ''}</div>
           <label class="check"><input type="checkbox" data-a="impYearCols" ${im.useYearCols?'checked':''}>
             <span>Copy those figures across exactly</span></label>
           <div class="row" style="margin-top:8px">
@@ -11169,7 +11209,13 @@ ACT.impCommit = ()=>{
     const sal = parseFloat(String(get(r,'salary')).replace(/[^0-9.\-]/g,''));
     const yrsRaw = parseInt(get(r,'years'),10);
     const years = im.yearsMode==='fixed' ? im.yearsFixed : clamp(isNaN(yrsRaw)?im.yearsFixed:yrsRaw, 1, S.settings.contracts.maxYears);
-    let annual = !isNaN(sal) ? (im.salaryIs==='total' ? sal/years : sal) : (im.priceMode==='flat' ? im.flat : 1);
+    /* A sheet may carry an annual figure, a total, or both. A mapped total wins,
+       because it is the number the deal was actually written for. */
+    const totRaw = parseFloat(String(get(r,'total')).replace(/[^0-9.\-]/g,''));
+    const haveTotal = !isNaN(totRaw);
+    let annual = haveTotal ? (totRaw/years)
+      : (!isNaN(sal) ? (im.salaryIs==='total' ? sal/years : sal)
+      : (im.priceMode==='flat' ? im.flat : 1));
     const p = {id:uid('p'), name, pos, nfl:(get(r,'nfl')||'').toUpperCase().slice(0,4), age:parseInt(get(r,'age'),10)||0,
       value:Math.max(1, Math.round(annual)), contract:null};
     if(t){
@@ -11180,8 +11226,14 @@ ACT.impCommit = ()=>{
       });
       // Trailing blanks mean the deal simply ends there.
       while(perYear.length && !perYear[perYear.length-1]) perYear.pop();
+      /* Leading blanks mean the deal has not started yet. Drop them and begin at
+         the first season that actually carries money, otherwise a deal running
+         2027-2029 was being written as 2026-2029 with a $0 first year. */
+      let lead = 0;
+      while(lead < perYear.length && !perYear[lead]) lead++;
+      if(lead){ perYear.splice(0, lead); }
       if(perYear.length){
-        const startY = cols[0].year;
+        const startY = cols[Math.min(lead, cols.length-1)].year;
         p.contract = makeContract(t.id, Math.max(1, roundInc(sum(perYear))), perYear.length, im.structId, startY);
         p.contract.salaries = perYear.map(v=> roundInc(v));
         p.contract.total = fixInc(sum(p.contract.salaries));
@@ -11189,7 +11241,10 @@ ACT.impCommit = ()=>{
         p.value = Math.max(1, Math.round(p.contract.total / p.contract.years));
         exact++;
       } else {
-        p.contract = makeContract(t.id, Math.max(1, roundInc(annual*years)), years, im.structId, S.league.season);
+        /* The total drives it, and the chosen shape (even, front or back loaded)
+           decides how it lands across the years. */
+        const dealTotal = haveTotal ? totRaw : annual*years;
+        p.contract = makeContract(t.id, Math.max(0, fixCents(dealTotal)), years, im.structId, S.league.season);
       }
     }
     S.players.push(p); added++;
@@ -14089,12 +14144,17 @@ function adoptRemote(state, rev, force){
   /* A server copy that would wipe the contracts is never taken quietly, however
      it arrived — a pull, the live feed, or a clash while saving. */
   if(!force && adoptWouldLose(state)){
-    ui.tmp.conflict = {state, rev,
-      mineTeams:(S.teams||[]).length, minePlayers:(S.players||[]).length, mineRev:+S.rev||0,
-      theirTeams:((state||{}).teams||[]).length, theirPlayers:((state||{}).players||[]).length,
-      mineWorth:dealsWorth(S), theirWorth:dealsWorth(state)};
-    try{ keepBackup(deep(S), 'kept when the server offered a thinner copy'); }catch(e){}
-    showConflict();
+    /* The server is offering a copy with most of the contracts missing. Keep
+       what is here, put the rejected copy in the saved copies in case it is
+       ever wanted, and send this one up so the server catches up. No question
+       asked — the fuller copy wins. */
+    try{ keepBackup(state, 'the thinner copy from the server, not used'); }catch(e){}
+    S.rev = Math.max(+S.rev||0, +rev||0);      /* line up so the next save lands */
+    if(typeof Supa==='object' && Supa.ready()) supaPush();
+    if(Date.now() - (ui.tmp.thinToastAt||0) > 60000){
+      ui.tmp.thinToastAt = Date.now();
+      toast('Kept your copy — the server had a thinner one. It is in Settings \u2192 Data.','warn');
+    }
     return;
   }
   /* Whatever the reason, keep what is on this device before replacing it.
@@ -14429,13 +14489,27 @@ const Supa = {
       });
       if(error) throw error;
       if(data && data.conflict){
-        /* Somebody else saved in between. Taking their copy silently would throw
-           away everything on this device, not just the change just made — so
-           show both and let the user pick. */
+        const theirs = data.state, theirRev = +data.rev||0;
+        if(adoptWouldLose(theirs)){
+          /* Their copy has lost most of the contracts — keep ours and save over
+             it. Theirs goes into the saved copies either way. */
+          try{ keepBackup(theirs, 'the thinner copy from the server, not used'); }catch(e){}
+          S.rev = theirRev;
+          this.set('warn','Kept your copy — the server had a thinner one');
+          this.busy = false;
+          if(Date.now() - (ui.tmp.thinToastAt||0) > 60000){
+            ui.tmp.thinToastAt = Date.now();
+            toast('Kept your copy — the server had a thinner one. It is in Settings \u2192 Data.','warn');
+          }
+          setTimeout(()=> this.push(), 300);
+          return;
+        }
+        /* A genuine clash between two real copies: ask, rather than pick for them. */
         this.set('warn','Somebody saved first');
-        ui.tmp.conflict = {state:data.state, rev:+data.rev||0,
+        ui.tmp.conflict = {state:theirs, rev:theirRev,
           mineTeams:(S.teams||[]).length, minePlayers:(S.players||[]).length, mineRev:+S.rev||0,
-          theirTeams:((data.state||{}).teams||[]).length, theirPlayers:((data.state||{}).players||[]).length};
+          theirTeams:((theirs||{}).teams||[]).length, theirPlayers:((theirs||{}).players||[]).length,
+          mineWorth:dealsWorth(S), theirWorth:dealsWorth(theirs)};
         this.busy = false;
         return showConflict();
       } else {
