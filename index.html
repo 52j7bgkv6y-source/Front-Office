@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16a · totals include adjustments';
+const APP_BUILD = '2026-08-16b · seasons rule, mismatches flagged';
 
 /* ============================================================
    HOME LEAGUE
@@ -11201,6 +11201,32 @@ ACT.matchApply = ()=>{
   save(); render();
   toast(touched+' repriced'+(skipped?', '+skipped+' free agents left alone':''),'good');
 };
+/* Rows where the season columns did not agree with the sheet's own total or
+   years. The seasons were used as written — this is the list to look at. */
+ACT.impFlags = ()=>{
+  const list = ui.tmp.impFlags || [];
+  if(!list.length) return toast('Everything reconciled','good');
+  modal(list.length+' contract'+(list.length===1?''+' does':'s do')+' not add up',
+    '<p class="muted" style="margin:0 0 8px">The season columns were used exactly as they are written. '+
+    'These rows disagree with the total or years column on the same line, so they are worth a look:</p>'+
+    '<div class="scrollx" style="max-height:320px;overflow:auto"><table>'+
+    '<thead><tr><th>Player</th><th>Team</th><th>What was used</th><th>What did not match</th></tr></thead><tbody>'+
+    list.slice(0,80).map(x=>'<tr><td>'+esc(x.name)+'</td><td class="dim tiny">'+esc(x.team||'')+'</td>'+
+      '<td class="num tiny">'+esc(x.used)+'</td><td class="tiny bad">'+esc(x.why)+'</td></tr>').join('')+
+    '</tbody></table></div>'+
+    (list.length>80? '<div class="tiny dim">\u2026and '+(list.length-80)+' more</div>':'')+
+    '<div class="hint">Nothing has been changed on your sheet. Fix it there and import again, or edit the '+
+    'contract here \u2014 whichever you prefer.</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn" data-a="copyFlags">Copy the list</button>');
+};
+ACT.copyFlags = ()=>{
+  const list = ui.tmp.impFlags || [];
+  const txt = list.map(x=> x.name+' ('+(x.team||'')+') — used '+x.used+' — '+x.why).join('\n');
+  if(navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(()=> toast('Copied','good'), ()=> toast('Could not copy','bad'));
+  else toast('Select and copy it by hand','warn');
+};
 ACT.impCommit = ()=>{
   const im = ui.tmp.imp, H = im.headers, get = (r,k)=> im.map[k] ? String(r[H.indexOf(im.map[k])]||'').trim() : '';
   if(!im.map.name) return toast('Point at the column with player names','bad');
@@ -11218,6 +11244,7 @@ ACT.impCommit = ()=>{
   };
   let added=0;
   let exact = 0;
+  const flags = [];      /* rows whose seasons do not reconcile with the sheet's own totals */
   im.rows.forEach(r=>{
     const name = get(r,'name'); if(!name) return;
     const posRaw = (get(r,'pos')||'').toUpperCase().replace(/[^A-Z/]/g,'');
@@ -11251,12 +11278,26 @@ ACT.impCommit = ()=>{
       while(lead < perYear.length && !perYear[lead]) lead++;
       if(lead){ perYear.splice(0, lead); }
       if(perYear.length){
+        /* The season columns are the truth for those years — taken exactly as
+           written. The sheet's total and years are then checked against them,
+           and anything that does not reconcile is flagged rather than quietly
+           adjusted. */
         const startY = cols[Math.min(lead, cols.length-1)].year;
-        p.contract = makeContract(t.id, Math.max(1, roundInc(sum(perYear))), perYear.length, im.structId, startY);
-        p.contract.salaries = perYear.map(v=> roundInc(v));
-        p.contract.total = fixInc(sum(p.contract.salaries));
+        const yearsFromCols = perYear.length;
+        const sumFromCols = fixCents(sum(perYear));
+        p.contract = makeContract(t.id, sumFromCols, yearsFromCols, im.structId, startY);
+        p.contract.salaries = perYear.map(v=> fixCents(v));
+        p.contract.total = fixCents(sum(p.contract.salaries));
         p.contract.byYear = true;
         p.value = Math.max(1, Math.round(p.contract.total / p.contract.years));
+        const notes = [];
+        if(haveTotal && Math.abs(totRaw - sumFromCols) > 0.011)
+          notes.push('the seasons add to '+money(sumFromCols)+' but the total column says '+money(totRaw));
+        if(!isNaN(yrsRaw) && yrsRaw !== yearsFromCols)
+          notes.push('the seasons cover '+yearsFromCols+' year'+(yearsFromCols===1?'':'s')+
+            ' but the years column says '+yrsRaw);
+        if(notes.length) flags.push({name, team:t.name, why:notes.join('; '),
+          used:money(sumFromCols)+' over '+yearsFromCols+' yr from '+startY});
         exact++;
       } else {
         /* The total drives it, and the chosen shape (even, front or back loaded)
@@ -11272,8 +11313,11 @@ ACT.impCommit = ()=>{
     S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
   if(im.priceMode==='target') fitToCap(im.targetPct);
   logIt('Imported '+added+' players across '+S.teams.length+' teams'+
-    (exact?', '+exact+' with salaries taken year by year':''), {type:'admin'});
+    (exact?', '+exact+' with salaries taken year by year':'')+
+    (flags.length?' — '+flags.length+' did not reconcile':''), {type:'admin'});
+  ui.tmp.impFlags = flags;
   ui.sub='price'; ui.tmp.imp = impDefault(); save(true); render();
+  if(flags.length) return ACT.impFlags();
   toast('Imported '+added+' players'+(exact?' — '+exact+' contracts copied exactly':''),'good');
 };
 function fitToCap(target){
