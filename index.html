@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-15y · code deploys, data from the server';
+const APP_BUILD = '2026-08-16a · totals include adjustments';
 
 /* ============================================================
    HOME LEAGUE
@@ -1356,6 +1356,12 @@ function slotRoom(teamId, slot){
 }
 function teamDead(teamId,year){ const t=byId(S.teams,teamId); return t? fixInc(sum((t.dead||[]).filter(d=>d.year===year).map(d=>d.amount))) : 0; }
 function teamAdj(teamId,year){ const t=byId(S.teams,teamId); return t? fixCents(sum((t.adj||[]).filter(d=>d.year===year).map(d=>+d.amount||0))) : 0; }
+/* Everything charged against the cap this year: the contracts plus any manual
+   adjustments. This is what the meters and headline figures use, so they always
+   agree with the space shown beside them. */
+function teamCharged(teamId, year){
+  return fixCents(teamCommitted(teamId, year) + teamAdj(teamId, year));
+}
 /* What the contracts on the books cost: players, dead money and salary this team
    is still paying on someone it traded away. Manual adjustments are NOT in here
    — they are shown on their own line, and taken off in capSpace(). */
@@ -2180,7 +2186,16 @@ function badLoginHelp(email, pw){
     (pw!==pw.replace(/^\s+/,'') ? 'start' : 'end')+' of the password — a phone keyboard often adds one.');
   if(/[A-Z]/.test(pw.charAt(0))) bits.push('The first letter is a capital. '+
     'If you tapped the eye to check it, the phone may have capitalised it for you.');
-  bits.push('It may also be that no account has been made on '+email+' yet — if so, use "Make my account".');
+  /* The common one: the account was made with a sign-in link, so it has no
+     password at all. Nothing typed will ever match until one is set. */
+  bits.push('If you have only ever got in with the emailed link, this account has no password yet — '+
+    'that is the usual reason. Get in with the link, then Settings \u2192 Server \u2192 '+
+    '"Change my password" to set one, and it will work from then on.');
+  const dom = String(email||'').split('@')[1] || '';
+  const likely = {'yahooo.com':'yahoo.com','gmial.com':'gmail.com','gmai.com':'gmail.com',
+    'hotmial.com':'hotmail.com','outlok.com':'outlook.com','yaho.com':'yahoo.com'}[dom.toLowerCase()];
+  if(likely) bits.push('Also check the address — "'+dom+'" looks like a slip for "'+likely+'".');
+  bits.push('Otherwise there may be no account on '+email+' yet, in which case use "Make my account".');
   return bits.join(' ');
 }
 ACT.gateGo = async ()=>{
@@ -2498,8 +2513,8 @@ VIEWS.dash = function(){
 
     <div class="grid g4 keep2">
       <div class="tile"><div class="k">${y} cap space</div><div class="v ${space<0?'bad':'good'}">${money(space,{plus:true})}</div>
-        ${meter(teamCommitted(t.id,y), teamCapForYear(t.id,y))}
-        <div class="s">${money(teamCommitted(t.id,y))} of ${money(teamCapForYear(t.id,y))} committed</div></div>
+        ${meter(teamCharged(t.id,y), teamCapForYear(t.id,y))}
+        <div class="s">${money(teamCharged(t.id,y))} of ${money(teamCapForYear(t.id,y))} used</div></div>
       <div class="tile"><div class="k">Under contract</div><div class="v">${roster.length}</div>
         <div class="s">${S.settings.roster.maxRoster} max · ${roster.filter(p=>p.contract.years>1).length} multi-year</div></div>
       <div class="tile"><div class="k">Live on the block</div><div class="v">${open.length}</div>
@@ -3886,9 +3901,12 @@ VIEWS.teams = function(){
 
     <div class="grid g4 keep2" style="margin-bottom:16px">
       ${yrs.slice(0,4).map(yy=>{
-        const c=teamCapForYear(tid,yy), u=teamCommitted(tid,yy), s=capSpace(tid,yy);
+        /* The tile shows everything charged against the cap — contracts plus any
+           adjustments — so the bar and the figure agree with the space above. */
+        const c=teamCapForYear(tid,yy), u=teamCharged(tid,yy), s=capSpace(tid,yy);
+        const adj=teamAdj(tid,yy);
         return `<div class="tile"><div class="k">${yy}</div><div class="v ${s<0?'bad':''}">${money(s,{plus:true})}</div>${meter(u,c)}
-        <div class="s">${money(u)} / ${money(c)}</div></div>`;
+        <div class="s">${money(u)} / ${money(c)}${adj? ' <span class="dim">· incl '+money(adj,{plus:true})+' adj</span>':''}</div></div>`;
       }).join('')}
     </div>
 
@@ -3987,7 +4005,7 @@ VIEWS.teams = function(){
             return `<div class="tile"><div class="k">${label}</div><div class="v ${n>cap?'bad':''}">${n}<span class="dim" style="font-size:15px">/${cap}</span></div>
               ${meter(n,cap||1)}<div class="s">${k==='taxi'?money(sum(slotPlayers(tid,'taxi').map(x=>grossHit(x,S.league.season))))+' kept off the cap'
                 : k==='ir'?money(sum(slotPlayers(tid,'ir').map(x=>irRelief(x,S.league.season))))+' in relief'
-                : k==='practice'?'off the cap, not claimable':money(teamCommitted(tid,S.league.season))+' committed'}</div></div>`;
+                : k==='practice'?'off the cap, not claimable':money(teamCharged(tid,S.league.season))+' used'}</div></div>`;
           }).join('')}
       </div>
 
@@ -5892,7 +5910,7 @@ VIEWS.cap = function(){
       ${S.teams.map(t=>{
         const sp = yrs.map(y=> capSpace(t.id,y));
         return `<tr><td><b style="font-weight:500">${esc(t.name)}</b><div class="tiny dim">${teamPlayers(t.id).length} contracts</div></td>
-        ${yrs.map((y,i)=>`<td class="right"><span class="num ${sp[i]<0?'bad':''}">${money(sp[i],{plus:true})}</span>${meter(teamCommitted(t.id,y),teamCapForYear(t.id,y))}</td>`).join('')}
+        ${yrs.map((y,i)=>`<td class="right"><span class="num ${sp[i]<0?'bad':''}">${money(sp[i],{plus:true})}</span>${meter(teamCharged(t.id,y),teamCapForYear(t.id,y))}</td>`).join('')}
         <td class="right num">${money(fixInc(sum(sp)/sp.length),{plus:true})}</td></tr>`;
       }).join('')}
       <tr class="tot"><td>League cap</td>${yrs.map(y=>'<td class="right money">'+money(capForYear(y))+'</td>').join('')}<td></td></tr>
