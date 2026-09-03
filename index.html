@@ -696,7 +696,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-15x · right years + adjustments split out';
+const APP_BUILD = '2026-08-15y · code deploys, data from the server';
 
 /* ============================================================
    HOME LEAGUE
@@ -12620,7 +12620,14 @@ document.addEventListener('change', e=>{
     try{
       const j = JSON.parse(rd.result);
       if(!j.teams || !j.settings) throw new Error('that is not a league file');
-      S = migrate(j); save(true); render(); toast('League loaded','good');
+      keepBackup(deep(S), 'before loading a league file');
+      S = migrate(j);
+      /* The file may have been exported from somewhere else, or before this
+         address was tied to a league. The deployed connection wins, so loading
+         a file can never point this site at the wrong server. */
+      applyHomeLeague();
+      save(true); render();
+      toast('League loaded — '+(S.teams||[]).length+' teams, '+(S.players||[]).length+' players','good');
     }catch(err){ toast('Could not load that — '+err.message,'bad'); }
   };
   rd.readAsText(f.files[0]);
