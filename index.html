@@ -674,6 +674,15 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .tickgame{min-width:150px}
   .tickname{max-width:92px}
 }
+
+/* Trending, from Sleeper */
+.trend{font-size:11px;font-variant-numeric:tabular-nums;border-radius:6px;padding:1px 5px;white-space:nowrap}
+.trend.up{color:var(--sage);background:rgba(91,196,150,.12)}
+.trend.down{color:var(--signal);background:rgba(255,92,57,.12)}
+
+/* Previewing another manager's view */
+.previewbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;
+  border:1px solid var(--brass);border-radius:10px;background:rgba(229,161,60,.10)}
 </style>
 </head>
 <body>
@@ -696,7 +705,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16f · price list overhaul';
+const APP_BUILD = '2026-08-16p · cap ladder nets adjustments';
 
 /* ============================================================
    HOME LEAGUE
@@ -1111,7 +1120,10 @@ function defaultState(){
         loadMinTotal:10, flatYears:[],
         minSalary:1, allowRestructure:true, tagPct:120, rookieScale:false,
         limits:{}, extendExtra:2, decideHours:0, defaultYears:1,
-        minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null },
+        minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null,
+          /* Rank purely on what he scored per game for this league, ignoring the
+             real-life blend, and let the ladder set the price off that. */
+          byFpts:false },
         limitEnforce:{ signings:true, extensions:true, auctions:true, draft:true, rookies:true, trades:false }
       },
       players:{ on:true, firmness:60, showAsk:'range', termBonusPct:6, loyalty:8 },
@@ -1135,6 +1147,9 @@ function defaultState(){
              priceMode:'pctOfLast', pctOfLast:92, byRound:{}, overrides:{},
              growthPct:2.5, baseSeason:season },
       playoffs:{ teams:6, startWeek:15, weeks:3, byes:2, twoWeekFinal:false, reseed:true,
+                 /* The last week before the playoffs is played on the table:
+                    1v2, 3v4, 5v6 and so on. */
+                 seedLastWeek:true,
                  thirdPlace:false, consolation:false, tiebreak:'pf',
                  chain:['h2h','opp','pf','eff'] },
       loser:{ on:false, name:'Toilet bowl', who:'missed', teams:4, seedBy:'worst',
@@ -1156,7 +1171,10 @@ function defaultState(){
       dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'', remindDays:[14,7,1] },
       sync:{ on:false, url:'', leagueId:'', key:'', everySec:20 },
       supa:{ on:false, url:'', anonKey:'', leagueId:'' },
-      live:{ mode:'demo', endpoint:'', pollSec:30, speed:1, running:false },
+      live:{ mode:'demo', endpoint:'', pollSec:30, speed:1, running:false,
+        /* Which Sleeper league to mirror, and what to take from it. Turn any of
+           these off if this site drifts away from what Sleeper can do. */
+        sleeperLeagueId:'', pullLineups:true, pullTaxi:true, pullIR:true },
       notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 }
     },
     rev:0, season:{year:season, byPlayer:{}}, history:{}, dvp:{}, faAuctions:[],
@@ -1767,7 +1785,10 @@ const NAV = [
 ];
 const MOBILE_TABS = ['live','chat','trades','cap'];
 
-function myTeam(){ return byId(S.teams, S.league.myTeamId) || S.teams[0] || null; }
+function myTeam(){
+  const seat = viewAsTeam() || S.league.myTeamId;
+  return byId(S.teams, seat) || S.teams[0] || null;
+}
 /* One commissioner, plus anyone they have handed the keys to. */
 function commishIds(){
   const extra = Array.isArray(S.league.coCommishIds) ? S.league.coCommishIds : [];
@@ -1777,11 +1798,19 @@ function isCommishTeam(teamId){
   const all = commishIds();
   return !all.length || all.indexOf(teamId) >= 0;
 }
-function isCommish(){
-  // With real accounts the database has the final say; the local list is only
-  // a fallback for leagues still running on the shared password.
+/* Are you REALLY a commissioner — ignoring any preview you are sitting in?
+   Only this decides whether the preview control is offered at all. */
+function reallyCommish(){
   if(typeof Supa==='object' && Supa.ready()) return Supa.boss();
   return isCommishTeam(S.league.myTeamId);
+}
+/* Whose eyes you are looking through, if you are previewing somebody. */
+function viewAsTeam(){ return (typeof ui==='object' && ui.tmp && ui.tmp.viewAs) || null; }
+function isCommish(){
+  /* While previewing a manager you get their buttons, not yours — that is the
+     whole point of the preview. */
+  if(viewAsTeam()) return false;
+  return reallyCommish();
 }
 /* Signed in, you are your own team and nobody else's — unless you run the league. */
 function canActAs(teamId){
@@ -1934,12 +1963,18 @@ function render(){
     return;
   }
   if(needsSeat()){ $('#view').innerHTML = seatView(); return; }
+  const previewBar = viewAsTeam()
+    ? '<div class="previewbar"><b>Seeing the site as '+esc(teamName(viewAsTeam()))+'</b>'+
+      '<span class="dim tiny">commissioner tools are hidden so this is what they get</span>'+
+      '<div class="spacer"></div>'+
+      '<button class="btn sm pri" data-a="viewAsOff">Back to my own view</button></div>'
+    : '';
   /* This address belongs to a league but we do not know which one yet. Show
      that plainly rather than dropping them into the local practice copy. */
   if(homeLeagueOn() && !HOME_LEAGUE.leagueId && !openedFromFile() && !(S.settings.supa||{}).leagueId){
     $('#view').innerHTML = homeWaitView(); return;
   }
-  $('#view').innerHTML = VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>';
+  $('#view').innerHTML = previewBar + (VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>');
   if(k){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
@@ -2730,6 +2765,19 @@ function weighted(list){
   return list.length ? list[list.length-1].v : null;
 }
 
+/* The last week of the regular season — the one played on the table. */
+function lastRegularWeek(){
+  const start = +((S.settings.playoffs||{}).startWeek) || 0;
+  return start > 1 ? start - 1 : seasonWeeks();
+}
+/* On that week the table decides who plays whom: first against second, third
+   against fourth, and on down. */
+function seededWeekMatchups(){
+  const order = standings().map(x=> (x && x.t && x.t.id) || (x && x.id) || x).filter(Boolean);
+  const m = [];
+  for(let i=0; i+1 < order.length; i += 2) m.push({home:order[i], away:order[i+1]});
+  return m;
+}
 /* The fixtures for one week, if the league has a schedule of its own. */
 function fixturesFor(week){
   return (S.fixtures||[]).filter(g=> +g.week===+week && byId(S.teams,g.home) && byId(S.teams,g.away))
@@ -2750,9 +2798,12 @@ function buildWeek(week){
   const ordered = [arr[0]].concat(rot.slice(shift), rot.slice(0,shift));
   const m=[];
   for(let i=0;i<n/2;i++){ const a=ordered[i], b=ordered[n-1-i]; if(a&&b) m.push({home:a, away:b}); }
-  /* A schedule the league actually set beats the generated rotation. */
+  /* The table decides the last week before the playoffs; otherwise a schedule
+     the league set beats the generated rotation. */
+  const seeded = ((S.settings.playoffs||{}).seedLastWeek !== false) && +week === lastRegularWeek()
+    ? seededWeekMatchups() : [];
   const set = fixturesFor(week);
-  S.live.matchups = set.length ? set : m;
+  S.live.matchups = seeded.length ? seeded : (set.length ? set : m);
 
   const codes = nflCodes().slice();
   for(let i=codes.length-1;i>0;i--){ const j=(i*7+week*3)%(i+1); const t=codes[i]; codes[i]=codes[j]; codes[j]=t; }
@@ -3932,7 +3983,7 @@ ACT.applyPaste = ()=>{
 /* ============================================================
    VIEW · TEAMS & ROSTERS  +  contract editor
    ============================================================ */
-function currentTeamId(){ return ui.tmp.teamView || S.league.myTeamId || (S.teams[0]||{}).id; }
+function currentTeamId(){ return viewAsTeam() || ui.tmp.teamView || S.league.myTeamId || (S.teams[0]||{}).id; }
 /* May the current user act on this team's roster — their own team, or a
    commissioner acting for anyone. */
 function canManage(teamId){ return isCommish() || teamId === S.league.myTeamId; }
@@ -4054,7 +4105,7 @@ VIEWS.teams = function(){
       const retired = S.players.filter(isRetired);
       return `
       <div class="grid g4 keep2" style="margin-bottom:14px">
-        ${[['active','Active',R.maxRoster],['taxi','Taxi squad',R.taxi],['ir','Injured reserve',R.ir],['practice','Practice squad',R.practice||0]]
+        ${[['active','Active',R.maxRoster],['taxi','Taxi squad',R.taxi],['ir','Injured reserve',R.ir]]
           .map(([k,label,cap])=>{
             const n = slotPlayers(tid,k).length;
             return `<div class="tile"><div class="k">${label}</div><div class="v ${n>cap?'bad':''}">${n}<span class="dim" style="font-size:15px">/${cap}</span></div>
@@ -4122,14 +4173,6 @@ VIEWS.teams = function(){
             gives back the share of the year he will not play — right now that would be ${pct(weeksLeft()/seasonWeeks()*100)}
             with ${weeksLeft()} of ${seasonWeeks()} weeks left.</div></div></div>
 
-        <div class="panel"><div class="ph"><h3>Practice squad</h3></div>
-          <div class="pb tight scrollx"><table>
-          <thead><tr>${sortTh('sqP','name','Player')}${sortTh('sqP','nfl','Deal','hide-xs')}
-            ${sortTh('sqP','gross','Parked','right')}<th></th></tr></thead>
-          <tbody>${rows(slotPlayers(tid,'practice'), p=>
-            '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Promote</button>', 'sqP')}
-          </tbody></table></div>
-          <div class="pb"><div class="hint">Commissioner-granted. Off the cap like the taxi squad, but nobody can claim them.</div></div></div>
       </div>
 
       ${S.settings.tag.on?(()=>{
@@ -4550,11 +4593,21 @@ function faRows(list){
   const q = (ui.tmp.faq||'').toLowerCase();
   const f = list.filter(p=> !q || p.name.toLowerCase().includes(q) || p.pos.toLowerCase()===q || (p.nfl||'').toLowerCase()===q).slice(0,60);
   const wv = waiverDeadlinePassed();
-  return sortRows('fa', f, {
+  const sorted = sortRows('fa', f, {
     name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', age:p=>+p.age||0,
     price:p=> wv ? (+S.settings.waivers.salary||0) : marketPrice(p,0)
-  }, {key:'price',dir:-1}).map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
-    ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
+  }, {key:'price',dir:-1});
+  /* Anyone the rest of the world is picking up goes to the top, busiest first.
+     Only when the list is in its usual order — if you have sorted a column
+     yourself, that is what you asked for and it is left alone. */
+  const rows = (ui.tmp.sort && ui.tmp.sort.fa) ? sorted : sorted.slice().sort((a,b)=>{
+    const ta = trendFor(a), tb = trendFor(b);
+    const ua = ta && ta.dir==='up' ? ta.count : 0;
+    const ub = tb && tb.dir==='up' ? tb.count : 0;
+    return ub - ua;
+  });
+  return rows.map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
+    ${trendTag(p)} ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
     <td class="right num">${p.age||'—'}</td>
     <td class="right money">${isOrphan(p) ? money(grossHit(p,S.league.season))
       : wv ? money(S.settings.waivers.salary) : money(marketPrice(p,0))}
@@ -4797,18 +4850,33 @@ ACT.setSlot = (d)=>{
   const tid = p.contract.teamId;
   if(slot!=='active' && slotRoom(tid, slot) <= 0)
     return toast('No '+SLOT_LABEL[slot].toLowerCase()+' room left','bad');
-  /* The taxi squad is for young players. A commissioner may still override. */
-  if(slot==='taxi'){
+  /* The taxi squad is for young players. A commissioner can put somebody there
+     anyway, but has to say so — it is never done quietly on their behalf. */
+  if(slot==='taxi' && !d.force){
     const no = taxiIneligible(p);
-    if(no && !isCommish()) return toast(no,'bad');
-    if(no) toast('Commissioner override — '+no,'warn');
+    if(no){
+      if(!isCommish()) return toast(no,'bad');
+      return modal('Put '+esc(p.name)+' on the taxi squad anyway?',
+        '<p class="muted" style="margin:0 0 8px">'+esc(no)+'</p>'+
+        '<div class="hint">He would sit off the cap like the rest of the taxi squad. Only you can do this, '+
+        'and it is written to the log.</div>',
+        '<button class="btn ghost" data-a="closeModal">Leave him</button>'+
+        '<button class="btn pri" data-a="setSlot" data-id="'+p.id+'" data-s="taxi" data-force="1">Put him there anyway</button>');
+    }
+  }
+  if(slot==='taxi' && d.force){
+    const no = taxiIneligible(p);
+    if(!isCommish()) return toast('Commissioners only','bad');
+    if(no) logIt(currentActorName()+' put '+p.name+' on the taxi squad past the experience limit',
+      {type:'admin', teams:[tid], players:[p.id]});
+    closeModal();
   }
   if(slot==='active'){
     if(p.ir && p.ir.seasonEnding && p.ir.year===S.league.season && !isCommish())
       return toast('Season-ending IR holds until the year turns over','bad');
     const was = playerSlot(p);
     p.slot = 'active'; delete p.ir;
-    if(S.settings.trades.capMustBeLegal && overCapFloor(tid, S.league.season)){
+    if(S.settings.trades.capMustBeLegal && capSpaceAfterPending(tid, S.league.season) < capFloor()){
       p.slot = was; return toast('His salary does not fit under the cap','bad');
     }
     if(slotRoom(tid,'active') < 0){ p.slot = was; return toast('No room on the active roster','bad'); }
@@ -5126,6 +5194,203 @@ ACT.projPull = async ()=>{
     toast('Could not get projections — '+e.message,'bad');
   }
 };
+/* ---- Trending, from Sleeper ------------------------------------------------
+   Sleeper publishes how many leagues added or dropped a player in the last day.
+   A player can appear on both lists; whichever side is bigger is the direction
+   we show. */
+function trendStore(){
+  S.trend = S.trend || {at:0, up:{}, down:{}};
+  return S.trend;
+}
+/* null, or {dir:'up'|'down', count:n} for this player. */
+function trendFor(p){
+  if(!p || !p.sleeperId) return null;
+  const t = trendStore();
+  const up = +t.up[String(p.sleeperId)] || 0;
+  const dn = +t.down[String(p.sleeperId)] || 0;
+  if(!up && !dn) return null;
+  return up >= dn ? {dir:'up', count:up} : {dir:'down', count:dn};
+}
+function trendTag(p){
+  const t = trendFor(p);
+  if(!t) return '';
+  const n = t.count>=1000 ? Math.round(t.count/1000)+'k' : t.count;
+  return t.dir==='up'
+    ? '<span class="trend up" title="added in '+t.count+' leagues in the last day">\u25B2 '+n+'</span>'
+    : '<span class="trend down" title="dropped in '+t.count+' leagues in the last day">\u25BC '+n+'</span>';
+}
+/* Look at the site through a manager's eyes. Commissioner tools disappear, so
+   you see exactly what they see — useful for finding something broken in their
+   setup rather than taking their word for it. */
+ACT.viewAs = (d, el)=>{
+  if(!reallyCommish()) return toast('Commissioners only','bad');
+  const id = el ? el.value : d.id;
+  ui.tmp.viewAs = id || null;
+  ui.tmp.teamView = null; ui.tmp.actAs = null;
+  render();
+  if(id) toast('Now seeing the site as '+teamName(id),'warn');
+};
+ACT.viewAsOff = ()=>{ ui.tmp.viewAs = null; ui.tmp.teamView = null; render(); toast('Back to your own view','good'); };
+/* ---- Mirroring Sleeper -----------------------------------------------------
+   Starting lineups, taxi squads and injured reserve, taken from the Sleeper
+   league so nobody has to set the same thing twice. Each part can be switched
+   off, because this site does things Sleeper cannot. */
+function sleeperLeague(){ return (S.settings.live||{}).sleeperLeagueId || ''; }
+function teamByRoster(rosters){
+  const map = {};
+  (rosters||[]).forEach((r,i)=>{
+    map[r.roster_id] = (byId(S.teams,'t'+r.roster_id) || S.teams[i] || {}).id || null;
+  });
+  return map;
+}
+function playersBySleeperId(){
+  const m = {};
+  S.players.forEach(p=>{ if(p.sleeperId) m[String(p.sleeperId)] = p; });
+  return m;
+}
+/* Put the starters Sleeper has into our lineup for the week. */
+async function pullSleeperLineups(week, quiet){
+  const id = sleeperLeague(); if(!id) return 0;
+  const w = week || S.live.week || 1;
+  const [rosters, ms] = await Promise.all([
+    getJSON(SLEEPER+'/league/'+id+'/rosters'),
+    getJSON(SLEEPER+'/league/'+id+'/matchups/'+w)
+  ]);
+  const tm = teamByRoster(rosters), byId2 = playersBySleeperId();
+  S.lineups = S.lineups || {}; S.lineups[w] = S.lineups[w] || {};
+  let n = 0;
+  (ms||[]).forEach(row=>{
+    const teamId = tm[row.roster_id]; if(!teamId) return;
+    const starters = row.starters || [];
+    /* Their starters, in their order, mapped onto our players. A spot we cannot
+       match is left empty rather than guessed at. */
+    const arr = starters.map(sid=>{
+      const p = sid && sid!=='0' ? byId2[String(sid)] : null;
+      return p && p.contract && p.contract.teamId===teamId ? p.id : '';
+    });
+    if(arr.some(Boolean)){ S.lineups[w][teamId] = arr; n++; }
+  });
+  if(n){ save(); if(!quiet) render(); }
+  return n;
+}
+/* Match taxi and injured reserve to Sleeper. */
+async function pullSleeperSlots(quiet){
+  const id = sleeperLeague(); if(!id) return 0;
+  const cfg = S.settings.live || {};
+  if(!cfg.pullTaxi && !cfg.pullIR) return 0;
+  const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
+  const tm = teamByRoster(rosters), byId2 = playersBySleeperId();
+  let n = 0;
+  (rosters||[]).forEach(r=>{
+    const teamId = tm[r.roster_id]; if(!teamId) return;
+    const taxi = cfg.pullTaxi ? (r.taxi||[]) : null;
+    const ir   = cfg.pullIR   ? (r.reserve||[]) : null;
+    /* Clear only the kinds we are mirroring, so a slot this site manages on its
+       own is left where it is. */
+    teamPlayers(teamId).forEach(p=>{
+      if(taxi && playerSlot(p)==='taxi') p.slot = 'active';
+      if(ir   && playerSlot(p)==='ir')   p.slot = 'active';
+    });
+    (taxi||[]).forEach(sid=>{ const p = byId2[String(sid)];
+      if(p && p.contract && p.contract.teamId===teamId){ p.slot='taxi'; n++; } });
+    (ir||[]).forEach(sid=>{ const p = byId2[String(sid)];
+      if(p && p.contract && p.contract.teamId===teamId){ p.slot='ir'; n++; } });
+  });
+  if(n){ clearCapCache(); save(); if(!quiet) render(); }
+  return n;
+}
+ACT.sleeperSyncNow = async ()=>{
+  if(!sleeperLeague()) return toast('Put your Sleeper league id in first','bad');
+  ui.tmp.syncBusy = true; render();
+  try{
+    const a = (S.settings.live.pullLineups) ? await pullSleeperLineups(null, true) : 0;
+    const b = await pullSleeperSlots(true);
+    ui.tmp.syncBusy = false; save(); render();
+    toast('Lineups for '+a+' team'+(a===1?'':'s')+', '+b+' taxi and injured reserve spots','good');
+  }catch(e){
+    ui.tmp.syncBusy = false; render();
+    toast('Could not read that league — '+e.message,'bad');
+  }
+};
+/* ---- Draft picks from Sleeper ----------------------------------------------
+   Sleeper does not list every pick, only the ones that have changed hands. So
+   we lay out a full set for each season and then apply their trades on top. */
+ACT.picksPull = async ()=>{
+  const id = sleeperLeagueId(($('#pkSlId')||{}).value || ui.tmp.pkSlId || sleeperLeague() || '');
+  if(!id) return toast('Paste your Sleeper league id, or the address','bad');
+  ui.tmp.pkSlId = ($('#pkSlId')||{}).value || ui.tmp.pkSlId || '';
+  ui.tmp.pkBusy = true; ui.tmp.pkErr = null; render();
+  try{
+    impProgress('Reading the rosters\u2026', 25);
+    const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
+    impProgress('Reading the league\u2026', 45);
+    let rounds = 4;
+    try{
+      const lg = await getJSON(SLEEPER+'/league/'+id);
+      const dr = lg && lg.settings && (lg.settings.draft_rounds || lg.settings.rounds);
+      if(+dr > 0) rounds = +dr;
+    }catch(e){ /* keep the default */ }
+    impProgress('Reading the traded picks\u2026', 70);
+    let traded = [];
+    try{ traded = await getJSON(SLEEPER+'/league/'+id+'/traded_picks') || []; }catch(e){}
+
+    const tm = teamByRoster(rosters);
+    const first = S.league.season + 1, last = S.league.season + 3;
+
+    /* Start clean for the seasons we are about to describe, so running this
+       twice does not double everything up. */
+    S.picks = (S.picks||[]).filter(k=> +k.year < first || +k.year > last);
+    const made = {};
+    for(let y=first; y<=last; y++){
+      for(let rd=1; rd<=rounds; rd++){
+        (rosters||[]).forEach(r=>{
+          const t = tm[r.roster_id]; if(!t) return;
+          const pk = {id:uid('pk'), year:y, round:rd, ownerTeamId:t, originTeamId:t};
+          S.picks.push(pk);
+          made[y+'|'+rd+'|'+r.roster_id] = pk;
+        });
+      }
+    }
+    /* Now hand over the ones that have been traded. */
+    let moved = 0;
+    (traded||[]).forEach(tp=>{
+      const y = +tp.season, rd = +tp.round;
+      if(y < first || y > last) return;
+      const pk = made[y+'|'+rd+'|'+tp.roster_id];
+      const to = tm[tp.owner_id];
+      if(pk && to && pk.ownerTeamId !== to){ pk.ownerTeamId = to; moved++; }
+    });
+
+    impProgress('', 100);
+    ui.tmp.pkBusy = false;
+    const total = (rosters||[]).length * rounds * (last-first+1);
+    logIt('Draft picks brought in from Sleeper — '+total+' picks, '+moved+' already traded', {type:'admin'});
+    save(); render();
+    toast(total+' picks for '+first+'\u2013'+last+', '+moved+' already traded','good');
+  }catch(e){
+    ui.tmp.pkBusy = false; ui.tmp.pkErr = e.message; impProgress('', 0); render();
+    toast('Could not read that league — '+e.message,'bad');
+  }
+};
+ACT.trendPull = async (quiet)=>{
+  const t = trendStore();
+  try{
+    const [addRaw, dropRaw] = await Promise.all([
+      getJSON(SLEEPER+'/players/nfl/trending/add?lookback_hours=24&limit=200'),
+      getJSON(SLEEPER+'/players/nfl/trending/drop?lookback_hours=24&limit=200')
+    ]);
+    const toMap = (rows)=>{
+      const o = {};
+      (rows||[]).forEach(r=>{ const id = r && (r.player_id || r.playerId); if(id) o[String(id)] = +r.count||0; });
+      return o;
+    };
+    t.up = toMap(addRaw); t.down = toMap(dropRaw); t.at = Date.now();
+    save(); render();
+    if(!quiet) toast(Object.keys(t.up).length+' trending up, '+Object.keys(t.down).length+' down','good');
+  }catch(e){
+    if(!quiet) toast('Could not read the trending lists — '+e.message,'bad');
+  }
+};
 ACT.playerCard = (d)=>{
   ui.tmp.pcId = d.id;
   if(ui.tmp.pcYear && playerYears(byId(S.players,d.id)||{}).indexOf(ui.tmp.pcYear)<0) ui.tmp.pcYear = null;
@@ -5172,13 +5437,22 @@ ACT.playerCard = (d)=>{
     ${stale!=null?'<div class="hint">Feed last checked '+(stale<60?stale+' minutes':Math.round(stale/60)+' hours')+' ago.</div>':''}
 
     ${(()=>{
+      const tr = trendFor(p);
+      const trLine = tr
+        ? '<div class="hr"></div><div class="flabel">Trending</div>'+
+          '<div class="row" style="gap:8px;align-items:baseline">'+trendTag(p)+
+          '<span class="tiny dim">'+(tr.dir==='up'?'added':'dropped')+' in '+tr.count+
+          ' leagues in the last day</span></div>'
+        : '';
       const v = projFor(p), src = projSource(p);
-      if(v==null) return '';
+      if(v==null) return trLine;
+      return trLine + (()=>{
       return '<div class="hr"></div><div class="flabel">Week '+(S.live.week||1)+' projection</div>'+
         '<div class="row" style="gap:10px;align-items:baseline">'+
           '<div class="num" style="font-size:26px">'+v.toFixed(1)+'</div>'+
           '<div class="tiny dim">'+esc(src)+', on this league\u2019s scoring</div>'+
         '</div>';
+      })();
     })()}
 
     ${(()=>{
@@ -5332,7 +5606,7 @@ function claimCanLand(c){
   const p = byId(S.players, c.playerId);
   if(slotRoom(c.toTeam,'active') <= 0) return 'no room on the active roster';
   const hit = fixInc(Math.max(0, grossHit(p, S.league.season) - retainedOn(p, S.league.season)));
-  if(S.settings.trades.capMustBeLegal && hit > capRoom(c.toTeam, S.league.season))
+  if(S.settings.trades.capMustBeLegal && hit > capRoomAfterPending(c.toTeam, S.league.season))
     return 'cannot fit the '+money(hit)+' salary under the cap';
   return null;
 }
@@ -5488,10 +5762,11 @@ ACT.editContract = (d)=>{
   modal((c?'Edit contract — ':'Sign — ')+p.name, `
     <div class="grid g2">
       <label class="f"><span>Team</span>${teamSelect(null, ui.tmp.cd.teamId, {attrs:'data-oninput="cdField" data-f="teamId"'})}</label>
-      <label class="f"><span>Total value</span><input type="number" step="${S.settings.cap.increment}" min="0" value="${ui.tmp.cd.total}" data-oninput="cdField" data-f="total" data-k="cdtotal"></label>
-      <label class="f"><span>Each year <span class="dim">— sets the total</span></span>
-        <input type="number" step="${S.settings.cap.increment}" min="0" value="${fixInc(ui.tmp.cd.total/Math.max(1,ui.tmp.cd.years))}"
-          data-oninput="cdField" data-f="perYear" data-k="cdper"${ui.tmp.cd.byYear?' disabled':''}></label>
+      <label class="f"><span>Total value${ui.tmp.cd.byYear?' <span class="dim">— spreads over the years</span>':''}</span>
+        <input type="number" step="0.01" min="0" value="${ui.tmp.cd.total}" data-oninput="cdField" data-f="total" data-k="cdtotal"></label>
+      <label class="f"><span>Each year <span class="dim">— same every year</span></span>
+        <input type="number" step="0.01" min="0" value="${fixCents(ui.tmp.cd.total/Math.max(1,ui.tmp.cd.years))}"
+          data-oninput="cdField" data-f="perYear" data-k="cdper"></label>
       <label class="f"><span>Length (${cc.minYears}–${cc.maxYears} years)</span>
         <input type="number" min="${cc.minYears}" max="${cc.maxYears}" value="${ui.tmp.cd.years}" data-oninput="cdField" data-f="years" data-k="cdyears"></label>
       <label class="f"><span>First year</span><input type="number" value="${ui.tmp.cd.startYear}" data-oninput="cdField" data-f="startYear" data-k="cdstart"></label>
@@ -5512,15 +5787,35 @@ ACT.editContract = (d)=>{
 ACT.cdField = (d, el)=>{
   const cd = ui.tmp.cd, f = d.f;
   let v = el.value;
+  /* Spread a figure evenly across the years and show it in the year boxes.
+     Without this, a deal set year by year ignored anything typed into Total or
+     Each year — you could type and save and nothing moved. */
+  const spread = ()=>{
+    if(!cd.byYear) return;
+    const n = Math.max(1, cd.years);
+    const per = fixCents(cd.total / n);
+    cd.byYear = Array.from({length:n}, ()=> per);
+    const drift = fixCents(cd.total - per*n);
+    if(drift) cd.byYear[n-1] = fixCents(per + drift);
+    cd.byYear.forEach((val,i)=>{ const b = $('[data-k="cdy'+i+'"]'); if(b) b.value = val; });
+  };
   if(f==='perYear'){
     /* Say what he is on a year and the deal follows. Never writes back into
        this box, so a figure can be typed in full. */
-    cd.total = fixInc((+v||0) * Math.max(1, cd.years));
+    cd.total = fixCents((+v||0) * Math.max(1, cd.years));
+    spread();
     const t = $('[data-k="cdtotal"]'); if(t) t.value = cd.total;
     const el3 = $('#cdPreview'); if(el3) el3.innerHTML = contractPreview();
     return;
   }
-  if(f==='total') v = +v||0;
+  if(f==='total'){
+    v = +v||0;
+    cd.total = v;
+    spread();
+    const pv0 = $('[data-k="cdper"]'); if(pv0) pv0.value = fixCents(cd.total/Math.max(1,cd.years));
+    const el4 = $('#cdPreview'); if(el4) el4.innerHTML = contractPreview();
+    return;
+  }
   if(f==='years') v = clamp(+v||1, S.settings.contracts.minYears, S.settings.contracts.maxYears);
   if(f==='startYear') v = +v || S.league.season;
   cd[f] = v;
@@ -5947,8 +6242,20 @@ VIEWS.cap = function(){
         <div class="lhead"><div>Player</div>${yrs.map(y=>'<div>'+y+'</div>').join('')}</div>
         ${rows || '<div class="empty-state">No contracts on the books.</div>'}
         ${deadRow}
-        <div class="capline"><div>Committed</div>${yrs.map(y=>{
-          const u=teamCommitted(tid,y), cp=teamCapForYear(tid,y), s=capSpace(tid,y);
+        <div class="capline"><div>Committed</div>${yrs.map(y=>
+          '<div><span class="num">'+money(teamCommitted(tid,y))+'</span></div>').join('')}</div>
+        ${(()=>{
+          /* Adjustments on their own line, the way the roster shows them. */
+          const any = yrs.some(y=> Math.abs(teamAdj(tid,y)) > 0.001);
+          if(!any) return '';
+          return '<div class="capline"><div>Cap adjustments</div>'+yrs.map(y=>{
+            const v = teamAdj(tid,y);
+            return '<div><span class="num '+(v>0?'bad':v<0?'good':'dim')+'">'+(v?money(v,{plus:true}):'—')+'</span></div>';
+          }).join('')+'</div>';
+        })()}
+        <div class="capline"><div>Total against the cap</div>${yrs.map(y=>{
+          /* Contracts plus adjustments — the figure the bar and the space agree with. */
+          const u=teamCharged(tid,y), cp=teamCapForYear(tid,y), s=capSpace(tid,y);
           return '<div><span class="num">'+money(u)+'</span>'+meter(u,cp)+
             '<span class="tiny '+(s<0?'bad':'good')+'">'+money(s,{plus:true})+'</span></div>';
         }).join('')}</div>
@@ -6004,7 +6311,7 @@ ACT.growthMode = (d)=>{ S.settings.cap.growthMode=d.m; save(); render(); };
 /* ============================================================
    TRADE ENGINE — auctions, review windows, third-party counters
    ============================================================ */
-function actingTeam(){ return ui.tmp.actAs || S.league.myTeamId || (S.teams[0]||{}).id; }
+function actingTeam(){ return viewAsTeam() || ui.tmp.actAs || S.league.myTeamId || (S.teams[0]||{}).id; }
 function actAsBar(){
   if(typeof Supa==='object' && Supa.seated() && !Supa.boss()){
     return '<span class="pill ok" title="signed in as '+esc(Supa.user.email)+'">'+
@@ -6449,6 +6756,10 @@ ACT.cancelAuction = (d)=>{
 ACT.forceSettle = (d)=>{ const auc=byId(S.auctions,d.id); auc.clock.remain=0; settleAuction(auc); save(); render(); };
 ACT.setActAs = (d,el)=>{ ui.tmp.actAs = el.value; render(); };
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]'); if(s){ ui.tmp.actAs=s.value; render(); } });
+document.addEventListener('change', e=>{
+  const va = e.target.closest('[data-a="viewAs"]');
+  if(va && ACT.viewAs){ ACT.viewAs(va.dataset, va, e); return; }
+});
 document.addEventListener('change', e=>{
   const fy = e.target.closest('[data-a="flatYear"]');
   if(fy && ACT.flatYear){ ACT.flatYear(fy.dataset, fy, e); return; }
@@ -7259,6 +7570,50 @@ function undoWindowLeft(tr){
   if(!h || tr.status!=='approved' || !tr.processedAt) return 0;
   return Math.max(0, tr.processedAt + h*3600000 - Date.now());
 }
+/* ---- Trades still in review ------------------------------------------------
+   A trade sitting in review has not moved anybody yet, but it is going to. Any
+   other deal a team does in the meantime has to allow for it, or two trades that
+   are each fine on their own can put a team over the cap between them. */
+function tradesInReview(teamId){
+  return (S.trades||[]).filter(tr=>{
+    if(tr.status!=='review') return false;
+    if(!teamId) return true;
+    if(tr.type==='multi') return (tr.teams||[]).indexOf(teamId) >= 0;
+    return tr.a.teamId===teamId || tr.b.teamId===teamId;
+  });
+}
+/* What the trades in review would do to this team's cap in a given year.
+   Positive means it takes salary ON. */
+function pendingCapEffect(teamId, year){
+  const list = tradesInReview(teamId);
+  if(!list.length) return 0;
+  const y = year || S.league.season;
+  let delta = 0;
+  const hitOf = (pid)=>{ const p = byId(S.players, pid); return p ? grossHit(p, y) : 0; };
+  list.forEach(tr=>{
+    if(tr.type==='multi'){
+      (tr.legs||[]).forEach(leg=>{
+        if(leg.fromTeam===teamId) (leg.players||[]).forEach(pid=> delta -= hitOf(pid));
+        if(leg.toTeam===teamId)   (leg.players||[]).forEach(pid=> delta += hitOf(pid));
+      });
+    } else {
+      const mine = tr.a.teamId===teamId ? tr.a : tr.b.teamId===teamId ? tr.b : null;
+      const other = tr.a.teamId===teamId ? tr.b : tr.b.teamId===teamId ? tr.a : null;
+      if(!mine || !other) return;
+      (mine.players||[]).forEach(pid=> delta -= hitOf(pid));
+      (other.players||[]).forEach(pid=> delta += hitOf(pid));
+    }
+  });
+  return fixCents(delta);
+}
+/* Space once everything already agreed has gone through. This is what a new
+   trade is judged against. */
+function capSpaceAfterPending(teamId, year){
+  return fixCents(capSpace(teamId, year) - pendingCapEffect(teamId, year));
+}
+function capRoomAfterPending(teamId, year){
+  return fixCents(capSpaceAfterPending(teamId, year) - capFloor());
+}
 function processTrade(tr){
   if(tr.type==='multi') return processMulti(tr);
   if(tr.status!=='review') return;
@@ -7403,14 +7758,26 @@ function capBoard(tr){
     <div class="pb tight scrollx"><table>
     <thead><tr><th>Team</th>${yrs.map(y=>'<th class="right" colspan="2">'+y+'</th>').join('')}</tr>
       <tr><th></th>${yrs.map(()=>'<th class="right tiny dim">now</th><th class="right tiny dim">after</th>').join('')}</tr></thead>
-    <tbody>${teams.map(t=>`<tr><td>${esc(teamName(t))}</td>
+    <tbody>${teams.map(t=>`<tr><td>${esc(teamName(t))}${
+        pendingCapEffect(t, S.league.season) ? ' <span class="tiny warn">deal in review</span>' : ''}</td>
       ${yrs.map(y=>{
-        const now = capSpace(t,y), after = fixInc(now + tradeCapDelta(tr,t,y));
+        /* "Now" allows for anything already agreed and waiting to go through,
+           so two trades cannot quietly stack a team over the cap. */
+        const now = capSpaceAfterPending(t,y), after = fixCents(now + tradeCapDelta(tr,t,y));
         const moved = Math.abs(after-now) > 0.004;
         return '<td class="right num dim">'+money(now,{plus:true})+'</td>'+
                '<td class="right num '+(after<0?'bad':moved?'good':'dim')+'">'+money(after,{plus:true})+'</td>';
       }).join('')}</tr>`).join('')}
     </tbody></table></div>
+    ${(()=>{
+      const pend = teams.filter(t=> pendingCapEffect(t, S.league.season));
+      if(!pend.length) return '';
+      return '<div class="pb"><div class="hint warn">'+pend.map(t=>{
+        const d = pendingCapEffect(t, S.league.season);
+        return esc(teamName(t))+' already has a trade in review worth '+money(Math.abs(d))+
+          (d>0?' coming on':' coming off')+' the '+S.league.season+' cap';
+      }).join('; ')+'. The figures above allow for it.</div></div>';
+    })()}
     ${(()=>{ const bad = multiLegal(tr), lim = limitAfterTrade(tr);
       return (bad.length
         ? '<div class="pb"><div class="hint bad">'+bad.slice(0,4).map(b=>
@@ -8607,9 +8974,12 @@ function scoreIn(p, year){
 }
 /* Where he finished at his position that year, on the same blend as everything
    else — part what he did on the field, part what he scored for you. */
+/* Is the ladder ranking on fantasy points per game alone? */
+function ladderByFpts(){ return !!((S.settings.contracts.ladder||{}).byFpts); }
 function positionRank(p, year){
   if(year==null) return null;
-  const w = clamp(+S.settings.value.realWeight||0, 0, 100)/100;
+  /* Ranking on his scoring alone means the real-life side carries no weight. */
+  const w = ladderByFpts() ? 0 : clamp(+S.settings.value.realWeight||0, 0, 100)/100;
   const peers = S.players.filter(x=> x.pos===p.pos && lineIn(x.id, year) && lineIn(x.id, year).gp);
   if(!peers.length) return null;
   const reals = [], fants = [];
@@ -10648,8 +11018,32 @@ ACT.sleeperGo = async ()=>{
       S.league.name = league.name || S.league.name;
       S.league.season = season;
       if(S.teams[0]){ S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
-      for(let y=season+1; y<=season+3; y++) for(let rd=1; rd<=4; rd++)
-        S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
+      if(o.picks !== false){
+        /* Every pick for the next three seasons, then the ones Sleeper says have
+           already changed hands. */
+        let rounds = 4;
+        const dr = league && league.settings && (league.settings.draft_rounds || league.settings.rounds);
+        if(+dr > 0) rounds = +dr;
+        let traded = [];
+        try{ traded = await getJSON(SLEEPER+'/league/'+id+'/traded_picks') || []; }catch(e){}
+        const rmap = teamByRoster(rosters), made = {};
+        for(let y=season+1; y<=season+3; y++) for(let rd=1; rd<=rounds; rd++){
+          (rosters||[]).forEach(r=>{
+            const t = rmap[r.roster_id]; if(!t) return;
+            const pk = {id:uid('pk'), year:y, round:rd, ownerTeamId:t, originTeamId:t};
+            S.picks.push(pk); made[y+'|'+rd+'|'+r.roster_id] = pk;
+          });
+        }
+        (traded||[]).forEach(tp=>{
+          const pk = made[(+tp.season)+'|'+(+tp.round)+'|'+tp.roster_id];
+          const to = rmap[tp.owner_id];
+          if(pk && to) pk.ownerTeamId = to;
+        });
+        ui.tmp.slPicks = S.picks.length;
+      } else {
+        for(let y=season+1; y<=season+3; y++) for(let rd=1; rd<=4; rd++)
+          S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
+      }
     }
 
     let scored = 0, unknownSlots = [];
@@ -10731,6 +11125,8 @@ VIEWS.import = function(){
           <span>The schedule <span class="dim">— who plays who, week by week</span></span></label>
         <label class="check"><input type="checkbox" ${o.depth?'checked':''} data-a="slOpt" data-k="depth">
           <span>Depth charts <span class="dim">— where each player sits on his NFL club</span></span></label>
+        <label class="check"><input type="checkbox" ${o.picks!==false?'checked':''} data-a="slOpt" data-k="picks">
+          <span>Draft picks <span class="dim">— including the ones already traded</span></span></label>
         <button class="btn pri wide" data-a="sleeperGo" ${ui.tmp.slBusy?'disabled':''}>${ui.tmp.slBusy?'Working…':'Pull the league'}</button>
         <div id="slProg"></div>
         ${ui.tmp.slErr?`<div class="hint bad">${esc(ui.tmp.slErr)}<br>
@@ -10743,6 +11139,12 @@ VIEWS.import = function(){
         <button class="btn" data-a="projPull" ${ui.tmp.projBusy?'disabled':''}>${ui.tmp.projBusy?'Working…':'Pull in week '+(S.live.week||1)+' projections'}</button>
         ${(S.proj&&S.proj.week)?`<div class="hint ok">Week ${S.proj.week} projections are in for ${Object.keys(S.proj.byPlayer||{}).length} players.</div>`:''}
         ${ui.tmp.projErr?`<div class="hint bad">${esc(ui.tmp.projErr)}</div>`:''}
+        <div class="hr"></div>
+        <div class="flabel">Just who is trending</div>
+        <p class="muted tiny" style="margin:0">Who the rest of the fantasy world is adding and dropping. Free agents
+          trending up are floated to the top of your list. This refreshes on its own every couple of hours.</p>
+        <button class="btn" data-a="trendPull">Refresh trending now</button>
+        ${(S.trend&&S.trend.at)?`<div class="hint ok">Last checked ${dstr(S.trend.at)} — ${Object.keys(S.trend.up||{}).length} up, ${Object.keys(S.trend.down||{}).length} down.</div>`:''}
         <div class="hr"></div>
         <div class="flabel">Just the depth charts</div>
         <p class="muted tiny" style="margin:0">Marks where each player sits on his NFL club, so you can see the
@@ -10764,6 +11166,16 @@ VIEWS.import = function(){
           ${(S.fixtures||[]).length?`<div class="hint ok">${(S.fixtures||[]).length} games across ${fixtureWeeks().length} weeks are set.</div>`:''}
           ${ui.tmp.schedErr?`<div class="hint bad">${esc(ui.tmp.schedErr)}</div>`:''}
         `:'<div class="hint">Only a commissioner can bring the schedule in.</div>'}
+        <div class="hr"></div>
+        <div class="flabel">Just the draft picks</div>
+        <p class="muted tiny" style="margin:0">Lays out every pick for the next three seasons and then applies the
+          ones already traded in Sleeper. Rosters, contracts and settings are left alone.</p>
+        <label class="f"><span>League id, or just paste the address</span>
+          <input type="text" id="pkSlId" data-k="pkSlId" placeholder="1234567890123456789"
+            value="${esc(ui.tmp.pkSlId||(S.settings.live||{}).sleeperLeagueId||ui.tmp.slIdVal||'')}"></label>
+        <button class="btn" data-a="picksPull" ${ui.tmp.pkBusy?'disabled':''}>${ui.tmp.pkBusy?'Working…':'Pull in the draft picks'}</button>
+        ${(S.picks||[]).length?`<div class="hint ok">${(S.picks||[]).length} picks on the books.</div>`:''}
+        ${ui.tmp.pkErr?`<div class="hint bad">${esc(ui.tmp.pkErr)}</div>`:''}
         <div class="hr"></div>
         <div class="flabel">Just the free agents</div>
         <p class="muted tiny" style="margin:0">Adds anyone in Sleeper who is not in this league yet, as a free
@@ -11465,7 +11877,7 @@ ACT.impCommit = ()=>{
 };
 function fitToCap(target){
   const y = S.league.season;
-  const avg = sum(S.teams.map(t=> teamCommitted(t.id,y)))/Math.max(1,S.teams.length);
+  const avg = sum(S.teams.map(t=> teamCharged(t.id,y)))/Math.max(1,S.teams.length);
   if(avg<=0) return;
   const k = (S.settings.cap.base*(target/100))/avg;
   S.players.forEach(p=>{
@@ -11579,6 +11991,18 @@ VIEWS.settings = function(){
     </div>
 
     ${sub==='league'?`<div class="grid g2">
+      ${reallyCommish()?`<div class="panel" style="grid-column:1/-1"><div class="ph"><h3>See the site as somebody else</h3></div>
+        <div class="pb stack">
+          <p class="muted" style="margin:0">Look at everything through one of your managers' eyes — their team, their
+            cap, their buttons. Commissioner tools are hidden while you do, so you see exactly what they see.</p>
+          <label class="f"><span>View as</span>
+            <select data-a="viewAs">
+              <option value="">— myself —</option>
+              ${S.teams.filter(t=>t.id!==S.league.myTeamId).map(t=>'<option value="'+t.id+'"'+
+                (ui.tmp.viewAs===t.id?' selected':'')+'>'+esc(t.name)+'</option>').join('')}
+            </select></label>
+          <div class="hint">Only you can do this, and it is not saved — a refresh puts you back to your own view.</div>
+        </div></div>`:''}
       <div class="panel"><div class="ph"><h3>Identity</h3></div><div class="pb stack">
         <label class="f"><span>League name</span><input type="text" data-set="league.name" value="${esc(S.league.name)}"></label>
         <div class="grid g2">
@@ -11664,6 +12088,22 @@ VIEWS.settings = function(){
           <label class="f"><span>Free practice-squad cut limit <span class="dim">— 0 for no limit</span></span><input type="number" min="0" step="${S.settings.cap.increment}" data-set="settings.roster.practiceCutMax" value="${c.roster.practiceCutMax||0}"></label>
           <label class="f"><span>Most players allowed</span><input type="number" min="0" data-set="settings.roster.maxRoster" value="${c.roster.maxRoster}"></label>
           <label class="f"><span>Weeks in the season</span><input type="number" min="1" max="25" data-set="settings.roster.seasonWeeks" value="${c.roster.seasonWeeks||17}"></label>
+          <div style="grid-column:1/-1"><div class="hr"></div>
+            <div class="flabel">Keeping in step with Sleeper</div>
+            <label class="f"><span>Sleeper league id <span class="dim">— leave empty to stop mirroring</span></span>
+              <input type="text" data-set="settings.live.sleeperLeagueId" value="${esc((S.settings.live||{}).sleeperLeagueId||'')}"
+                placeholder="1234567890123456789"></label>
+            <label class="check"><input type="checkbox" data-set="settings.live.pullLineups" ${(S.settings.live||{}).pullLineups?'checked':''}>
+              <span>Starting lineups <span class="dim">— whoever they start there, starts here</span></span></label>
+            <label class="check"><input type="checkbox" data-set="settings.live.pullTaxi" ${(S.settings.live||{}).pullTaxi?'checked':''}>
+              <span>Taxi squad</span></label>
+            <label class="check"><input type="checkbox" data-set="settings.live.pullIR" ${(S.settings.live||{}).pullIR?'checked':''}>
+              <span>Injured reserve</span></label>
+            <div class="hint">Checked every few minutes. Turn any of these off and this site keeps its own \u2014
+              useful where we do something Sleeper cannot, like the practice squad or the experience limit above.</div>
+            <button class="btn sm" data-a="sleeperSyncNow" ${ui.tmp.syncBusy?'disabled':''}>${ui.tmp.syncBusy?'Working…':'Sync with Sleeper now'}</button>
+            <div class="hr"></div>
+          </div>
           <label class="f" style="grid-column:1/-1"><span>Who may go on the taxi squad</span>
             <select data-set="settings.taxi.maxExp">
               ${[['','No limit — anyone'],['0','Rookies only'],['1','1 year of experience or less'],
@@ -11786,6 +12226,12 @@ VIEWS.settings = function(){
             <div class="hr"></div>
             <label class="check"><input type="checkbox" data-set="settings.contracts.ladder.on" ${ct.ladder.on?'checked':''}>
               <span>Price extensions off the rank ladder</span></label>
+            <label class="check"><input type="checkbox" data-set="settings.contracts.ladder.byFpts" ${ct.ladder.byFpts?'checked':''}>
+              <span>Rank on fantasy points alone
+                <span class="dim">— his average per game in this league, nothing else</span></span></label>
+            <div class="hint">${ct.ladder.byFpts
+              ? 'Where a man finishes at his position is decided purely by what he scored for you per game, and the ladder sets his price off that place.'
+              : 'Rank blends his real-life production with what he scored for you \u2014 the mix is set on the Values tab.'}</div>
             <div class="grid g2">
               <label class="f"><span>Top of the position gets (%)</span>
                 <input type="number" min="1" max="400" data-set="settings.contracts.ladder.topMult" value="${ct.ladder.topMult}"></label>
@@ -12081,6 +12527,9 @@ VIEWS.settings = function(){
             <b>Opponent points</b> adds up the records of everyone you have played, which is what settles most three-way ties.
             <b>Lineup efficiency</b> is the share of your own best possible score you actually put on the field; it reads
             100% for everyone until people start setting lineups by hand rather than letting the optimiser do it.</div>
+          <label class="check"><input type="checkbox" data-set="settings.playoffs.seedLastWeek" ${P.seedLastWeek!==false?'checked':''}>
+            <span>Last week before the playoffs is played on the table
+              <span class="dim">— 1 v 2, 3 v 4, and so on down</span></span></label>
           <label class="check"><input type="checkbox" data-set="settings.playoffs.reseed" ${P.reseed?'checked':''}>
             <span>Reseed every round <span class="dim">— the best team left always draws the worst</span></span></label>
           <label class="check"><input type="checkbox" data-set="settings.playoffs.twoWeekFinal" ${P.twoWeekFinal?'checked':''}>
@@ -14935,6 +15384,26 @@ function tickAll(){
   if(S.settings.live.mode==='endpoint' && statsUrl()){
     const gap = Math.max(10, +S.settings.live.pollSec||30)*1000;
     if(Date.now()-lastPoll > gap){ lastPoll = Date.now(); pollEndpoint(); }
+  }
+  /* Who the rest of the world is picking up. Refreshed on its own every couple
+     of hours — the list only moves slowly. */
+  if((Date.now() - ((S.trend||{}).at||0)) > 2*60*60*1000 && !ui.tmp.trendBusy){
+    ui.tmp.trendBusy = true;
+    setTimeout(()=>{ ACT.trendPull(true).then(()=>{ ui.tmp.trendBusy=false; }, ()=>{ ui.tmp.trendBusy=false; }); }, 1500);
+  }
+  /* Lineups, taxi and injured reserve, kept in step with Sleeper. */
+  if(sleeperLeague() && !ui.tmp.syncBusy &&
+     (Date.now() - (ui.tmp.lastSlotSync||0)) > 5*60*1000){
+    ui.tmp.lastSlotSync = Date.now();
+    ui.tmp.syncBusy = true;
+    setTimeout(()=>{
+      const cfg = S.settings.live||{};
+      const jobs = [];
+      if(cfg.pullLineups) jobs.push(pullSleeperLineups(null, true));
+      if(cfg.pullTaxi || cfg.pullIR) jobs.push(pullSleeperSlots(true));
+      Promise.all(jobs).then(()=>{ ui.tmp.syncBusy=false; if(route==='live'||route==='teams') render(); },
+                             ()=>{ ui.tmp.syncBusy=false; });
+    }, 800);
   }
   /* Real scores straight from Sleeper, on the same timer. */
   if(S.settings.live.mode==='sleeper'){
