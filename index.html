@@ -683,6 +683,29 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 /* Previewing another manager's view */
 .previewbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;
   border:1px solid var(--brass);border-radius:10px;background:rgba(229,161,60,.10)}
+
+/* Chat reactions, sticker picker and the beat reporters */
+.reactrow{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:6px}
+.reactchip{background:#1B2A38;border:1px solid #2A3F52;border-radius:20px;padding:1px 7px;font-size:12px;
+  color:var(--mute);cursor:pointer}
+.reactchip.on{border-color:var(--brass);color:var(--bone)}
+.reactpick{display:flex;gap:1px;opacity:0;transition:opacity .12s}
+.chatbub:hover .reactpick,.reactpick:focus-within{opacity:1}
+.reactadd{background:none;border:0;font-size:13px;cursor:pointer;padding:0 2px;filter:grayscale(1);opacity:.7}
+.reactadd:hover{filter:none;opacity:1}
+.gifpanel{margin-top:8px;padding:10px;border:1px solid #22384A;border-radius:10px;background:#16232F}
+.stickgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:4px}
+.stick{background:#1B2A38;border:1px solid #2A3F52;border-radius:8px;font-size:20px;padding:6px 0;cursor:pointer}
+.stick:hover{border-color:var(--brass)}
+.gifgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;margin-top:8px;
+  max-height:240px;overflow:auto}
+.gifhit{padding:0;border:1px solid #2A3F52;border-radius:8px;overflow:hidden;background:none;cursor:pointer}
+.gifhit img{display:block;width:100%;height:80px;object-fit:cover}
+.gifhit:hover{border-color:var(--brass)}
+.reporterrow{justify-content:center}
+.reporterbub{border-color:var(--chalk)!important;background:rgba(127,178,217,.07);max-width:92%}
+
+.lookonly{opacity:.72;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -705,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16p · cap ladder nets adjustments';
+const APP_BUILD = '2026-08-16v · the tail of the draft';
 
 /* ============================================================
    HOME LEAGUE
@@ -1141,7 +1164,18 @@ function defaultState(){
       ir:{ mode:'games', fixed:0 },
       join:{ holdForCommish:true },
       rookie:{ on:true, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
-               roundYears:{1:4, 2:3, 3:3, 4:2}, structId:'ev', minSalary:1, overrides:{} },
+               roundYears:{1:4, 2:3, 3:3, 4:2}, structId:'ev', minSalary:1, overrides:{},
+               /* A player drafted as a rookie is held to short deals for this many
+                  seasons, unless he reaches the free agency draft first. Anyone
+                  signed within a week of the draft ending is treated the same and
+                  costs the minimum. */
+               windowOn:true, windowYears:3, windowMaxDeal:3, draftEnd:'', signWindowDays:7,
+               /* The tail of the draft is held at a flat price for now. From
+                  holdUntil onward it follows the ladder below, and that ladder
+                  then rises with everything else. */
+               flat:{ on:true, fromRound:4, fromSlot:1, amount:1, holdUntil:2040,
+                      ladder:{1:2.50, 2:2.50, 3:2.25, 4:2.25, 5:2.00, 6:2.00,
+                              7:1.75, 8:1.75, 9:1.50, 10:1.50, 11:1.25, 12:1.25} } },
       comp:{ on:true, moneyWeight:65, prodWeight:35, offset:true,
              tiers:{1:85, 2:70, 3:55, 4:40}, maxPerTeam:4, maxTotal:0, minAav:0,
              priceMode:'pctOfLast', pctOfLast:92, byRound:{}, overrides:{},
@@ -1175,7 +1209,13 @@ function defaultState(){
         /* Which Sleeper league to mirror, and what to take from it. Turn any of
            these off if this site drifts away from what Sleeper can do. */
         sleeperLeagueId:'', pullLineups:true, pullTaxi:true, pullIR:true },
-      notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 }
+      notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 },
+      /* Chat extras: the beat reporters, and a key if you want GIF search. */
+      chat:{ reporters:true, gifKey:'' },
+      /* What commissioners are allowed to do. The head commissioner turns
+         these on and off. */
+      powers:{ actAs:false, closeWeek:true, feedSource:true, capTools:true,
+               tradeRules:true, ruleEdit:true, duesEdit:true, importing:true }
     },
     rev:0, season:{year:season, byPlayer:{}}, history:{}, dvp:{}, faAuctions:[],
     bbd:{ status:'idle', round:1, clock:null, bids:[], rounds:[] }, taxiClaims:[],
@@ -1780,7 +1820,7 @@ const NAV = [
   {id:'tx',       ic:'≡', label:'Transactions'},
   {id:'rules',    ic:'§', label:'League Rules'},
   {id:'dues',     ic:'◈', label:'Dues'},
-  {id:'import',   ic:'↥', label:'Import League'},
+  {id:'import',   ic:'↥', label:'Import League', commish:true},
   {id:'settings', ic:'⚙', label:'Settings'}
 ];
 const MOBILE_TABS = ['live','chat','trades','cap'];
@@ -1798,6 +1838,98 @@ function isCommishTeam(teamId){
   const all = commishIds();
   return !all.length || all.indexOf(teamId) >= 0;
 }
+/* ---- Who can do what -------------------------------------------------------
+   Three tiers. The head commissioner runs the league and is the only one near
+   the server and the league file. Co-commissioners do everything else. Everyone
+   else can look but not touch. */
+function headCommishId(){ return S.league.commishTeamId || null; }
+function isHeadCommish(){
+  if(viewAsTeam()) return false;
+  const seat = S.league.myTeamId;
+  if(typeof Supa==='object' && Supa.ready()){
+    /* On real accounts the database says who runs the league; the head is the
+       one holding the commissioner's team. */
+    return Supa.boss() && (!headCommishId() || seat === headCommishId());
+  }
+  return !headCommishId() || seat === headCommishId();
+}
+/* A co-commissioner is a commissioner who is not the head one. */
+function isCoCommish(){ return isCommish() && !isHeadCommish(); }
+/* The powers the head commissioner can hand out or take back. */
+function powerOn(k){
+  const p = S.settings.powers || {};
+  return p[k] !== false;
+}
+/* ---- The rookie window -----------------------------------------------------
+   A player taken in the rookie draft — or picked up within a week of it ending —
+   can only be held on short deals for three seasons. Inside that window the
+   whole contract, extensions and all, cannot run past three years. Reaching the
+   free agency draft ends the restriction entirely. */
+function rookieRules(){ return S.settings.rookie || {}; }
+function rookieWindowOn(){ return rookieRules().windowOn !== false; }
+/* When the rookie draft finished, as a date. */
+function rookieDraftEnd(){
+  const d = rookieRules().draftEnd;
+  const t = d ? Date.parse(d) : NaN;
+  return isNaN(t) ? null : t;
+}
+/* Is this the week after the draft, when anyone signed counts as a rookie and
+   comes in at the minimum? */
+function inRookieSignWindow(at){
+  const end = rookieDraftEnd(); if(end==null) return false;
+  const days = +rookieRules().signWindowDays || 7;
+  const when = at==null ? Date.now() : at;
+  return when >= end && when <= end + days*86400000;
+}
+/* The season he was taken, or picked up in that week. Nothing else counts. */
+function rookieFrom(p){
+  const r = p && p.rookie;
+  if(!r || !r.year) return null;
+  return +r.year;
+}
+/* Has he been through the free agency draft? That lifts the restriction. */
+function rookieFreed(p){ return !!(p && p.rookie && p.rookie.hitFA); }
+/* Seasons still left in his window, or null when the rule does not apply. */
+function rookieWindowLeft(p){
+  if(!rookieWindowOn()) return null;
+  if(rookieFreed(p)) return null;
+  const from = rookieFrom(p); if(from==null) return null;
+  const span = +rookieRules().windowYears || 3;
+  const left = (from + span) - S.league.season;
+  return left > 0 ? left : null;
+}
+/* The longest deal he may sign or be extended to right now. Counts what he has
+   already been paid for, so a two-year deal leaves one year of extension. */
+function rookieMaxYears(p){
+  const left = rookieWindowLeft(p);
+  if(left == null) return null;
+  const cap = +rookieRules().windowMaxDeal || 3;
+  const c = p.contract;
+  /* Years already served under this deal inside the window. */
+  const served = c ? Math.max(0, S.league.season - (+c.startYear||S.league.season)) : 0;
+  return Math.max(0, Math.min(cap - served, left));
+}
+/* Why a length is not allowed, or null when it is fine. */
+function rookieYearsBlocked(p, years){
+  const max = rookieMaxYears(p);
+  if(max == null) return null;
+  if(years <= max) return null;
+  const cap = +rookieRules().windowMaxDeal || 3;
+  return esc(p.name)+' was taken in the '+rookieFrom(p)+' rookie draft, so until he reaches free agency his '+
+    'deals cannot run past '+cap+' year'+(cap===1?'':'s')+' in total \u2014 '+
+    (max===0 ? 'he has none left.' : 'at most '+max+' more year'+(max===1?'':'s')+' from here.');
+}
+/* Mark a player as a rookie of this draft. */
+function markRookie(p, year, at){
+  if(!p) return;
+  p.rookie = Object.assign({}, p.rookie, {year:+year||S.league.season, at:at||Date.now()});
+}
+/* Writing the rulebook, and editing the dues sheet. */
+function canEditRules(){ return isCommish() && powerOn('ruleEdit'); }
+function canEditDues(){ return isCommish() && powerOn('duesEdit'); }
+/* Are you allowed to stand in for another manager? Off unless the league says
+   so. Named apart from canActAs(teamId), which asks a different question. */
+function actAsAllowed(){ return isCommish() && powerOn('actAs'); }
 /* Are you REALLY a commissioner — ignoring any preview you are sitting in?
    Only this decides whether the preview control is offered at all. */
 function reallyCommish(){
@@ -1841,7 +1973,7 @@ function go(r){
 
 function navHTML(active){
   const c = badgeCounts();
-  return NAV.map(n=>{
+  return NAV.filter(n=> !n.commish || isCommish()).map(n=>{
     const b = n.id==='trades'&&c.trades ? '<span class="badge">'+c.trades+'</span>'
             : n.id==='block'&&c.block ? '<span class="badge q">'+c.block+'</span>'
             : n.id==='dues'&&c.dues ? '<span class="badge q">'+c.dues+'</span>' : '';
@@ -1975,6 +2107,16 @@ function render(){
     $('#view').innerHTML = homeWaitView(); return;
   }
   $('#view').innerHTML = previewBar + (VIEWS[route] ? VIEWS[route]() : '<p class="muted">Nothing here.</p>');
+  /* Settings is there for everyone to read, but only a commissioner can change
+     anything. Rather than gate a hundred fields one by one, everything on the
+     page is switched off after it is drawn. */
+  if(route==='settings' && !isCommish()){
+    $('#view').querySelectorAll('input,select,textarea,button').forEach(el=>{
+      if(el.dataset && el.dataset.a==='sub') return;      /* the tabs still work */
+      el.setAttribute('disabled','');
+      el.classList.add('lookonly');
+    });
+  }
   if(k){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
@@ -2725,9 +2867,15 @@ VIEWS.dash = function(){
 
       <div class="panel"><div class="ph"><h3>Notices</h3><div class="spacer"></div>
         ${S.notices.length?'<button class="btn ghost sm" data-a="clearNotices">Clear</button>':''}</div>
-        <div class="pb"><div class="log">${S.notices.length? S.notices.slice(0,8).map(n=>
-          '<div><b style="color:var(--bone)">'+esc(n.title)+'</b><br>'+esc(n.body)+'</div>').join('')
-          : '<div class="dim">Nothing new.</div>'}</div></div></div>
+        <div class="pb"><div class="log">${(()=>{
+          /* A trade notice belongs to the team it was sent to. Everyone else does
+             not need to hear about other people's offers. */
+          const mineOnly = S.notices.filter(n=>
+            n.kind!=='trade' || !n.teamId || n.teamId===t.id);
+          return mineOnly.length ? mineOnly.slice(0,8).map(n=>
+            '<div><b style="color:var(--bone)">'+esc(n.title)+'</b><br>'+esc(n.body)+'</div>').join('')
+            : '<div class="dim">Nothing new.</div>';
+        })()}</div></div></div>
       <div class="panel">
         <div class="ph"><h3>Transaction log</h3><div class="spacer"></div><button class="btn ghost sm" data-a="go" data-r="tx">All of it</button></div>
         <div class="pb"><div class="log">${S.log.slice(0,14).map(l=>
@@ -3756,9 +3904,11 @@ VIEWS.live = function(){
     return `<tr>
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
         ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
-      <td class="right num" style="width:10%">${s.p?s.pts.toFixed(1):'—'}</td>
+      <td class="right num" style="width:10%">${s.p?s.pts.toFixed(1):'—'}
+        ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(1)+'</div>':''}</td>
       <td class="center" style="width:12%"><span class="eyebrow">${esc(s.slot)}</span></td>
-      <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(1):'—'}</td>
+      <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(1):'—'}
+        ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(1)+'</div>':''}</td>
       <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
     </tr>`;
   }).join('');
@@ -3772,7 +3922,8 @@ VIEWS.live = function(){
       ${live?'<span class="pill live">'+live+' games in progress</span>':''}
       <button class="btn ghost" data-a="go" data-r="schedule">Schedule</button>
       <button class="btn" data-a="editLineup" data-team="${t.id}" data-w="${+S.live.week||1}">Set lineup</button>
-      ${cfg.mode==='demo' ? `<button class="btn ${cfg.running?'':'pri'}" data-a="simToggle">${cfg.running?'Pause feed':'Start feed'}</button>
+      ${!(isCommish() && powerOn('closeWeek')) ? '' :
+        cfg.mode==='demo' ? `<button class="btn ${cfg.running?'':'pri'}" data-a="simToggle">${cfg.running?'Pause feed':'Start feed'}</button>
         <button class="btn ghost" data-a="simReset">New week</button>` :
         `<button class="btn pri" data-a="pollNow">Refresh now</button>
          <button class="btn ghost" data-a="closeWeek">Close out week ${S.live.week}</button>`}
@@ -3897,6 +4048,7 @@ VIEWS.live = function(){
             || '<div class="dim">Quiet out there.</div>'}
         </div></div></div>
 
+        ${!(isCommish() && powerOn('feedSource')) ? '' : `
         <div class="panel"><div class="ph"><h3>Feed source</h3></div><div class="pb stack">
           <div class="seg">
             <button class="${cfg.mode==='sleeper'?'on':''}" data-a="setLiveMode" data-m="sleeper">Sleeper (live)</button>
@@ -3935,7 +4087,7 @@ VIEWS.live = function(){
 }</pre>
             <div class="hint">Keys: py/pt/pi pass, ry/rt rush, rec/rey/ret receiving, fum, fg39/fg49/fg50/fgx/xpm kicking, sk/dint/dfum/dtd/saf/pa defense. Match players by name or by their id in this app.</div>
           </details>
-        </div></div>
+        </div></div>`}
       </div>
     </div>
   </div>`;
@@ -3945,7 +4097,9 @@ ACT.simToggle = ()=>{
   S.settings.live.running = !S.settings.live.running; save(); render();
 };
 ACT.simReset = ()=>{
+  const justPlayed = +S.live.week||1;
   recordWeek(); foldWeekIntoSeason(); foldWeekIntoDvp();
+  postReporters(justPlayed);
   buildWeek((S.live.week||1)+1);
   S.live.koLosers = {}; S.live.koWeek = null;   /* new week: losers get up off the floor */
   const myLu = ((S.lineups||{})[S.live.week]||{})[S.league.myTeamId];
@@ -4068,6 +4222,7 @@ VIEWS.teams = function(){
             <button class="btn sm danger" data-a="release" data-id="${p.id}">Cut</button></td></tr>`;
       }).join('') || '<tr><td colspan="12" class="dim center" style="padding:24px">No players under contract.</td></tr>'}
       </tbody>
+      ${''}
       <tfoot><tr class="tot"><td colspan="5" class="right">Committed</td>
         ${yrs.map(yy=>'<td class="right money">'+money(teamCommitted(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
       ${(()=>{
@@ -4278,6 +4433,15 @@ VIEWS.teams = function(){
       const list = roster.slice();
       const lim = limitNote(tid);
       return `
+      ${(()=>{
+        /* How many contracts this team has left, and how the longer allowances
+           carry down. Everybody can see it, not just commissioners. */
+        const b = limitBoardHTML(tid);
+        if(!b) return '';
+        return '<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Contract limits</h3>'+
+          '<div class="spacer"></div><span class="tiny muted">'+esc(limitSummary(tid))+'</span></div>'+
+          '<div class="pb">'+b+'</div></div>';
+      })()}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What the model sees</h3><div class="spacer"></div>
         <span class="tiny muted">${S.settings.value.realWeight}% real production · ${100-S.settings.value.realWeight}% fantasy points</span>
         <button class="btn ghost sm" data-a="go" data-r="settings" data-s="value">Tune it</button></div>
@@ -4616,7 +4780,9 @@ function faRows(list){
       isOrphan(p)?'Take him on' : wv?'Claim':'Sign'}</button></td></tr>`).join('')
     || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.</td></tr>';
 }
-ACT.sub = (d)=>{ ui.sub=d.s; render(); };
+ACT.sub = (d)=>{
+  /* The Data tab is the head commissioner's alone. */
+  if(d.s==='data' && !isHeadCommish()){ toast('That is the head commissioner\u2019s','bad'); return; } ui.sub=d.s; render(); };
 document.addEventListener('change', e=>{
   const s = e.target.closest('[data-a="pickTeamView"]');
   if(s){ ui.tmp.teamView = s.value; render(); }
@@ -4715,8 +4881,10 @@ function lineupForm(teamId, week){
       ${L.slots.map((x,i)=>{
         const elig = x.eligible || [];
         const heldLocked = x.p && playerLocked(x.p);   // the starter here has already played
+        /* Best projection first — that is what you are picking on before kickoff. */
+        const projOf = (p)=>{ const v = projFor(p); return v==null ? -1 : v; };
         const opts = pool.filter(p=> elig.indexOf(p.pos)>=0)
-          .sort((a,b)=> fpts(b.id)-fpts(a.id))
+          .sort((a,b)=> (projOf(b) - projOf(a)) || (fpts(b.id) - fpts(a.id)))
           .map(p=>{
             const locked = playerLocked(p);
             // a locked player can only stay where they already are, never be moved in
@@ -4724,8 +4892,10 @@ function lineupForm(teamId, week){
             const started = gameForPlayer(p);
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
+            const pj = projFor(p);
             return '<option value="'+p.id+'"'+(x.p&&x.p.id===p.id?' selected':'')+(disable?' disabled':'')+'>'+
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
+              (pj!=null?' · proj '+pj.toFixed(1):'')+
               (mt?' · '+esc(mt):'')+tail+'</option>';
           }).join('');
         return `<div style="border-bottom:1px solid var(--line);padding:6px 0">
@@ -4735,7 +4905,8 @@ function lineupForm(teamId, week){
             <option value="">— empty —</option>
             ${opts}
           </select>
-          <span class="tiny num" style="width:56px;text-align:right">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}</span>
+          <span class="tiny num" style="width:76px;text-align:right">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}${
+            x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
           </div>
           ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+'</div>':''}
         </div>`;
@@ -5372,6 +5543,29 @@ ACT.picksPull = async ()=>{
     toast('Could not read that league — '+e.message,'bad');
   }
 };
+/* Commissioner control over who is inside a rookie window. */
+ACT.rookieMark = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  markRookie(p, +d.y || S.league.season);
+  logIt(p.name+' marked as a '+(+d.y||S.league.season)+' rookie', {type:'admin', players:[p.id]});
+  save(); render(); toast('Held to the rookie rule until '+((+d.y||S.league.season)+(+rookieRules().windowYears||3)),'good');
+};
+ACT.rookieFree = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p || !p.rookie) return;
+  p.rookie.hitFA = !p.rookie.hitFA;
+  logIt(p.name+(p.rookie.hitFA?' reached the free agency draft — rookie limit lifted'
+                              :' put back under the rookie limit'), {type:'admin', players:[p.id]});
+  save(); render();
+};
+ACT.rookieClear = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  delete p.rookie;
+  logIt(p.name+' is no longer treated as a rookie', {type:'admin', players:[p.id]});
+  save(); render();
+};
 ACT.trendPull = async (quiet)=>{
   const t = trendStore();
   try{
@@ -5436,6 +5630,29 @@ ACT.playerCard = (d)=>{
           : 'No news loaded yet. Press refresh above.')+'</div>'}
     ${stale!=null?'<div class="hint">Feed last checked '+(stale<60?stale+' minutes':Math.round(stale/60)+' hours')+' ago.</div>':''}
 
+    ${(()=>{
+      /* Where he stands under the rookie rule. */
+      const from = rookieFrom(p);
+      if(from==null) return isCommish()
+        ? '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
+          '<div class="row" style="gap:6px;align-items:center"><span class="tiny dim">Not held to it.</span>'+
+          '<button class="btn sm ghost" data-a="rookieMark" data-id="'+p.id+'" data-y="'+S.league.season+'">'+
+          'Mark as a '+S.league.season+' rookie</button></div>'
+        : '';
+      const left = rookieWindowLeft(p), max = rookieMaxYears(p);
+      return '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
+        '<div class="tiny">Taken in the '+from+' rookie draft. '+
+        (rookieFreed(p) ? 'He has been through the free agency draft, so the limit no longer applies.'
+         : left==null ? 'His window has run out — normal rules from here.'
+         : 'Window runs to '+(from+(+rookieRules().windowYears||3))+'; at most '+max+
+           ' more year'+(max===1?'':'s')+' on any deal from here.')+'</div>'+
+        (isCommish()
+          ? '<div class="row" style="gap:6px;margin-top:6px">'+
+            '<button class="btn sm ghost" data-a="rookieFree" data-id="'+p.id+'">'+
+            (rookieFreed(p)?'Put him back under it':'He reached free agency')+'</button>'+
+            '<button class="btn sm ghost" data-a="rookieClear" data-id="'+p.id+'">Not a rookie</button></div>'
+          : '');
+    })()}
     ${(()=>{
       const tr = trendFor(p);
       const trLine = tr
@@ -5779,7 +5996,11 @@ ACT.editContract = (d)=>{
       <span class="tiny dim">${ui.tmp.cd.byYear?'the total follows what you type':'the total is split by the structure'}</span>
     </div>
     <div class="hr"></div>
-    <div id="cdPreview">${contractPreview()}</div>`,
+    <div id="cdPreview">${contractPreview()}</div>
+    ${(()=>{
+      const b = limitBoardHTML(ui.tmp.cd.teamId, ui.tmp.cd.pid);
+      return b ? '<div class="hr"></div>'+b : '';
+    })()}`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
     (c?'<button class="btn danger" data-a="voidContract" data-id="'+p.id+'">Void deal</button>':'')+
     '<button class="btn pri" data-a="saveContract">Save contract</button>');
@@ -5816,7 +6037,17 @@ ACT.cdField = (d, el)=>{
     const el4 = $('#cdPreview'); if(el4) el4.innerHTML = contractPreview();
     return;
   }
-  if(f==='years') v = clamp(+v||1, S.settings.contracts.minYears, S.settings.contracts.maxYears);
+  if(f==='years'){
+    v = clamp(+v||1, S.settings.contracts.minYears, S.settings.contracts.maxYears);
+    /* Hold a rookie to his window rather than letting a number be typed that
+       will only be refused on save. */
+    const pr = byId(S.players, cd.pid);
+    const rmax = pr ? rookieMaxYears(pr) : null;
+    if(rmax != null && v > rmax){
+      v = Math.max(1, rmax);
+      toast('Rookie deal \u2014 at most '+rmax+' year'+(rmax===1?'':'s')+' from here','warn');
+    }
+  }
   if(f==='startYear') v = +v || S.league.season;
   cd[f] = v;
   if(f==='years' && cd.byYear){
@@ -6016,6 +6247,21 @@ ACT.saveContract = ()=>{
       'put a value in.</div>',
       '<button class="btn ghost" data-a="closeModal">Go back</button>'+
       '<button class="btn pri" data-a="saveContractZero">Save it at '+money(0)+'</button>');
+  }
+  /* A rookie inside his window cannot be given a longer deal than the rule
+     allows, however the contract is being written. */
+  const rk = rookieYearsBlocked(p, +cd.years||1);
+  if(rk) return toast(rk,'bad');
+  /* Signed in the week after the draft, a rookie comes in at the minimum —
+     the length is up to you, the money is not. */
+  if(!p.contract && rookieFrom(p)!=null && inRookieSignWindow()){
+    const min = +S.settings.contracts.minSalary || 1;
+    const want = fixCents(min * Math.max(1, +cd.years||1));
+    if(Math.abs((+cd.total||0) - want) > 0.011){
+      cd.total = want;
+      if(cd.byYear) cd.byYear = Array.from({length:Math.max(1,+cd.years||1)}, ()=> min);
+      toast('Rookie signed in the week after the draft \u2014 held at '+money(min)+' a year','warn');
+    }
   }
   const lp = limitProblemFor('signings', cd.teamId, cd.years, p.id);
   if(lp) return toast(teamName(cd.teamId)+' already has '+lp.have+' deals of '+lp.length+' years or longer and is allowed '+lp.allow,'bad');
@@ -6278,6 +6524,7 @@ VIEWS.cap = function(){
       <tr class="tot"><td>League cap</td>${yrs.map(y=>'<td class="right money">'+money(capForYear(y))+'</td>').join('')}<td></td></tr>
       </tbody></table></div></div>`}
 
+    ${!(isCommish() && powerOn('capTools')) ? '' : `
     <div class="grid g3" style="margin-top:16px">
       <div class="panel"><div class="ph"><h3>Cap growth</h3></div><div class="pb">
         <div class="seg" style="margin-bottom:10px">
@@ -6302,7 +6549,7 @@ VIEWS.cap = function(){
           <input type="number" min="1" max="${maxProjYears()}" data-set="settings.cap.projectYears" value="${clamp(c.projectYears,1,maxProjYears())}"></label>
         <div class="hint">Up to ten, capped at your longest allowed contract (${S.settings.contracts.maxYears} years). Raise the contract limit in Settings to see further out.</div>
       </div></div>
-    </div>
+    </div>`}
   </div>`;
 };
 ACT.capMode = (d)=>{ ui.tmp.capMode=d.m; render(); };
@@ -6317,6 +6564,9 @@ function actAsBar(){
     return '<span class="pill ok" title="signed in as '+esc(Supa.user.email)+'">'+
       esc(teamName(Supa.member.team_id))+'</span>';
   }
+  /* Acting as somebody else is a commissioner power, and only when the league
+     has switched it on — otherwise you are always yourself. */
+  if(!actAsAllowed()) return '<span class="pill">'+esc(teamName(actingTeam()))+'</span>';
   return '<label class="row" style="gap:8px"><span class="eyebrow">Acting as</span>'+
     '<select data-a="setActAs" style="max-width:200px">'+S.teams.map(t=>'<option value="'+t.id+'"'+(t.id===actingTeam()?' selected':'')+'>'+esc(t.name)+'</option>').join('')+'</select></label>';
 }
@@ -8246,6 +8496,132 @@ function trimChatMedia(){
   }
   return dropped;
 }
+/* ---- Reactions --------------------------------------------------------------
+   Tap an emoji under a message. One of each per team, tap again to take it back. */
+const REACTIONS = ['\u{1F525}','\u{1F602}','\u{1F44F}','\u{1F62D}','\u{1F621}','\u{1F440}','\u{1F480}','\u{1F3C6}'];
+/* ---- The beat reporters -----------------------------------------------------
+   When a week closes, a couple of hacks drop into the chat with an opinion,
+   built from what actually happened rather than invented. */
+const REPORTERS = [
+  {name:'Marge Delaney',  outlet:'The Sideline'},
+  {name:'Cyril Pratt',    outlet:'Gridiron Weekly'},
+  {name:'Dot Rimmer',     outlet:'Cap Room Confidential'},
+  {name:'Hal Vance',      outlet:'The Long Snapper'},
+  {name:'Winnie Osei',    outlet:'Second & Long'}
+];
+function reporterFor(week, n){ return REPORTERS[(week*3 + n) % REPORTERS.length]; }
+/* Talk up the big score, have a go at the worst. */
+function reporterLines(week){
+  const games = (S.schedule||[]).filter(g=> +g.week===+week);
+  if(!games.length) return [];
+  const rows = [];
+  games.forEach(g=>{
+    rows.push({team:g.home, pts:+g.hp||0, opp:g.away, won:(+g.hp||0) > (+g.ap||0), by:Math.abs((+g.hp||0)-(+g.ap||0))});
+    rows.push({team:g.away, pts:+g.ap||0, opp:g.home, won:(+g.ap||0) > (+g.hp||0), by:Math.abs((+g.hp||0)-(+g.ap||0))});
+  });
+  if(!rows.length) return [];
+  const byPts = rows.slice().sort((a,b)=> b.pts - a.pts);
+  const top = byPts[0], bot = byPts[byPts.length-1];
+  const blowout = rows.slice().sort((a,b)=> b.by - a.by)[0];
+  const robbed = rows.filter(r=> !r.won).sort((a,b)=> b.pts - a.pts)[0];
+  const lucky  = rows.filter(r=> r.won).sort((a,b)=> a.pts - b.pts)[0];
+  const out = [];
+  const say = (n, text)=> out.push({rep:reporterFor(week, n), text});
+
+  if(top) say(0, teamName(top.team)+' put up '+top.pts.toFixed(1)+' in week '+week+
+    ', the best anyone managed. '+(top.won? 'Nobody was getting near that.' : 'And still lost, which takes some doing.'));
+  if(bot && bot.team!==top.team) say(1, teamName(bot.team)+' managed '+bot.pts.toFixed(1)+
+    '. I have seen practice squads do more. Week '+week+' will not be going in the scrapbook.');
+  if(blowout && blowout.won && blowout.by > 25) say(2,
+    teamName(blowout.team)+' won by '+blowout.by.toFixed(1)+' over '+teamName(blowout.opp)+
+    '. That is not a fixture, that is a favour.');
+  if(robbed && robbed.pts > 100) say(3, 'Spare a thought for '+teamName(robbed.team)+
+    ' \u2014 '+robbed.pts.toFixed(1)+' and nothing to show for it. Wrong week, wrong opponent.');
+  if(lucky && lucky.pts < 90) say(4, teamName(lucky.team)+' got away with one, winning on '+
+    lucky.pts.toFixed(1)+'. A win is a win, but let us not pretend.');
+  return out.slice(0, 3);
+}
+/* Drop them into the league chat. Never notifies anyone — it is colour, not news. */
+function postReporters(week){
+  if((S.settings.chat||{}).reporters === false) return 0;
+  if(!week) return 0;
+  S.chat = S.chat || [];
+  if(S.chat.some(m=> m.reporterWeek === week)) return 0;   /* only once a week */
+  const lines = reporterLines(week);
+  lines.forEach(l=>{
+    S.chat.push({id:uid('c'), at:Date.now(), teamId:null, reporter:l.rep.name, outlet:l.rep.outlet,
+      reporterWeek:week, text:l.text, media:null, notify:'none'});
+  });
+  if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
+  return lines.length;
+}
+ACT.chatReact = (d)=>{
+  const me = myTeam(); if(!me) return;
+  const msg = (S.chat||[]).find(m=> m.id===d.id); if(!msg) return;
+  msg.reacts = msg.reacts || {};
+  const who = msg.reacts[d.e] = msg.reacts[d.e] || [];
+  const i = who.indexOf(me.id);
+  if(i>=0) who.splice(i,1); else who.push(me.id);
+  if(!who.length) delete msg.reacts[d.e];
+  save(); render();
+};
+function reactRow(m){
+  const me = myTeam();
+  const mine = (e)=> me && (m.reacts||{})[e] && m.reacts[e].indexOf(me.id)>=0;
+  const has = Object.keys(m.reacts||{}).filter(e=> (m.reacts[e]||[]).length);
+  return '<div class="reactrow">'+
+    has.map(e=>'<button class="reactchip'+(mine(e)?' on':'')+'" data-a="chatReact" data-id="'+m.id+'" data-e="'+e+'" '+
+      'title="'+esc((m.reacts[e]||[]).map(id=>teamName(id)).join(', '))+'">'+e+' '+m.reacts[e].length+'</button>').join('')+
+    '<div class="reactpick">'+REACTIONS.map(e=>
+      '<button class="reactadd" data-a="chatReact" data-id="'+m.id+'" data-e="'+e+'">'+e+'</button>').join('')+'</div>'+
+  '</div>';
+}
+/* ---- Pictures to send ------------------------------------------------------
+   Searching a GIF service needs a key, and without one a gallery of links would
+   just be broken pictures. So there is a built-in set that always works, and a
+   search box that appears once a key is put in Settings. */
+const STICKERS = [
+  ['\u{1F525}','on fire'],['\u{1F480}','dead'],['\u{1F602}','crying laughing'],['\u{1F62D}','sobbing'],
+  ['\u{1F921}','clown'],['\u{1F3C6}','trophy'],['\u{1F44E}','thumbs down'],['\u{1F44D}','thumbs up'],
+  ['\u{1F440}','eyes'],['\u{1F91D}','deal'],['\u{1F4B0}','money'],['\u{1F4C9}','falling'],
+  ['\u{1F4C8}','rising'],['\u{1F915}','hurt'],['\u{1F971}','asleep'],['\u{1F92F}','mind blown'],
+  ['\u{1F9CA}','ice cold'],['\u{1F3AF}','on target'],['\u{1F6A8}','alarm'],['\u{1F44B}','goodbye'],
+  ['\u{1F423}','rookie'],['\u{1F410}','goat'],['\u{1F3B0}','gamble'],['\u{1F9F9}','cleaned up']
+];
+function gifKey(){ return (S.settings.chat||{}).gifKey || ''; }
+ACT.chatStick = (d)=>{
+  const c = (ui.tmp.chat = ui.tmp.chat||{});
+  c.text = ((c.text||'') + ' ' + d.e).trim();
+  const box = $('#chatText'); if(box) box.value = c.text;
+  c.gifOpen = false; render();
+};
+ACT.chatGifSearch = async ()=>{
+  const q = String((($('#gifQ')||{}).value) || (ui.tmp.chat||{}).gifQ || '').trim();
+  const key = gifKey();
+  if(!key) return toast('Add a GIF search key in Settings, or paste a link','warn');
+  if(!q) return toast('What are you after?','bad');
+  ui.tmp.gifBusy = true; render();
+  try{
+    const url = 'https://tenor.googleapis.com/v2/search?q='+encodeURIComponent(q)+
+      '&key='+encodeURIComponent(key)+'&limit=24&media_filter=tinygif';
+    const j = await getJSON(url);
+    const hits = (j.results||[]).map(r=>{
+      const mf = r.media_formats||{};
+      return (mf.tinygif&&mf.tinygif.url) || (mf.gif&&mf.gif.url) || '';
+    }).filter(Boolean);
+    ui.tmp.gifHits = hits; ui.tmp.gifBusy = false; render();
+    if(!hits.length) toast('Nothing came back for that','warn');
+  }catch(e){
+    ui.tmp.gifBusy = false; render();
+    toast('Could not search — '+e.message,'bad');
+  }
+};
+ACT.chatGifPick = (d)=>{
+  const c = (ui.tmp.chat = ui.tmp.chat||{});
+  c.media = {kind:'gif', src:d.u};
+  c.gifOpen = false; ui.tmp.gifHits = null;
+  render();
+};
 ACT.chatSend = ()=>{
   const c = ui.tmp.chat || {};
   const text = ($('#chatText')||{}).value || c.text || '';
@@ -8288,6 +8664,16 @@ function chatBubble(mm){
   const mine = mm.teamId===(me&&me.id);
   const pinged = mm.notify && mm.notify!=='all' && mm.notify!=='none'
     ? '<span class="chatping">\u{1F514} '+esc((byId(S.teams,mm.notify)||{}).name||'a team')+'</span>' : '';
+  if(mm.reporter){
+    /* A hack, not a manager — set apart so nobody mistakes it for a team. */
+    return '<div class="chatrow reporterrow">'+
+      '<div class="chatbub reporterbub">'+
+        '<div class="chathead"><b>\u{1F4F0} '+esc(mm.reporter)+'</b>'+
+          '<span class="dim tiny">'+esc(mm.outlet||'')+' \u00b7 week '+(mm.reporterWeek||'')+'</span></div>'+
+        '<div class="chattext">'+esc(mm.text||'')+'</div>'+
+        reactRow(mm)+
+      '</div></div>';
+  }
   return '<div class="chatrow'+(mine?' me':'')+'">'+
     '<div class="chatbub" style="border-color:'+teamColor(mm.teamId)+'44">'+
       '<div class="chathead"><b style="color:'+teamColor(mm.teamId)+'">'+esc(teamName(mm.teamId))+'</b>'+
@@ -8296,6 +8682,7 @@ function chatBubble(mm){
       chatMediaHTML(mm)+
       (mm.mediaGone? '<div class="tiny dim">(picture cleared to save room)</div>' : '')+
       pinged+
+      reactRow(mm)+
     '</div></div>';
 }
 function chatComposeHTML(){
@@ -8319,7 +8706,7 @@ function chatComposeHTML(){
       '<label class="btn sm ghost chatmediabtn" title="Add a photo or video">'+
         '<span aria-hidden="true">\u{1F4F7}</span><span class="chatbtxt"> Photo/Video</span>'+
         '<input type="file" accept="image/*,video/*" data-a="chatFile" hidden></label>'+
-      '<button class="btn sm ghost'+(draft.gifOpen?' on':'')+'" data-a="chatGifToggle" title="Add a GIF by link">'+
+      '<button class="btn sm ghost'+(draft.gifOpen?' on':'')+'" data-a="chatGifToggle" title="Pictures to send">'+
         '<span aria-hidden="true">\u{1F39E}\uFE0F</span><span class="chatbtxt"> GIF</span></button>'+
       '<label class="chatnotify"><span class="tiny dim">Notify</span>'+
         '<select id="chatNotify" class="chatto" data-a="chatNotify">'+
@@ -8329,6 +8716,33 @@ function chatComposeHTML(){
         '</select></label>'+
       '<div class="spacer"></div>'+
       '<button class="btn sm pri" data-a="chatSend">Send</button>'+
+    '</div>'+
+    (draft.gifOpen ? gifPanel() : '')+
+  '</div>';
+}
+/* What you can send without hunting for a link. The built-in set always works;
+   the search box only appears once a key is saved in Settings. */
+function gifPanel(){
+  const hits = ui.tmp.gifHits || [];
+  return '<div class="gifpanel">'+
+    '<div class="flabel">Tap to add</div>'+
+    '<div class="stickgrid">'+STICKERS.map(([e,label])=>
+      '<button class="stick" data-a="chatStick" data-e="'+e+'" title="'+esc(label)+'">'+e+'</button>').join('')+'</div>'+
+    (gifKey()
+      ? '<div class="hr"></div><div class="row" style="gap:6px">'+
+          '<input type="text" id="gifQ" data-k="gifQ" placeholder="Search for a GIF\u2026" style="flex:1">'+
+          '<button class="btn sm" data-a="chatGifSearch"'+(ui.tmp.gifBusy?' disabled':'')+'>'+
+            (ui.tmp.gifBusy?'Looking\u2026':'Search')+'</button></div>'+
+        (hits.length? '<div class="gifgrid">'+hits.map(u=>
+          '<button class="gifhit" data-a="chatGifPick" data-u="'+esc(u)+'">'+
+          '<img src="'+esc(u)+'" alt="" loading="lazy"></button>').join('')+'</div>' : '')
+      : '<div class="hint">To search a whole library of GIFs, put a free Tenor key in Settings \u203a Notifications. '+
+        'Without one you can still paste a link below.</div>')+
+    '<div class="hr"></div>'+
+    '<div class="row" style="gap:6px">'+
+      '<input type="text" id="chatGifUrl" data-k="chatgif" placeholder="\u2026or paste a GIF link" '+
+        'data-oninput="chatGifType" style="flex:1" value="'+esc((ui.tmp.chat||{}).gifUrl||'')+'">'+
+      '<button class="btn sm" data-a="chatGifAdd">Add</button>'+
     '</div>'+
   '</div>';
 }
@@ -8540,7 +8954,7 @@ VIEWS.trades = function(){
       <button class="${sub==='review'?'on':''}" data-a="sub" data-s="review">In review (${review.length})</button>
       <button class="${sub==='inbox'?'on':''}" data-a="sub" data-s="inbox">Offers (${inbox.length})</button>
       <button class="${sub==='hist'?'on':''}" data-a="sub" data-s="hist">History</button>
-      <button class="${sub==='rules'?'on':''}" data-a="sub" data-s="rules">Timing rules</button>
+      ${isCommish() && powerOn('tradeRules') ? '<button class="'+(sub==='rules'?'on':'')+'" data-a="sub" data-s="rules">Timing rules</button>' : ''}
     </div>
 
     ${sub==='review' ? '<div class="stack">'+(review.map(card).join('') ||
@@ -9222,6 +9636,70 @@ function limitBinds(where){
 function limitProblemFor(where, teamId, addYears, excludePid){
   return limitBinds(where) ? limitProblem(teamId, addYears, excludePid) : null;
 }
+/* ---- What a team has left ---------------------------------------------------
+   Allowances stack from the longest deal down: a length you have not used can
+   be spent on anything shorter. So the honest answer to "how many threes can I
+   still do" is the cumulative one, and that is what this works out. */
+function limitBoard(teamId, excludePid){
+  const lim = S.settings.contracts.limits || {};
+  if(!Object.keys(lim).some(k=> lim[k]!=='' && lim[k]!=null)) return null;
+  const counts = lengthCounts(teamId, excludePid);
+  const max = +S.settings.contracts.maxYears||10;
+  const rows = [];
+  let cum = 0, allow = 0, capped = false, tightest = null;
+  for(let L=max; L>=1; L--){
+    const held = counts[L]||0;
+    cum += held;
+    const v = lim[L];
+    const own = (v==='' || v==null) ? null : (+v||0);
+    if(own!=null){ allow += own; capped = true; }
+    rows.push({
+      length:L, own, held,
+      usedSoFar:cum,                        /* everything this long or longer */
+      allowedSoFar: capped ? allow : null,  /* everything allowed this long or longer */
+      room: own!=null ? Math.max(0, allow - cum) : null,
+      left: null
+    });
+  }
+  /* A deal of length L is counted at every ceiling of L or shorter — never at a
+     longer one. So walk back up from the shortest, carrying the tightest
+     ceiling seen so far. */
+  let tight = null;
+  for(let i=rows.length-1; i>=0; i--){
+    if(rows[i].room != null) tight = tight==null ? rows[i].room : Math.min(tight, rows[i].room);
+    rows[i].left = tight;
+  }
+  return rows;
+}
+/* One line a manager can actually read. */
+function limitSummary(teamId){
+  const rows = limitBoard(teamId);
+  if(!rows) return '';
+  const live = rows.filter(r=> r.left!=null);
+  if(!live.length) return '';
+  const shortest = live[live.length-1];
+  return shortest.left>0
+    ? shortest.left+' more contract'+(shortest.left===1?'':'s')+' of any length before you are out'
+    : 'no room left for another contract of any length';
+}
+function limitBoardHTML(teamId, excludePid){
+  const rows = limitBoard(teamId, excludePid);
+  if(!rows) return '';
+  return '<div class="flabel">Contracts left</div>'+
+    '<div class="scrollx"><table><thead><tr>'+
+      '<th>Length</th><th class="right">Set</th><th class="right">Held</th>'+
+      '<th class="right">This long or longer</th><th class="right">Left</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr>'+
+      '<td class="num">'+r.length+' yr</td>'+
+      '<td class="right num dim">'+(r.own==null?'—':r.own)+'</td>'+
+      '<td class="right num">'+r.held+'</td>'+
+      '<td class="right num dim">'+(r.allowedSoFar==null?'—':r.usedSoFar+' of '+r.allowedSoFar)+'</td>'+
+      '<td class="right num '+(r.left===0?'bad':r.left!=null?'good':'dim')+'">'+
+        (r.left==null?'—':r.left)+'</td></tr>').join('')+
+    '</tbody></table></div>'+
+    '<div class="hint">An allowance you have not spent carries down to shorter deals. Leave a five-year slot '+
+    'unused and it can be a three instead — but once the longer ones are gone, the shorter ones go with them.</div>';
+}
 function limitProblem(teamId, addYears, excludePid){
   const lim = S.settings.contracts.limits || {};
   if(!Object.keys(lim).some(k=> lim[k]!=='' && lim[k]!=null)) return null;
@@ -9378,9 +9856,36 @@ function rookieRounds(){ return clamp(+S.settings.rookie.rounds||4, 1, 10); }
 /* Auction and blind-bid drafts run as long as the league wants them to. */
 function bbdMaxRounds(){ const n = +S.settings.bbd.maxRounds||0; return n>0 ? n : Infinity; }
 function slotKey(round, slot){ return round+'.'+String(slot).padStart(2,'0'); }
+/* Is this pick in the flat tail of the draft — 4.1 and everything after it? */
+function inFlatTail(round, slot){
+  const f = (S.settings.rookie||{}).flat || {};
+  if(f.on === false) return false;
+  const fr = +f.fromRound || 0, fs = +f.fromSlot || 1;
+  if(!fr) return false;
+  return round > fr || (round === fr && slot >= fs);
+}
+/* What the tail costs in a given year: a flat figure until the hold year, then
+   the ladder, which rises with the same growth as the rest of the scale. */
+function flatTailPrice(round, slot, year){
+  const r = S.settings.rookie, f = r.flat || {};
+  const yr = year || S.league.season;
+  const hold = +f.holdUntil || 0;
+  if(!hold || yr < hold) return Math.max(0, +f.amount || 0);
+  /* From the hold year the ladder takes over, by slot within the round. */
+  const lad = f.ladder || {};
+  const keys = Object.keys(lad).map(Number).sort((a,b)=>a-b);
+  let base = lad[slot];
+  if(base == null && keys.length) base = lad[keys[keys.length-1]];   /* past the end: the last rung */
+  base = +base || 0;
+  const lift = Math.max(0, yr - hold);
+  return roundInc(base * Math.pow(1 + (+r.growthPct||0)/100, lift));
+}
 function rookiePrice(round, slot, year){
   const r = S.settings.rookie, n = Math.max(1, S.teams.length);
   const ov = (r.overrides||{})[slotKey(round,slot)];
+  /* A price set by hand always wins; otherwise the tail has its own rule. */
+  if((ov==null || ov==='' || isNaN(+ov)) && inFlatTail(round, slot))
+    return Math.max(+r.minSalary||0, flatTailPrice(round, slot, year));
   const overall = (round-1)*n + slot;
   const base = (ov!=null && ov!=='' && !isNaN(+ov)) ? +ov
              : (+r.top||0) * Math.pow(+r.decay||1, overall-1);
@@ -10155,20 +10660,21 @@ VIEWS.rules = function(){
       <div class="spacer"></div>
       <input type="text" placeholder="Search the rules" data-k="ruleq" data-oninput="ruleSearch" value="${esc(ui.tmp.ruleq||'')}" style="max-width:220px">
       <button class="btn ghost noprint" onclick="window.print()">Print</button>
-      <button class="btn noprint" data-a="importRules">Import</button>
-      <button class="btn pri noprint" data-a="addRule">Add a section</button></header>
+      ${isCommish() && powerOn('ruleEdit') ? `<button class="btn noprint" data-a="importRules">Import</button>
+      <button class="btn pri noprint" data-a="addRule">Add a section</button>` : ''}</header>
 
     <div class="stack">
       ${list.map((r,i)=>`<div class="panel">
         <div class="ph">
           <input type="text" value="${esc(r.title)}" data-a="ruleTitle" data-id="${r.id}" data-k="rt_${r.id}"
+            ${canEditRules()?'':'readonly'}
             style="border:0;background:transparent;font:700 17px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.05em;padding:0">
           <div class="spacer"></div>
-          <button class="btn ghost sm noprint" data-a="moveRule" data-id="${r.id}" data-d="-1">↑</button>
+          ${!canEditRules() ? '' : `<button class="btn ghost sm noprint" data-a="moveRule" data-id="${r.id}" data-d="-1">↑</button>
           <button class="btn ghost sm noprint" data-a="moveRule" data-id="${r.id}" data-d="1">↓</button>
-          <button class="btn ghost sm danger noprint" data-a="rmRule" data-id="${r.id}">Delete</button>
+          <button class="btn ghost sm danger noprint" data-a="rmRule" data-id="${r.id}">Delete</button>`}
         </div>
-        <div class="pb"><textarea data-a="ruleBody" data-id="${r.id}" data-k="rb_${r.id}"
+        <div class="pb"><textarea data-a="ruleBody" data-id="${r.id}" data-k="rb_${r.id}" ${canEditRules()?'':'readonly'}
           style="border:0;background:transparent;padding:0;min-height:${Math.max(70, Math.ceil(r.body.length/70)*22)}px">${esc(r.body)}</textarea></div>
       </div>`).join('') || '<div class="panel"><div class="empty-state"><h3>No rules written down yet</h3><p>Start with the cap, then contracts, then trades. Everything else is argument.</p></div></div>'}
     </div>
@@ -10363,8 +10869,8 @@ VIEWS.dues = function(){
   <div class="section">
     <header><div><div class="eyebrow">${dl==null?'No due date set':dl<0?Math.abs(dl)+' days overdue':dl+' days to go'} · due ${dayOnly(d.dueDate)}</div>
       <h1>League dues</h1></div><div class="spacer"></div>
-      <button class="btn" data-a="markAllUnpaid">Reset the year</button>
-      <button class="btn pri" data-a="remindAll" ${owing.length?'':'disabled'}>Send reminders (${owing.length})</button></header>
+      ${!canEditDues() ? '' : `<button class="btn" data-a="markAllUnpaid">Reset the year</button>
+      <button class="btn pri" data-a="remindAll" ${owing.length?'':'disabled'}>Send reminders (${owing.length})</button>`}</header>
 
     <div class="grid g4 keep2" style="margin-bottom:16px">
       <div class="tile"><div class="k">Collected</div><div class="v good">${duesMoney(collected)}</div>
@@ -10382,24 +10888,31 @@ VIEWS.dues = function(){
         ${S.teams.map(t=>`<tr>
           <td><b style="font-weight:500">${esc(t.name)}</b></td>
           <td class="muted tiny">${esc(t.owner||'')}${t.email?'<br><span class="dim">'+esc(t.email)+'</span>':''}</td>
-          <td class="right"><input type="number" style="width:92px;text-align:right" placeholder="${d.amount}" value="${t.dues.amount??''}" data-a="dueAmt" data-id="${t.id}" data-k="da_${t.id}"></td>
+          <td class="right">${canEditDues()
+            ? '<input type="number" style="width:92px;text-align:right" placeholder="'+d.amount+'" value="'+(t.dues.amount??'')+'" data-a="dueAmt" data-id="'+t.id+'" data-k="da_'+t.id+'">'
+            : '<span class="num">'+money(dueAmount(t))+'</span>'}</td>
           <td class="right num tiny">${t.dues.paid&&t.dues.paidOn?dstr(t.dues.paidOn):'—'}</td>
           <td class="right">${t.dues.paid?'<span class="pill ok">Paid</span>':'<span class="pill" style="border-color:#5C3227;color:var(--signal)">Owing</span>'}</td>
-          <td class="right nowrap">
+          <td class="right nowrap">${!canEditDues() ? '' : `
             <button class="btn sm ${t.dues.paid?'ghost':'pri'}" data-a="togglePaid" data-id="${t.id}">${t.dues.paid?'Mark unpaid':'Mark paid'}</button>
-            ${!t.dues.paid?'<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>':''}
+            ${!t.dues.paid?'<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>':''}`}
           </td></tr>`).join('')}
         </tbody></table></div></div>
 
       <div class="stack">
         <div class="panel"><div class="ph"><h3>Terms</h3></div><div class="pb stack">
+          ${canEditDues() ? `
           <div class="grid g2">
             <label class="f"><span>Amount per team</span><input type="number" data-set="settings.dues.amount" value="${d.amount}"></label>
             <label class="f"><span>Symbol</span><input type="text" data-set="settings.dues.symbol" value="${esc(d.symbol)}"></label>
           </div>
           <label class="f"><span>Due date</span><input type="date" data-norender data-set="settings.dues.dueDate" value="${esc(d.dueDate||'')}"></label>
           <label class="f"><span>Pay to</span><input type="text" data-set="settings.dues.payTo" value="${esc(d.payTo||'')}" placeholder="Venmo @commissioner"></label>
-          <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>
+          <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>`
+          : `<div class="row"><span class="eyebrow" style="width:110px">Each team</span><b>${duesMoney(d.amount)}</b></div>
+             <div class="row"><span class="eyebrow" style="width:110px">Due</span><b>${dayOnly(d.dueDate)}</b></div>
+             ${d.payTo?'<div class="row"><span class="eyebrow" style="width:110px">Pay to</span><b>'+esc(d.payTo)+'</b></div>':''}
+             ${d.instructions?'<div class="hint">'+esc(d.instructions)+'</div>':''}`}
         </div></div>
         <div class="panel"><div class="ph"><h3>Notice board</h3></div><div class="pb"><div class="log">
           ${S.notices.filter(n=>n.kind==='dues').slice(0,10).map(n=>'<div><span class="dim">'+dstr(n.at)+'</span> — '+esc(n.body)+'</div>').join('')
@@ -10907,6 +11420,14 @@ ACT.sleeperGo = async ()=>{
       keepBackup(S, 'before the Sleeper import');
       const byUser = {};
       users.forEach(u=> byUser[u.user_id] = u);
+      /* Manual adjustments belong to the league, not to Sleeper. Keep them
+         through the rebuild and put them back on the matching team, so an
+         import can never quietly wipe money somebody was owed or charged. */
+      const oldAdj = {}, oldDead = {};
+      S.teams.forEach(t=>{
+        if((t.adj||[]).length) oldAdj[String(t.name||'').toLowerCase()] = deep(t.adj);
+        if((t.dead||[]).length) oldDead[String(t.name||'').toLowerCase()] = deep(t.dead);
+      });
       /* Keep every deal that already exists. Sleeper decides WHERE a player
          sits; it does not get to change what he is paid. Matched on the Sleeper
          id first, then on name and position for anything added by hand. */
@@ -10941,7 +11462,11 @@ ACT.sleeperGo = async ()=>{
         const u = byUser[r.owner_id] || {};
         const name = (u.metadata && u.metadata.team_name) || u.display_name || ('Team '+(i+1));
         const t = {id:'t'+r.roster_id, name, abbr:name.slice(0,3).toUpperCase(),
-          owner:u.display_name||'', email:'', dead:[], adj:[], faSpent:0,
+          owner:u.display_name||'', email:'',
+          /* Whatever this league had charged or credited this team stays with it. */
+          dead:oldDead[String(name||'').toLowerCase()] || [],
+          adj: oldAdj[String(name||'').toLowerCase()] || [],
+          faSpent:0,
           color:TEAM_COLORS[i%TEAM_COLORS.length], mascot:mk[i%mk.length],
           dues:{paid:false, paidOn:null, amount:null, method:'', note:''}};
         S.teams.push(t);
@@ -10954,6 +11479,8 @@ ACT.sleeperGo = async ()=>{
               pos: /^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(raw) ? raw : 'WR',
               nfl:(pl && pl.team) || '', age:(pl && +pl.age) || 0, value:1, contract:null,
               exp:(pl && pl.years_exp!=null) ? (+pl.years_exp||0) : null};
+        /* Nobody with a season behind him is a rookie. */
+        if(p.exp===0) markRookie(p, S.league.season);
             if(pl && pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
             /* Sleeper reports a roster status; "PS"/"Practice Squad" sets our flag
                so a taxi player on a real practice squad can be cut free without
@@ -11086,6 +11613,10 @@ ACT.slOpt = (d)=>{
 };
 
 VIEWS.import = function(){
+  if(!(isCommish() && powerOn('importing')))
+    return '<section class="wrap"><div class="panel"><div class="empty-state"><h3>Commissioners only</h3>'+
+      '<p>Bringing a league in rewrites rosters and contracts, so it is kept to the people who run the league.</p>'+
+      '</div></div></section>';
   const im = ui.tmp.imp = ui.tmp.imp || impDefault();
   const sub = ui.sub || (S.players.length ? 'price' : 'sleeper');
   return `
@@ -11984,13 +12515,35 @@ VIEWS.settings = function(){
 
   return `
   <div class="section">
-    <header><div><div class="eyebrow">Everything here is yours to change</div><h1>Settings</h1></div></header>
+    <header><div><div class="eyebrow">${isCommish()?'Everything here is yours to change':'How this league is set up'}</div><h1>Settings</h1></div></header>
+    ${!isCommish() ? '<div class="hint">You can look through all of this, but only a commissioner can change it.</div>' : ''}
     <div class="tabs">
       ${[['league','League'],['scoring','Scoring'],['roster','Roster'],['contracts','Contracts'],['rookie','Rookie scale'],['playoffs','Playoffs'],['value','Values'],['cap','Cap'],['notify','Notifications'],['server','Server'],['data','Data']]
+        .filter(([k])=> k!=='data' || isHeadCommish())
         .map(([k,l])=>'<button class="'+(sub===k?'on':'')+'" data-a="sub" data-s="'+k+'">'+l+'</button>').join('')}
     </div>
 
     ${sub==='league'?`<div class="grid g2">
+      ${!isHeadCommish()?'':`<div class="panel" style="grid-column:1/-1"><div class="ph"><h3>What commissioners may do</h3></div>
+        <div class="pb stack">
+          <p class="muted" style="margin:0">Each of these is a commissioner power. Switch one off and it disappears
+            for everyone, yourself included, until you switch it back on.</p>
+          <div class="grid g2">
+            ${[['actAs','Stand in for another manager','make trades and set lineups as somebody else'],
+               ['closeWeek','Close out the week','and start the next one, from Live scoring'],
+               ['feedSource','Change the feed source','where live scores come from'],
+               ['capTools','Cap growth and release rules','on the Cap ladder'],
+               ['tradeRules','Trade timing rules','the tab on the Trades page'],
+               ['ruleEdit','Write the rulebook','add, reorder and delete sections'],
+               ['duesEdit','Keep the dues sheet','mark paid, set the amount, send reminders'],
+               ['importing','Import a league','the Import League tab']
+              ].map(([k,label,note])=>
+              '<label class="check"><input type="checkbox" data-set="settings.powers.'+k+'" '+
+              (powerOn(k)?'checked':'')+'><span>'+label+' <span class="dim">\u2014 '+note+'</span></span></label>').join('')}
+          </div>
+          <div class="hint">Standing in for another manager is off to begin with, so nobody can make a move on
+            somebody else's behalf by accident.</div>
+        </div></div>`}
       ${reallyCommish()?`<div class="panel" style="grid-column:1/-1"><div class="ph"><h3>See the site as somebody else</h3></div>
         <div class="pb stack">
           <p class="muted" style="margin:0">Look at everything through one of your managers' eyes — their team, their
@@ -12351,7 +12904,64 @@ VIEWS.settings = function(){
 
     ${sub==='rookie'?(()=>{
       const r = S.settings.rookie, n = S.teams.length;
-      return `<div class="grid g2" style="margin-bottom:14px">
+      return `<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The tail of the draft</h3></div><div class="pb stack">
+        ${(()=>{
+          const f = (r.flat||{});
+          const lad = f.ladder||{};
+          const keys = Object.keys(lad).map(Number).sort((a,b)=>a-b);
+          const yr = S.league.season;
+          return `
+          <label class="check"><input type="checkbox" data-set="settings.rookie.flat.on" ${f.on!==false?'checked':''}>
+            <span>Hold the back of the draft at a flat price</span></label>
+          <div class="grid g2">
+            <label class="f"><span>From pick</span>
+              <div class="row" style="gap:4px">
+                <input type="number" min="1" max="10" data-set="settings.rookie.flat.fromRound" value="${+f.fromRound||4}" style="width:60px">
+                <span class="dim">.</span>
+                <input type="number" min="1" max="20" data-set="settings.rookie.flat.fromSlot" value="${+f.fromSlot||1}" style="width:60px">
+                <span class="dim tiny">and everything after it</span>
+              </div></label>
+            <label class="f"><span>Flat price</span>
+              <input type="number" min="0" step="0.01" data-set="settings.rookie.flat.amount" value="${+f.amount||1}"></label>
+            <label class="f"><span>Held until</span>
+              <input type="number" min="${yr}" max="2100" data-set="settings.rookie.flat.holdUntil" value="${+f.holdUntil||2040}"></label>
+            <label class="f"><span>Rises each year after (%)</span>
+              <input type="number" step="0.1" data-set="settings.rookie.growthPct" value="${+r.growthPct||0}"></label>
+          </div>
+          <div class="flabel">What the tail pays from ${+f.holdUntil||2040}</div>
+          <div class="scrollx"><table><tbody>${keys.map(k=>
+            '<tr><td class="num">'+(+f.fromRound||4)+'.'+k+'</td>'+
+            '<td class="right"><input type="number" step="0.01" min="0" style="width:90px;text-align:right" '+
+            'data-set="settings.rookie.flat.ladder.'+k+'" value="'+(+lad[k]||0)+'"></td>'+
+            '<td class="right num dim">'+money(flatTailPrice(+f.fromRound||4, k, yr))+' now</td></tr>').join('')}
+          </tbody></table></div>
+          <div class="hint">Everything from ${+f.fromRound||4}.${+f.fromSlot||1} on pays ${money(+f.amount||1)} until
+            ${+f.holdUntil||2040}. From that year it follows the ladder above, and the ladder itself rises
+            ${(+r.growthPct||0)}% a year like the rest of the scale. A price you set by hand on a single pick still
+            overrides all of this.</div>`;
+        })()}
+      </div></div>
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The rookie rule</h3></div><div class="pb stack">
+        <label class="check"><input type="checkbox" data-set="settings.rookie.windowOn" ${rookieWindowOn()?'checked':''}>
+          <span>Hold drafted rookies to short deals</span></label>
+        <div class="grid g2">
+          <label class="f"><span>Window (seasons from the draft)</span>
+            <input type="number" min="1" max="6" data-set="settings.rookie.windowYears" value="${+rookieRules().windowYears||3}"></label>
+          <label class="f"><span>Longest deal inside it (years)</span>
+            <input type="number" min="1" max="6" data-set="settings.rookie.windowMaxDeal" value="${+rookieRules().windowMaxDeal||3}"></label>
+          <label class="f"><span>Rookie draft ended</span>
+            <input type="date" data-norender data-set="settings.rookie.draftEnd" value="${esc(rookieRules().draftEnd||'')}"></label>
+          <label class="f"><span>Signing window after it (days)</span>
+            <input type="number" min="0" max="30" data-set="settings.rookie.signWindowDays" value="${+rookieRules().signWindowDays||7}"></label>
+        </div>
+        <div class="hint">A player taken in the rookie draft, or picked up within ${+rookieRules().signWindowDays||7} days of it
+          ending, can only be signed or extended so far: ${+rookieRules().windowMaxDeal||3} years in total, counting what he has
+          already served, for ${+rookieRules().windowYears||3} seasons. Sign him for one year and two more can be added later;
+          sign him for three and that is the lot until the window closes. Reaching the free agency draft lifts it altogether.
+          Anyone signed inside that week comes in at ${money(+S.settings.contracts.minSalary||1)} a year.
+          ${inRookieSignWindow()?'<br><b>The signing week is open now.</b>':''}</div>
+      </div></div>
+      <div class="grid g2" style="margin-bottom:14px">
         <div class="panel"><div class="ph"><h3>The scale</h3></div><div class="pb stack">
           <label class="check"><input type="checkbox" data-set="settings.rookie.on" ${r.on?'checked':''}>
             <span>Price rookie picks off a fixed scale</span></label>
@@ -12805,6 +13415,13 @@ VIEWS.settings = function(){
     </div>`:''}
 
     ${sub==='notify'?`<div class="grid g2">
+      <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>League chat</h3></div><div class="pb stack">
+        <label class="check"><input type="checkbox" data-set="settings.chat.reporters" ${(S.settings.chat||{}).reporters!==false?'checked':''}>
+          <span>Beat reporters <span class="dim">— a few hacks drop into the chat each week to praise and needle</span></span></label>
+        <label class="f"><span>Tenor key <span class="dim">— optional, turns on GIF search</span></span>
+          <input type="text" data-set="settings.chat.gifKey" value="${esc((S.settings.chat||{}).gifKey||'')}" placeholder="leave empty to use the built-in set"></label>
+        <div class="hint">Without a key the picker still offers a built-in set, and links can be pasted as before.</div>
+      </div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Notifications</h3></div>
         <div class="pb stack">
           <div class="hint">These are <b>your</b> notifications — each manager sets their own. Everything is always written to the transaction log; these switches only control whether <b>${esc((myTeam()||{}).name||'you')}</b> also gets a notification. All off by default.</div>
@@ -12843,7 +13460,15 @@ VIEWS.settings = function(){
             pull down to refresh the page, or close the tab and open the link again.</div>
         </div>
       </div>
-      ${(()=>{
+      ${!isHeadCommish() ? `
+        <div class="panel"><div class="ph"><h3>Who is in</h3></div><div class="pb">
+          <table><tbody>${S.teams.map(t2=>'<tr><td>'+esc(t2.name)+'</td><td class="dim tiny">'+
+            esc(t2.owner||'')+'</td><td class="right">'+
+            (t2.id===S.league.commishTeamId ? '<span class="pill ok">commissioner</span>'
+             : (S.league.coCommishIds||[]).indexOf(t2.id)>=0 ? '<span class="pill">co-commissioner</span>' : '')+
+            '</td></tr>').join('')}</tbody></table>
+          <div class="hint">The connection itself is the head commissioner's to change.</div>
+        </div></div>` : (()=>{
         const c = S.settings.supa;
         const step = !c.on ? 0 : !Supa.client ? 1 : !Supa.user ? 2 : !c.leagueId ? 3 : 4;
         return `
@@ -14583,6 +15208,16 @@ ACT.rollSeasonGo = ()=>{
     });
   }
   S.league.season = old+1;
+  /* An adjustment only ever applied to one season. Now that season is behind
+     us, it goes — but nothing before that moment removes it. */
+  let expired = 0;
+  S.teams.forEach(t=>{
+    const before = (t.adj||[]).length;
+    t.adj = (t.adj||[]).filter(a=> +a.year > old);
+    expired += before - t.adj.length;
+  });
+  if(expired) logIt(expired+' cap adjustment'+(expired===1?'':'s')+' for '+old+' expired with the season',
+    {type:'admin'});
   clearCapCache(); dppCache = null;
   let dropped = 0, tagged = 0;
   S.players.forEach(p=>{
