@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-16v · the tail of the draft';
+const APP_BUILD = '2026-08-17a · read every scoring group';
 
 /* ============================================================
    HOME LEAGUE
@@ -1158,6 +1158,9 @@ function defaultState(){
       },
       waivers:{ on:true, deadline:(season)+'-11-15', salary:1, blockExtensions:true, clearAtRollover:true },
       taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2,
+        /* From this week on, nobody new goes on the taxi squad. 0 means it never
+           locks. */
+        lockWeek:1,
         /* Most years of NFL experience a player may have and still be taxi
            eligible. '' means no limit. */
         maxExp:3 },
@@ -1676,7 +1679,7 @@ function notify(title, body, kind){
 /* Who is taking the action right now — the acting team (a commissioner may be
    acting for another team). Used to attribute log entries like contract edits. */
 function currentActorName(){
-  const id = (ui.tmp && ui.tmp.actAs) || S.league.myTeamId;
+  const id = (typeof actingTeam==='function' ? actingTeam() : null) || S.league.myTeamId;
   const t = byId(S.teams, id);
   return t ? t.name : '';
 }
@@ -1990,7 +1993,10 @@ function renderShell(){
   $('#railLeague').textContent = S.league.name;
   $('#navLinks').innerHTML = navHTML(route);
   $('#sheetLinks').innerHTML = navHTML(route);
-  $('#railFoot').innerHTML = 'Season '+y+' · Week '+S.live.week+'<br>'+esc(t?t.name:'No team')+
+  $('#railFoot').innerHTML = (viewAsTeam()
+      ? '<button class="btn sm pri wide" data-a="viewAsOff" style="margin-bottom:8px">Back to my own view</button>'
+      : '')+
+    'Season '+y+' · Week '+S.live.week+'<br>'+esc(t?t.name:'No team')+
     (S.meta.savedAt? '<br><span class="dim">Saved '+new Date(S.meta.savedAt).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})+'</span>':'')+
     '<br><span class="dim" style="font-size:10px">'+APP_BUILD+'</span>';
 
@@ -2111,8 +2117,14 @@ function render(){
      anything. Rather than gate a hundred fields one by one, everything on the
      page is switched off after it is drawn. */
   if(route==='settings' && !isCommish()){
+    /* Anything that only moves you around the page stays live — you can read
+       every corner of the settings, you just cannot change them. */
+    const CAN_STILL_CLICK = ['sub','scGroup','viewAs','viewAsOff','go','ladderPos','pvLen',
+                             'copyBuild','copyHomeBlock','pickTeamView'];
     $('#view').querySelectorAll('input,select,textarea,button').forEach(el=>{
-      if(el.dataset && el.dataset.a==='sub') return;      /* the tabs still work */
+      const a = el.dataset && el.dataset.a;
+      if(a && CAN_STILL_CLICK.indexOf(a) >= 0) return;
+      if(el.closest && el.closest('.previewbar')) return;
       el.setAttribute('disabled','');
       el.classList.add('lookonly');
     });
@@ -2590,6 +2602,9 @@ document.addEventListener('change', e=>{
      focus that means "mid-typing", not "cleared" — leave the stored value be. */
   if(t.type==='date' && val(t)==='' && document.activeElement===t) return;
   setPath(t.dataset.set, val(t));
+  /* Switching off the power puts you back on your own team straight away,
+     rather than leaving trades pointed at whoever you were last on. */
+  if(t.dataset.set==='settings.powers.actAs' && !actAsAllowed()) ui.tmp.actAs = null;
   save();
   if(t.dataset.norender===undefined) render();
 });
@@ -3883,6 +3898,8 @@ document.addEventListener('input', e=>{
 });
 
 VIEWS.live = function(){
+  /* Opening the page on a week nobody has built yet should just work. */
+  if(!(S.live.matchups||[]).length && (S.teams||[]).length>1) buildWeek(+S.live.week||1);
   const t = myTeam(); if(!t) return '<div class="empty-state"><h3>No league loaded</h3></div>';
   const cfg = S.settings.live;
   const myGame = S.live.matchups.find(m=> m.home===t.id || m.away===t.id);
@@ -3922,11 +3939,9 @@ VIEWS.live = function(){
       ${live?'<span class="pill live">'+live+' games in progress</span>':''}
       <button class="btn ghost" data-a="go" data-r="schedule">Schedule</button>
       <button class="btn" data-a="editLineup" data-team="${t.id}" data-w="${+S.live.week||1}">Set lineup</button>
-      ${!(isCommish() && powerOn('closeWeek')) ? '' :
-        cfg.mode==='demo' ? `<button class="btn ${cfg.running?'':'pri'}" data-a="simToggle">${cfg.running?'Pause feed':'Start feed'}</button>
-        <button class="btn ghost" data-a="simReset">New week</button>` :
-        `<button class="btn pri" data-a="pollNow">Refresh now</button>
-         <button class="btn ghost" data-a="closeWeek">Close out week ${S.live.week}</button>`}
+      ${cfg.mode==='demo' && isCommish() && powerOn('closeWeek')
+        ? `<button class="btn ${cfg.running?'':'pri'}" data-a="simToggle">${cfg.running?'Pause feed':'Start feed'}</button>`
+        : cfg.mode!=='demo' ? `<button class="btn pri" data-a="pollNow">Refresh now</button>` : ''}
     </header>
 
     ${(()=>{
@@ -5021,6 +5036,18 @@ ACT.setSlot = (d)=>{
   const tid = p.contract.teamId;
   if(slot!=='active' && slotRoom(tid, slot) <= 0)
     return toast('No '+SLOT_LABEL[slot].toLowerCase()+' room left','bad');
+  /* Once the squad is shut, nobody new goes on it. A commissioner can still
+     force it through for a good reason. */
+  if(slot==='taxi' && taxiLocked() && !d.force){
+    if(!isCommish())
+      return toast('The taxi squad shut at week '+taxiLockWeek()+' — nobody new goes on it now','bad');
+    return modal('The taxi squad is shut',
+      '<p class="muted" style="margin:0 0 8px">It closed at week '+taxiLockWeek()+', and it is week '+
+      (+S.live.week||1)+'.</p><div class="hint">You can still put '+esc(p.name)+
+      ' there if there is a reason. It goes on the record.</div>',
+      '<button class="btn ghost" data-a="closeModal">Leave him</button>'+
+      '<button class="btn pri" data-a="setSlot" data-id="'+p.id+'" data-s="taxi" data-force="1">Put him there anyway</button>');
+  }
   /* The taxi squad is for young players. A commissioner can put somebody there
      anyway, but has to say so — it is never done quietly on their behalf. */
   if(slot==='taxi' && !d.force){
@@ -5490,6 +5517,7 @@ ACT.picksPull = async ()=>{
   const id = sleeperLeagueId(($('#pkSlId')||{}).value || ui.tmp.pkSlId || sleeperLeague() || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.pkSlId = ($('#pkSlId')||{}).value || ui.tmp.pkSlId || '';
+  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
   ui.tmp.pkBusy = true; ui.tmp.pkErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 25);
@@ -6558,7 +6586,12 @@ ACT.growthMode = (d)=>{ S.settings.cap.growthMode=d.m; save(); render(); };
 /* ============================================================
    TRADE ENGINE — auctions, review windows, third-party counters
    ============================================================ */
-function actingTeam(){ return viewAsTeam() || ui.tmp.actAs || S.league.myTeamId || (S.teams[0]||{}).id; }
+function actingTeam(){
+  /* Standing in for somebody only counts while the league allows it. The moment
+     that is switched off you are yourself again, whoever you were last on. */
+  const stand = actAsAllowed() ? ui.tmp.actAs : null;
+  return viewAsTeam() || stand || S.league.myTeamId || (S.teams[0]||{}).id;
+}
 function actAsBar(){
   if(typeof Supa==='object' && Supa.seated() && !Supa.boss()){
     return '<span class="pill ok" title="signed in as '+esc(Supa.user.email)+'">'+
@@ -6759,6 +6792,11 @@ function moveAssets(fromTeam, toTeam, o){
   (o.players||[]).forEach(id=>{
     const p=byId(S.players,id); if(!p || !p.contract) return;
     p.contract.teamId = toTeam;
+    /* He joins the roster proper — a taxi or practice spot does not travel. */
+    if(playerSlot(p)==='taxi' || playerSlot(p)==='practice'){
+      p.slot = 'active';
+      logIt(p.name+' came off the taxi squad in the trade', {type:'trade', teams:[fromTeam,toTeam], players:[p.id]});
+    }
     const r = (o.retain||{})[id];
     if(isOldRetain(r)) applyRetention(id, fromTeam, +r.pct, +r.through||S.league.season, 'pct');
     else if(r && r.byYear && Object.keys(r.byYear).length) applyRetentionYears(id, fromTeam, r.byYear);
@@ -7004,8 +7042,12 @@ ACT.cancelAuction = (d)=>{
   save(); render(); toast('Pulled off the block');
 };
 ACT.forceSettle = (d)=>{ const auc=byId(S.auctions,d.id); auc.clock.remain=0; settleAuction(auc); save(); render(); };
-ACT.setActAs = (d,el)=>{ ui.tmp.actAs = el.value; render(); };
-document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]'); if(s){ ui.tmp.actAs=s.value; render(); } });
+ACT.setActAs = (d,el)=>{
+  if(!actAsAllowed()) return toast('Standing in for another manager is switched off','bad');
+  ui.tmp.actAs = el.value; render();
+};
+document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]');
+  if(s){ if(!actAsAllowed()) return; ui.tmp.actAs=s.value; render(); } });
 document.addEventListener('change', e=>{
   const va = e.target.closest('[data-a="viewAs"]');
   if(va && ACT.viewAs){ ACT.viewAs(va.dataset, va, e); return; }
@@ -7910,14 +7952,17 @@ ACT.newTrade = ()=>{
 };
 function tbSide(side){
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
-  const out = sum(s.players.map(id=>{const p=byId(S.players,id);return p?capHit(p,y):0;}));
+  /* Somebody on the taxi squad costs nothing where he is, but he cannot stay
+     there once he is traded — so the trade is priced at what he actually earns. */
+  const out = sum(s.players.map(id=>{const p=byId(S.players,id);return p?tradeHit(p,y):0;}));
   return `<div class="assetbox">
     <label class="f" style="margin-bottom:8px"><span>${side==='a'?'Sending team':'Receiving team'}</span>
       <select data-a="tbTeam" data-side="${side}">${S.teams.map(t=>'<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+'</option>').join('')}</select></label>
     <div style="margin-bottom:8px">${assetChips(s,{rm:'tbRm', side:side})}</div>
     <div class="row">
       <select id="tbp_${side}" style="flex:1;min-width:140px"><option value="">Player…</option>
-        ${ownedPlayers(tid).map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+money(capHit(p,y))+'</option>').join('')}</select>
+        ${ownedPlayers(tid).map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+money(tradeHit(p,y))+
+          (offCap(p)?' (off the cap now)':'')+'</option>').join('')}</select>
       <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="players">Add</button>
     </div>
     <div class="row" style="margin-top:6px">
@@ -9856,6 +9901,19 @@ function rookieRounds(){ return clamp(+S.settings.rookie.rounds||4, 1, 10); }
 /* Auction and blind-bid drafts run as long as the league wants them to. */
 function bbdMaxRounds(){ const n = +S.settings.bbd.maxRounds||0; return n>0 ? n : Infinity; }
 function slotKey(round, slot){ return round+'.'+String(slot).padStart(2,'0'); }
+/* From which week is the taxi squad shut? 0 or blank means never. */
+function taxiLockWeek(){ const w = +((S.settings.taxi||{}).lockWeek); return w>0 ? w : 0; }
+function taxiLocked(){
+  const w = taxiLockWeek();
+  return w>0 && (+S.live.week||1) >= w;
+}
+/* What a player costs the team receiving him in a trade. Somebody parked on the
+   taxi squad is off the cap where he sits, but he cannot stay there once he is
+   dealt, so a trade is priced at his real salary. */
+function tradeHit(p, year){
+  const y = year || S.league.season;
+  return offCap(p) ? grossHit(p, y) : capHit(p, y);
+}
 /* Is this pick in the flat tail of the draft — 4.1 and everything after it? */
 function inFlatTail(round, slot){
   const f = (S.settings.rookie||{}).flat || {};
@@ -11230,6 +11288,7 @@ ACT.schedPullGo = async ()=>{
   const id = sleeperLeagueId(($('#schedSlId')||{}).value || ui.tmp.schedSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.schedSlId = ($('#schedSlId')||{}).value || ui.tmp.schedSlId || '';
+  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
   ui.tmp.schedBusy = true; ui.tmp.schedErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 10);
@@ -11288,6 +11347,7 @@ ACT.faPullGo = async ()=>{
   const id = sleeperLeagueId(($('#faSlId')||{}).value || ui.tmp.faSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.faSlId = ($('#faSlId')||{}).value || '';
+  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
   ui.tmp.faBusy = true; ui.tmp.faErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 20);
@@ -11400,6 +11460,9 @@ ACT.faReviewGo = ()=>{
 };
 ACT.sleeperGo = async ()=>{
   const id = sleeperLeagueId(($('#slId')||{}).value);
+  /* Remember it, so lineups, taxi and injured reserve can keep in step without
+     the id having to be typed in a second place. */
+  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
   if(!id) return toast('Paste your league id, or the sleeper.com address','bad');
   ui.tmp.slIdVal = ($('#slId')||{}).value || '';
   ui.tmp.slErr = null; ui.tmp.slBusy = true; render();
@@ -12657,6 +12720,17 @@ VIEWS.settings = function(){
             <button class="btn sm" data-a="sleeperSyncNow" ${ui.tmp.syncBusy?'disabled':''}>${ui.tmp.syncBusy?'Working…':'Sync with Sleeper now'}</button>
             <div class="hr"></div>
           </div>
+          <label class="f"><span>Taxi squad shuts at week</span>
+            <select data-set="settings.taxi.lockWeek">
+              <option value="0"${!taxiLockWeek()?' selected':''}>never — it stays open all year</option>
+              ${Array.from({length:seasonWeeks()},(_,i)=>i+1).map(w=>
+                '<option value="'+w+'"'+(taxiLockWeek()===w?' selected':'')+'>week '+w+'</option>').join('')}
+            </select></label>
+          <div class="hint">${taxiLockWeek()
+            ? 'From week '+taxiLockWeek()+' nobody new goes on the taxi squad'+
+              (taxiLocked()?' — it is shut now.':'; it is open at the moment.')+
+              ' A commissioner can still force somebody on with a reason.'
+            : 'The taxi squad stays open all season.'}</div>
           <label class="f" style="grid-column:1/-1"><span>Who may go on the taxi squad</span>
             <select data-set="settings.taxi.maxExp">
               ${[['','No limit — anyone'],['0','Rookies only'],['1','1 year of experience or less'],
@@ -12941,6 +13015,16 @@ VIEWS.settings = function(){
             overrides all of this.</div>`;
         })()}
       </div></div>
+      ${!(isCommish() && powerOn('closeWeek')) ? '' : `
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The week</h3></div><div class="pb stack">
+        <div class="row" style="gap:8px;align-items:center">
+          <div>Week <b>${S.live.week}</b> of ${seasonWeeks()}</div><div class="spacer"></div>
+          <button class="btn" data-a="closeWeek">Close out week ${S.live.week}</button>
+          <button class="btn ghost" data-a="simReset">Clear the week</button>
+        </div>
+        <div class="hint">Closing a week records the scores, rolls everyone on, and brings the beat reporters in.
+          It has been taken off Live scoring so nobody trips over it mid-Sunday.</div>
+      </div></div>`}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The rookie rule</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.rookie.windowOn" ${rookieWindowOn()?'checked':''}>
           <span>Hold drafted rookies to short deals</span></label>
