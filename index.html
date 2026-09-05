@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17a · read every scoring group';
+const APP_BUILD = '2026-08-17f · tenor key setup';
 
 /* ============================================================
    HOME LEAGUE
@@ -1672,9 +1672,18 @@ function logIt(text, meta){
   S.log.unshift(Object.assign({at:Date.now(), text, type:'admin', teams:[], players:[]}, meta||{}));
   if(S.log.length>600) S.log.length=600;
 }
-function notify(title, body, kind){
-  S.notices.unshift({id:uid('n'), at:Date.now(), title, body, kind:kind||'info', read:false});
+/* teams: leave it out and everybody sees the notice. Name the teams a piece of
+   business belongs to and only they will. */
+function notify(title, body, kind, teams){
+  const only = Array.isArray(teams) ? teams.filter(Boolean) : null;
+  S.notices.unshift({id:uid('n'), at:Date.now(), title, body, kind:kind||'info',
+    teams: (only && only.length) ? only : null, read:false});
   if(S.notices.length>200) S.notices.length=200;
+}
+/* Is this notice any of my business? */
+function noticeForMe(nt, teamId){
+  if(!nt || !nt.teams || !nt.teams.length) return true;   /* league-wide */
+  return nt.teams.indexOf(teamId) >= 0;
 }
 /* Who is taking the action right now — the acting team (a commissioner may be
    acting for another team). Used to attribute log entries like contract edits. */
@@ -2885,8 +2894,7 @@ VIEWS.dash = function(){
         <div class="pb"><div class="log">${(()=>{
           /* A trade notice belongs to the team it was sent to. Everyone else does
              not need to hear about other people's offers. */
-          const mineOnly = S.notices.filter(n=>
-            n.kind!=='trade' || !n.teamId || n.teamId===t.id);
+          const mineOnly = S.notices.filter(n=> noticeForMe(n, t.id));
           return mineOnly.length ? mineOnly.slice(0,8).map(n=>
             '<div><b style="color:var(--bone)">'+esc(n.title)+'</b><br>'+esc(n.body)+'</div>').join('')
             : '<div class="dim">Nothing new.</div>';
@@ -3171,10 +3179,37 @@ function gameForPlayer(p){
 /* Locked once that game is no longer 'pre'. A player on a bye has no game, so
    nothing to lock — they simply cannot be started. Commissioners are never
    locked, so a genuine mistake can still be fixed. */
-function playerLocked(p){
-  if(isCommish()) return false;
+/* Has this player's game started? Nothing to do with who is asking. */
+function gameStarted(p){
   const g = gameForPlayer(p);
   return !!g && g.status !== 'pre';
+}
+/* Locked for an ordinary manager. A commissioner can still move him, but it is
+   recorded rather than waved through. */
+function playerLocked(p){
+  if(isCommish()) return false;
+  return gameStarted(p);
+}
+/* Once a game kicks off, the team he was on scores him for the rest of the week
+   — even if he is traded on Sunday afternoon. */
+function lockTeamFor(playerId, week){
+  const w = week || +S.live.week || 1;
+  return ((S.live.lockedTeams||{})[w]||{})[playerId] || null;
+}
+/* Called as games start: remember who held him at kickoff. */
+function stampLockedTeams(){
+  const w = +S.live.week || 1;
+  S.live.lockedTeams = S.live.lockedTeams || {};
+  const book = S.live.lockedTeams[w] = S.live.lockedTeams[w] || {};
+  S.players.forEach(p=>{
+    if(!p.contract || !p.contract.teamId) return;
+    if(book[p.id]) return;                 /* already stamped at his kickoff */
+    if(gameStarted(p)) book[p.id] = p.contract.teamId;
+  });
+}
+/* Which team scores this player this week. */
+function scoringTeamFor(p, week){
+  return lockTeamFor(p.id, week) || (p.contract ? p.contract.teamId : null);
 }
 function lineupLockNote(){
   const games = S.live.games || [];
@@ -4949,11 +4984,20 @@ ACT.luSet = (d, el)=>{
   /* Refuse a move that touches a player whose game has started — the greying
      out is a courtesy, this is the guard. Only the current week can lock;
      editing a past or future week is unaffected. */
+  let forced = null;
   if(w === (+S.live.week||1)){
     const outgoing = arr[i] ? byId(S.players, arr[i]) : null;
     const incoming = val ? byId(S.players, val) : null;
     if(outgoing && playerLocked(outgoing)){ el.value = arr[i]||''; return toast('That game has started — '+outgoing.name+' is locked in','bad'); }
     if(incoming && playerLocked(incoming)){ el.value = arr[i]||''; return toast(incoming.name+"'s game has already started",'bad'); }
+    /* A commissioner is not stopped, but a change to a started game goes on the
+       record with exactly what was done. */
+    if(isCommish()){
+      const started = [];
+      if(outgoing && gameStarted(outgoing)) started.push('took '+outgoing.name+' out');
+      if(incoming && gameStarted(incoming)) started.push('put '+incoming.name+' in');
+      if(started.length) forced = started.join(' and ');
+    }
   }
   S.lineups = S.lineups || {};
   S.lineups[w] = S.lineups[w] || {};
@@ -4961,6 +5005,14 @@ ACT.luSet = (d, el)=>{
   if(val && dup>=0 && dup!==i) arr[dup] = '';    // nobody plays two positions
   arr[i] = val;
   S.lineups[w][tid] = arr;
+  if(forced){
+    const slotName = (lineupFor(tid, w).slots[i]||{}).slot || 'a slot';
+    const text = currentActorName()+' changed a locked lineup for '+teamName(tid)+
+      ' in week '+w+' — '+forced+' at '+slotName+', after kickoff';
+    logIt(text, {type:'admin', teams:[tid],
+      players:[arr[i], val].filter(Boolean)});
+    notify('Locked lineup changed', text, 'warn');
+  }
   save();
   $('#modalBox .mb').innerHTML = lineupForm(tid, w);
 };
@@ -5333,11 +5385,37 @@ function projFor(p, week){
 /* No projection to hand: use his own average here, which is honest about what
    it is rather than inventing a number. */
 function projFromForm(p){
+  /* His own recent weeks, this season. */
   const log = playerLog(p);
-  if(!log.length) return null;
-  const recent = log.slice(-4);
-  const avg = recent.reduce((n,w)=> n + (+w.fpts||0), 0) / recent.length;
-  return Math.round(avg*10)/10;
+  if(log.length){
+    const recent = log.slice(-4);
+    return Math.round((recent.reduce((n,w)=> n + (+w.fpts||0), 0) / recent.length)*10)/10;
+  }
+  /* Nothing this year — what he averaged last year. */
+  const years = playerYears(p).filter(yr=> yr !== S.league.season);
+  for(const yr of years){
+    const line = ((S.history||{})[yr]||{})[p.id];
+    if(line && line.gp) return Math.round((line.fpts / line.gp)*10)/10;
+  }
+  /* Still nothing, which is where week one starts. Fall back to what the league
+     thinks he is worth against the rest of his position. */
+  return projFromPosition(p);
+}
+/* A rough figure from where he sits at his position — better than a blank in
+   week one, and clearly labelled as the guess it is. */
+const POS_BASE = {QB:18, RB:11, WR:11, TE:8, K:8, DEF:7, DL:6, LB:6, DB:6};
+function projFromPosition(p){
+  if(!p || !p.pos) return null;
+  const base = POS_BASE[p.pos];
+  if(base == null) return null;
+  const peers = S.players.filter(x=> x.pos===p.pos && (+x.value||0) > 0);
+  if(peers.length < 3) return base;
+  const vals = peers.map(x=> +x.value||0).sort((a,b)=> b-a);
+  const mine = +p.value||0;
+  const rank = Math.max(1, vals.indexOf(mine) + 1);
+  /* Top of the position gets about half again; the tail gets about half. */
+  const share = 1.5 - (rank - 1) / Math.max(1, vals.length - 1);
+  return Math.round(base * Math.max(0.45, Math.min(1.5, share)) * 10) / 10;
 }
 function projLabel(p, week){
   const v = projFor(p, week);
@@ -5348,7 +5426,13 @@ function projLabel(p, week){
 function projSource(p, week){
   const w = week || S.live.week || 1, st = projStore();
   if(st.week===w && st.byPlayer && st.byPlayer[p.id]!=null) return 'projected';
-  return projFromForm(p)!=null ? 'his average here' : null;
+  if(playerLog(p).length) return 'his average here';
+  const past = playerYears(p).filter(yr=> yr !== S.league.season);
+  for(const yr of past){
+    const line = ((S.history||{})[yr]||{})[p.id];
+    if(line && line.gp) return 'what he averaged in '+yr;
+  }
+  return projFromPosition(p)!=null ? 'a rough figure for his position' : null;
 }
 ACT.projPull = async ()=>{
   ui.tmp.projBusy = true; ui.tmp.projErr = null; render();
@@ -5572,6 +5656,78 @@ ACT.picksPull = async ()=>{
   }
 };
 /* Commissioner control over who is inside a rookie window. */
+/* ---- Marking rookies from a sheet ------------------------------------------
+   One column of player names, one column saying R 24 / R 25 / R 26. Nothing
+   else is read and nothing else is touched — no contracts, no rosters. */
+function rookieYearFrom(v){
+  const raw = String(v==null?'':v).trim();
+  if(!raw) return null;
+  /* R 24, R24, r-24, 2024, 24 — all mean the same thing. */
+  const m = /(\d{2,4})/.exec(raw);
+  if(!m) return null;
+  let yr = +m[1];
+  if(yr < 100) yr += 2000;
+  return (yr >= 2000 && yr <= 2100) ? yr : null;
+}
+ACT.rkParse = ()=>{
+  const box = $('#rkText');
+  const text = (box && box.value) || (ui.tmp.rk||{}).text || '';
+  if(!text.trim()) return toast('Paste the sheet in first','bad');
+  try{
+    const {headers, rows} = parseAny(text);
+    const find = (...w)=> headers.findIndex(h=> w.some(x=> String(h).toLowerCase().includes(x)));
+    let nameCol = find('player','name');
+    let rkCol   = find('rookie','draft','class','r ');
+    if(rkCol < 0){
+      /* Nothing obvious in the headings — look for a column that reads like R 24. */
+      rkCol = headers.findIndex((h,i)=> rows.some(r=> /^\s*r\s*\d{2,4}\s*$/i.test(String(r[i]||''))));
+    }
+    ui.tmp.rk = {text, headers, rows, nameCol:nameCol<0?0:nameCol, rkCol:rkCol<0?1:rkCol};
+    ui.sub='rookies'; render();
+    toast(rows.length+' rows read','good');
+  }catch(e){ toast('Could not read that — '+e.message,'bad'); }
+};
+ACT.rkCol = (d, el)=>{
+  const rk = ui.tmp.rk; if(!rk) return;
+  rk[d.f] = +el.value; render();
+};
+/* What the sheet would do, without doing it. */
+function rookiePlan(){
+  const rk = ui.tmp.rk;
+  if(!rk || !rk.rows) return null;
+  const idx = nameIndex();
+  const hits = [], missed = [], skipped = [];
+  const seen = {};
+  rk.rows.forEach(r=>{
+    const nm = String(r[rk.nameCol]==null?'':r[rk.nameCol]).trim();
+    if(!nm) return;
+    const yr = rookieYearFrom(r[rk.rkCol]);
+    if(yr==null){ skipped.push(nm); return; }
+    const m = matchOne(idx, nm, '');
+    if(!m.p){ missed.push(nm); return; }
+    if(seen[m.p.id]) return;
+    seen[m.p.id] = 1;
+    const was = rookieFrom(m.p);
+    hits.push({p:m.p, file:nm, year:yr, was, changes: was !== yr});
+  });
+  return {hits, missed, skipped};
+}
+ACT.rkCancel = ()=>{ ui.tmp.rk = null; render(); };
+ACT.rkApply = ()=>{
+  const plan = rookiePlan();
+  if(!plan || !plan.hits.length) return toast('Nothing to mark','bad');
+  keepBackup(S, 'before marking rookies from a sheet');
+  let n = 0;
+  plan.hits.forEach(h=>{
+    if(!h.changes) return;
+    markRookie(h.p, h.year);
+    n++;
+  });
+  logIt('Marked '+n+' player'+(n===1?'':'s')+' as rookies from a sheet', {type:'admin'});
+  ui.tmp.rk = null;
+  save(true); render();
+  toast(n+' player'+(n===1?'':'s')+' marked','good');
+};
 ACT.rookieMark = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const p = byId(S.players, d.id); if(!p) return;
@@ -6763,7 +6919,7 @@ function processMulti(tr){
       tr.status='rejected';
       tr.reason = teamName(lim[0].team)+' would be past the contract length limits';
       tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
-      notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad');
+      notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad', legTeams(tr));
       logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
       return;
     }
@@ -6774,7 +6930,7 @@ function processMulti(tr){
       tr.status='rejected';
       tr.reason = 'Would put '+teamName(bad.team)+' '+money(bad.over)+' over the '+S.league.season+' cap';
       tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
-      notify('Trade blocked', tr.reason, 'bad');
+      notify('Trade blocked', tr.reason, 'bad', legTeams(tr));
       logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
       return;
     }
@@ -7048,6 +7204,14 @@ ACT.setActAs = (d,el)=>{
 };
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]');
   if(s){ if(!actAsAllowed()) return; ui.tmp.actAs=s.value; render(); } });
+document.addEventListener('change', e=>{
+  const ry = e.target.closest('[data-a="rookieYearView"]');
+  if(ry && ACT.rookieYearView){ ACT.rookieYearView(ry.dataset, ry, e); return; }
+});
+document.addEventListener('change', e=>{
+  const rc = e.target.closest('[data-a="rkCol"]');
+  if(rc && ACT.rkCol){ ACT.rkCol(rc.dataset, rc, e); return; }
+});
 document.addEventListener('change', e=>{
   const va = e.target.closest('[data-a="viewAs"]');
   if(va && ACT.viewAs){ ACT.viewAs(va.dataset, va, e); return; }
@@ -7922,7 +8086,7 @@ function processTrade(tr){
     const bad = test();
     if(bad){
       tr.status='rejected'; tr.reason='Would put '+teamName(bad)+' over the '+S.league.season+' cap';
-      notify('Trade rejected', tr.reason, 'bad'); logIt('Trade rejected — '+tr.reason); return;
+      notify('Trade rejected', tr.reason, 'bad', [tr.a.teamId, tr.b.teamId]); logIt('Trade rejected — '+tr.reason); return;
     }
   }
   tr.undo = tradeSnapshot(tr);
@@ -8311,7 +8475,7 @@ ACT.sendTrade = ()=>{
       accepted:[actingTeam()], createdAt:Date.now(), clock:null, counters:[],
       log:[{at:Date.now(), text:'Proposed by '+teamName(actingTeam())+' — '+teams.length+' teams'}]};
     S.trades.unshift(tr);
-    notify('Trade offer', teamName(actingTeam())+' put up a '+teams.length+'-team deal.');
+    notify('Trade offer', teamName(actingTeam())+' put up a '+teams.length+'-team deal.', 'info', teams);
     logIt('Multi-team trade proposed — '+teams.map(teamName).join(', '),
       {type:'trade', teams, players:[].concat.apply([], legs.map(l=>l.players||[]))});
     ui.tmp.multi = null;
@@ -8326,7 +8490,8 @@ ACT.sendTrade = ()=>{
     by:actingTeam(),                       /* who put it up — they cannot accept it */
     createdAt:Date.now(), clock:null, counters:[], log:[{at:Date.now(), text:'Proposed by '+teamName(tb.a.teamId)}]};
   S.trades.unshift(tr);
-  notify('Trade offer', teamName(tb.a.teamId)+' sent '+teamName(tb.b.teamId)+' an offer.');
+  notify('Trade offer', teamName(tb.a.teamId)+' sent '+teamName(tb.b.teamId)+' an offer.',
+    'info', [tb.a.teamId, tb.b.teamId]);
   logIt('Trade proposed — '+tradeLine(tr), txMeta(tr));
   closeModal(); save(); go('trades'); toast('Offer sent','good');
 };
@@ -8343,9 +8508,10 @@ ACT.multiAccept = (d)=>{
   if(!left.length){
     tr.status='review'; tr.clock = newClock(S.settings.trades.reviewHours);
     tr.log.unshift({at:Date.now(), text:'Everybody in — review has started'});
-    notify('Trade in review', tr.teams.map(teamName).join(', ')+' all agreed.','warn');
+    notify('Trade in review', tr.teams.map(teamName).join(', ')+' all agreed.','warn', tr.teams);
   } else {
-    notify('Trade accepted', teamName(me)+' agreed. Waiting on '+left.map(teamName).join(', ')+'.');
+    notify('Trade accepted', teamName(me)+' agreed. Waiting on '+left.map(teamName).join(', ')+'.',
+      'info', tr.teams);
   }
   save(); render(); toast(left.length? 'Waiting on '+left.length+' more' : 'Off to review','good');
 };
@@ -8375,7 +8541,8 @@ ACT.acceptTrade = (d)=>{
   if(no) return toast(no.charAt(0).toUpperCase()+no.slice(1),'bad');
   tr.status='review'; tr.acceptedAt=Date.now(); tr.clock=newClock(S.settings.trades.reviewHours);
   tr.log.unshift({at:Date.now(), text:'Accepted by '+teamName(tr.b.teamId)+' — '+S.settings.trades.reviewHours+'h review window opened'});
-  notify('Trade accepted', 'In review for '+S.settings.trades.reviewHours+' hours'+(S.settings.trades.counters.on?'. Counters are open.':'.'),'warn');
+  notify('Trade accepted', 'In review for '+S.settings.trades.reviewHours+' hours'+(S.settings.trades.counters.on?'. Counters are open.':'.'),'warn',
+    tr.type==='multi' ? tr.teams : [tr.a.teamId, tr.b.teamId]);
   logIt('Trade accepted, in review — '+tradeLine(tr), txMeta(tr));
   save(); render(); toast('Accepted — review clock running','good');
 };
@@ -8640,6 +8807,29 @@ ACT.chatStick = (d)=>{
   const box = $('#chatText'); if(box) box.value = c.text;
   c.gifOpen = false; render();
 };
+/* Try the key once and say plainly whether it worked. */
+ACT.gifKeyTest = async ()=>{
+  const key = gifKey();
+  if(!key){ ui.tmp.gifTest = {ok:false, msg:'Put a key in the box first.'}; return render(); }
+  ui.tmp.gifTestBusy = true; ui.tmp.gifTest = null; render();
+  try{
+    const j = await getJSON('https://tenor.googleapis.com/v2/search?q=touchdown&key='+
+      encodeURIComponent(key)+'&limit=1&media_filter=tinygif');
+    const got = (j.results||[]).length;
+    ui.tmp.gifTest = got
+      ? {ok:true, msg:'That works — GIF search is on for the whole league.'}
+      : {ok:false, msg:'The key was accepted but nothing came back. Try again in a moment.'};
+  }catch(e){
+    /* getJSON names the path in its error, which reads oddly here. Say something
+       useful instead. */
+    const m = /\b(40[13]|429)\b/.exec(String(e.message||''));
+    ui.tmp.gifTest = {ok:false, msg:
+      m && m[1]==='429' ? 'Tenor is rate limiting that key — wait a minute and try again.'
+      : m ? 'Tenor turned that key down. Check it was copied whole, with no spaces.'
+      : 'Could not reach Tenor — ' + (e.message || 'no answer') + '.'};
+  }
+  ui.tmp.gifTestBusy = false; render();
+};
 ACT.chatGifSearch = async ()=>{
   const q = String((($('#gifQ')||{}).value) || (ui.tmp.chat||{}).gifQ || '').trim();
   const key = gifKey();
@@ -8781,8 +8971,9 @@ function gifPanel(){
         (hits.length? '<div class="gifgrid">'+hits.map(u=>
           '<button class="gifhit" data-a="chatGifPick" data-u="'+esc(u)+'">'+
           '<img src="'+esc(u)+'" alt="" loading="lazy"></button>').join('')+'</div>' : '')
-      : '<div class="hint">To search a whole library of GIFs, put a free Tenor key in Settings \u203a Notifications. '+
-        'Without one you can still paste a link below.</div>')+
+      : '<div class="hint">To search a whole library of GIFs, a commissioner can put a free Tenor key in '+
+        'Settings \u203a Notifications \u2014 it takes about a minute and covers everyone. '+
+        'Without one you can still tap a reaction above or paste a link below.</div>')+
     '<div class="hr"></div>'+
     '<div class="row" style="gap:6px">'+
       '<input type="text" id="chatGifUrl" data-k="chatgif" placeholder="\u2026or paste a GIF link" '+
@@ -10458,6 +10649,7 @@ function canSetLineup(teamId, week){
 /* The lineup as it stands: what was saved, or the best one if nothing was. */
 function lineupFor(teamId, week){
   const w = week==null ? (+S.live.week||1) : week;
+  /* A player whose game has kicked off scores for whoever held him then. */
   const saved = ((S.lineups||{})[w]||{})[teamId];
   /* One row per starting spot, in the order the league has them. */
   const spots = [];
@@ -11690,10 +11882,67 @@ VIEWS.import = function(){
     <div class="tabs">
       <button class="${sub==='sleeper'?'on':''}" data-a="sub" data-s="sleeper">Sleeper</button>
       <button class="${sub==='match'?'on':''}" data-a="sub" data-s="match">Match a price list</button>
+      <button class="${sub==='rookies'?'on':''}" data-a="sub" data-s="rookies">Mark rookies</button>
       <button class="${sub==='load'?'on':''}" data-a="sub" data-s="load">1 · Load a file</button>
       <button class="${sub==='map'?'on':''}" data-a="sub" data-s="map" ${im.rows.length?'':'disabled'}>2 · Match the columns</button>
       <button class="${sub==='price'?'on':''}" data-a="sub" data-s="price">3 · Set the prices</button>
     </div>
+
+    ${sub==='rookies'?(()=>{
+      const rk = ui.tmp.rk;
+      const plan = rookiePlan();
+      return `
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Mark rookies from a sheet</h3></div>
+        <div class="pb stack">
+          <p class="muted" style="margin:0">One column of names, one column saying <b>R 24</b>, <b>R 25</b>, <b>R 26</b>
+            and so on. Everyone matched is held to the rookie rule from that draft. Nothing else is read
+            — no contracts, no rosters, no prices.</p>
+          <label class="f"><span>Paste it in</span>
+            <textarea id="rkText" rows="6" placeholder="Player,Rookie
+Amon-Ra St. Brown,R 24
+Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
+          <div class="row"><button class="btn pri" data-a="rkParse">Read it</button></div>
+        </div></div>
+
+      ${rk ? `
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Which column is which</h3></div>
+        <div class="pb grid g2">
+          <label class="f"><span>Player name</span>
+            <select data-a="rkCol" data-f="nameCol">${rk.headers.map((h,i)=>
+              '<option value="'+i+'"'+(i===rk.nameCol?' selected':'')+'>'+esc(h)+'</option>').join('')}</select></label>
+          <label class="f"><span>Rookie year</span>
+            <select data-a="rkCol" data-f="rkCol">${rk.headers.map((h,i)=>
+              '<option value="'+i+'"'+(i===rk.rkCol?' selected':'')+'>'+esc(h)+'</option>').join('')}</select></label>
+        </div></div>
+
+      <div class="grid g3" style="margin-bottom:14px">
+        <div class="panel"><div class="pb"><div class="eyebrow">Matched</div>
+          <div class="big good">${plan.hits.length}</div>
+          <div class="dim tiny">${plan.hits.filter(h=>h.changes).length} would change</div></div></div>
+        <div class="panel"><div class="pb"><div class="eyebrow">No rookie year</div>
+          <div class="big dim">${plan.skipped.length}</div>
+          <div class="dim tiny">left alone</div></div></div>
+        <div class="panel"><div class="pb"><div class="eyebrow">Not recognised</div>
+          <div class="big ${plan.missed.length?'bad':'dim'}">${plan.missed.length}</div>
+          <div class="dim tiny">nobody by that name</div></div></div>
+      </div>
+
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What would change</h3></div>
+        <div class="pb tight scrollx"><table>
+          <thead><tr><th>In the sheet</th><th>Matched to</th><th class="right">Now</th><th class="right">Would be</th></tr></thead>
+          <tbody>${plan.hits.filter(h=>h.changes).slice(0,200).map(h=>
+            '<tr><td>'+esc(h.file)+'</td><td>'+esc(h.p.name)+' <span class="dim tiny">'+esc(h.p.pos||'')+'</span></td>'+
+            '<td class="right num dim">'+(h.was==null?'—':h.was)+'</td>'+
+            '<td class="right num good">'+h.year+'</td></tr>').join('')
+            || '<tr><td colspan="4" class="dim center" style="padding:20px">Nothing would change.</td></tr>'}
+          </tbody></table></div>
+        ${plan.missed.length?`<div class="pb"><div class="hint bad">Not recognised: ${plan.missed.slice(0,20).map(esc).join(', ')}${plan.missed.length>20?' …':''}</div></div>`:''}
+        <div class="pb"><div class="row">
+          <button class="btn pri" data-a="rkApply">Mark ${plan.hits.filter(h=>h.changes).length} player${plan.hits.filter(h=>h.changes).length===1?'':'s'}</button>
+          <button class="btn ghost" data-a="rkCancel">Cancel</button>
+        </div><div class="hint">A copy of the league is kept first, so this can be undone from Settings › Data › Saved copies.</div></div>
+      </div>` : ''}`;
+    })():''}
 
     ${sub==='sleeper'?(()=>{
       const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
@@ -13067,7 +13316,8 @@ VIEWS.settings = function(){
             <select data-set="settings.rookie.structId">${S.settings.contracts.structures.map(x=>
               '<option value="'+x.id+'"'+(x.id===r.structId?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select></label>
           <div class="hint">A decay of ${r.decay} means each slot is worth ${pct((1-r.decay)*100)} less than the one before it.
-            Pick 1 gets ${money(rookiePrice(1,1,r.baseSeason))} in ${r.baseSeason} and
+            Pick 1 gets ${money(rookiePrice(1,1,r.baseSeason))} in ${r.baseSeason},
+            ${money(rookiePrice(1,1,S.league.season))} in ${S.league.season} and
             ${money(rookiePrice(1,1,S.league.season+1))} in ${S.league.season+1}.</div>
         </div></div>
         <div class="panel"><div class="ph"><h3>Contract length by round</h3></div><div class="pb">
@@ -13168,7 +13418,11 @@ VIEWS.settings = function(){
         </div></div>
       </div>
 
-      <div class="panel"><div class="ph"><h3>Every slot, and what it pays in ${S.league.season+1}</h3><div class="spacer"></div>
+      ${''}
+      <div class="panel"><div class="ph"><h3>Every slot, and what it pays</h3><div class="spacer"></div>
+        <label class="row" style="gap:6px"><span class="eyebrow">Season</span>
+          <select data-a="rookieYearView">${Array.from({length:8},(_,i)=>S.league.season+i).map(yy=>
+            '<option value="'+yy+'"'+(yy===rookieViewYear()?' selected':'')+'>'+yy+'</option>').join('')}</select></label>
         <button class="btn ghost sm" data-a="clearRookieOv">Clear overrides</button></div>
         <div class="pb tight scrollx"><table>
         <thead><tr><th>Slot</th>${Array.from({length:r.rounds},(_,i)=>'<th class="right">Round '+(i+1)+'</th>').join('')}</tr></thead><tbody>
@@ -13177,7 +13431,7 @@ VIEWS.settings = function(){
             const key = (rd+1)+'.'+String(i+1).padStart(2,'0');
             const ov = (r.overrides||{})[key];
             return '<td class="right"><input type="number" step="'+c.cap.increment+'" style="width:78px;text-align:right'+
-              (ov!=null&&ov!==''?';border-color:var(--brass)':'')+'" placeholder="'+money(rookiePrice(rd+1,i+1,S.league.season+1))+
+              (ov!=null&&ov!==''?';border-color:var(--brass)':'')+'" placeholder="'+money(rookiePrice(rd+1,i+1,rookieViewYear()))+
               '" data-set="settings.rookie.overrides.'+key+'" data-k="ro_'+key+'" value="'+(ov!=null?ov:'')+'"></td>';
           }).join('')}</tr>`).join('')}
         </tbody></table></div>
@@ -13504,6 +13758,18 @@ VIEWS.settings = function(){
           <span>Beat reporters <span class="dim">— a few hacks drop into the chat each week to praise and needle</span></span></label>
         <label class="f"><span>Tenor key <span class="dim">— optional, turns on GIF search</span></span>
           <input type="text" data-set="settings.chat.gifKey" value="${esc((S.settings.chat||{}).gifKey||'')}" placeholder="leave empty to use the built-in set"></label>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" data-a="gifKeyTest" ${ui.tmp.gifTestBusy?'disabled':''}>${ui.tmp.gifTestBusy?'Checking…':'Test the key'}</button>
+          ${ui.tmp.gifTest ? '<span class="tiny '+(ui.tmp.gifTest.ok?'good':'bad')+'">'+esc(ui.tmp.gifTest.msg)+'</span>' : ''}
+        </div>
+        <details><summary class="tiny dim" style="cursor:pointer">How to get one — about a minute, free</summary>
+          <div class="hint">
+            1. Go to <b>developers.google.com/tenor/guides/quickstart</b> and press the button to get a key.<br>
+            2. It signs you in with a Google account and hands you a long string of letters and numbers.<br>
+            3. Paste it in the box above and press <b>Test the key</b>.<br>
+            There is no cost and no card. The key lives in your league settings, so everyone in the league
+            gets GIF search once it is in — nobody else needs their own.
+          </div></details>
         <div class="hint">Without a key the picker still offers a built-in set, and links can be pasted as before.</div>
       </div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Notifications</h3></div>
@@ -14144,6 +14410,13 @@ ACT.flatYear = (d, el)=>{
   save(); render();
 };
 ACT.clearLimits = ()=>{ S.settings.contracts.limits = {}; save(); render(); };
+/* Which season the slot grid is showing. Defaults to the one we are in, so the
+   current draft can be priced, not just next year's. */
+function rookieViewYear(){
+  const y = +ui.tmp.rookieYear;
+  return (y >= 2000 && y <= 2100) ? y : S.league.season;
+}
+ACT.rookieYearView = (d, el)=>{ ui.tmp.rookieYear = +el.value; render(); };
 ACT.clearRookieOv = ()=>{ S.settings.rookie.overrides = {}; save(); render(); toast('Back to the formula'); };
 ACT.clearCompOv = ()=>{ S.settings.comp.overrides = {}; save(); render(); toast('Back to the formula'); };
 ACT.supaSignIn = ()=>{
@@ -16044,6 +16317,8 @@ function migrateScoring(old){
 let lastPoll = 0, liveBeat = 0;
 function tickAll(){
   let dirty = false, needsRender = false;
+  /* Remember who owned each player when his game kicked off. */
+  try{ stampLockedTeams(); }catch(e){}
 
   S.auctions.forEach(a=>{
     if(a.status!=='running' || !a.clock) return;
