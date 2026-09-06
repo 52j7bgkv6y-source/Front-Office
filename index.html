@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17f · tenor key setup';
+const APP_BUILD = '2026-08-17i · hand-set the rookie scale';
 
 /* ============================================================
    HOME LEAGUE
@@ -1166,7 +1166,7 @@ function defaultState(){
         maxExp:3 },
       ir:{ mode:'games', fixed:0 },
       join:{ holdForCommish:true },
-      rookie:{ on:true, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
+      rookie:{ on:true, handSet:false, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
                roundYears:{1:4, 2:3, 3:3, 4:2}, structId:'ev', minSalary:1, overrides:{},
                /* A player drafted as a rookie is held to short deals for this many
                   seasons, unless he reaches the free agency draft first. Anyone
@@ -1208,13 +1208,13 @@ function defaultState(){
       dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'', remindDays:[14,7,1] },
       sync:{ on:false, url:'', leagueId:'', key:'', everySec:20 },
       supa:{ on:false, url:'', anonKey:'', leagueId:'' },
-      live:{ mode:'demo', endpoint:'', pollSec:30, speed:1, running:false,
+      live:{ mode:'sleeper', endpoint:'', pollSec:30, speed:1, running:false,
         /* Which Sleeper league to mirror, and what to take from it. Turn any of
            these off if this site drifts away from what Sleeper can do. */
         sleeperLeagueId:'', pullLineups:true, pullTaxi:true, pullIR:true },
       notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 },
       /* Chat extras: the beat reporters, and a key if you want GIF search. */
-      chat:{ reporters:true, gifKey:'' },
+      chat:{ reporters:true, gifKey:'', gifProvider:'giphy' },
       /* What commissioners are allowed to do. The head commissioner turns
          these on and off. */
       powers:{ actAs:false, closeWeek:true, feedSource:true, capTools:true,
@@ -2598,6 +2598,29 @@ document.addEventListener('change', e=>{
     }
     render();
     return;
+  }
+  /* Rookie slot prices are keyed "round.slot", which setPath would otherwise
+     read as two levels of nesting — so nothing ever saved. */
+  const rk = /^settings\.rookie\.overrides\.(\d+)\.(\d+)$/.exec(t.dataset.set);
+  if(rk){
+    S.settings.rookie.overrides = S.settings.rookie.overrides || {};
+    const v = val(t);
+    const key = rk[1]+'.'+rk[2];
+    if(v==='' || v==null || isNaN(+v)) delete S.settings.rookie.overrides[key];
+    else S.settings.rookie.overrides[key] = +v;
+    clearCapCache(); save();
+    if(t.dataset.norender===undefined) render();
+    return;
+  }
+  /* Rungs of the tail ladder are keyed by slot number alone. */
+  const lad = /^settings\.rookie\.flat\.ladder\.(\d+)$/.exec(t.dataset.set);
+  if(lad){
+    S.settings.rookie.flat = S.settings.rookie.flat || {};
+    S.settings.rookie.flat.ladder = S.settings.rookie.flat.ladder || {};
+    const v = val(t);
+    if(v==='' || v==null || isNaN(+v)) delete S.settings.rookie.flat.ladder[lad[1]];
+    else S.settings.rookie.flat.ladder[lad[1]] = +v;
+    clearCapCache(); save(); render(); return;
   }
   const m = /^settings\.comp\.overrides\.(\d+)\.(\d+)$/.exec(t.dataset.set);
   if(m){
@@ -5404,17 +5427,27 @@ function projFromForm(p){
 /* A rough figure from where he sits at his position — better than a blank in
    week one, and clearly labelled as the guess it is. */
 const POS_BASE = {QB:18, RB:11, WR:11, TE:8, K:8, DEF:7, DL:6, LB:6, DB:6};
+/* How highly this league rates a player, for sorting one against another.
+   Imports set every value to 1, so on its own that tells us nothing — what a
+   team actually pays him is the better signal. */
+function standingScore(p){
+  const c = p && p.contract;
+  const paid = c ? (+c.total||0) / Math.max(1, +c.years||1) : 0;
+  const val = +((p||{}).value) || 0;
+  return paid > 0 ? paid : val;
+}
 function projFromPosition(p){
   if(!p || !p.pos) return null;
   const base = POS_BASE[p.pos];
   if(base == null) return null;
-  const peers = S.players.filter(x=> x.pos===p.pos && (+x.value||0) > 0);
-  if(peers.length < 3) return base;
-  const vals = peers.map(x=> +x.value||0).sort((a,b)=> b-a);
-  const mine = +p.value||0;
-  const rank = Math.max(1, vals.indexOf(mine) + 1);
-  /* Top of the position gets about half again; the tail gets about half. */
-  const share = 1.5 - (rank - 1) / Math.max(1, vals.length - 1);
+  const peers = S.players.filter(x=> x.pos===p.pos);
+  const scored = peers.map(standingScore).filter(v=> v > 0).sort((a,b)=> b-a);
+  const mine = standingScore(p);
+  /* Nothing to tell them apart — say so rather than giving everyone the same
+     number and calling it a projection. */
+  if(scored.length < 3 || mine <= 0 || scored[0] === scored[scored.length-1]) return base;
+  const rank = Math.max(1, scored.indexOf(mine) + 1);
+  const share = 1.5 - (rank - 1) / Math.max(1, scored.length - 1);
   return Math.round(base * Math.max(0.45, Math.min(1.5, share)) * 10) / 10;
 }
 function projLabel(p, week){
@@ -8813,9 +8846,8 @@ ACT.gifKeyTest = async ()=>{
   if(!key){ ui.tmp.gifTest = {ok:false, msg:'Put a key in the box first.'}; return render(); }
   ui.tmp.gifTestBusy = true; ui.tmp.gifTest = null; render();
   try{
-    const j = await getJSON('https://tenor.googleapis.com/v2/search?q=touchdown&key='+
-      encodeURIComponent(key)+'&limit=1&media_filter=tinygif');
-    const got = (j.results||[]).length;
+    const j = await getJSON(gifSearchURL('touchdown', key));
+    const got = gifHitsFrom(j).length;
     ui.tmp.gifTest = got
       ? {ok:true, msg:'That works — GIF search is on for the whole league.'}
       : {ok:false, msg:'The key was accepted but nothing came back. Try again in a moment.'};
@@ -8824,12 +8856,39 @@ ACT.gifKeyTest = async ()=>{
        useful instead. */
     const m = /\b(40[13]|429)\b/.exec(String(e.message||''));
     ui.tmp.gifTest = {ok:false, msg:
-      m && m[1]==='429' ? 'Tenor is rate limiting that key — wait a minute and try again.'
-      : m ? 'Tenor turned that key down. Check it was copied whole, with no spaces.'
-      : 'Could not reach Tenor — ' + (e.message || 'no answer') + '.'};
+      m && m[1]==='429' ? 'That service is rate limiting the key — wait a minute and try again.'
+      : m ? 'The key was turned down. Check it was copied whole, with no spaces.'
+      : 'Could not reach '+(gifProvider()==='klipy'?'Klipy':'Giphy')+' — ' + (e.message || 'no answer') + '.'};
   }
   ui.tmp.gifTestBusy = false; render();
 };
+/* Which service the league is searching. Tenor's API was shut down on
+   30 June 2026, so the choice is Giphy or Klipy. */
+function gifProvider(){ return ((S.settings.chat||{}).gifProvider) || 'giphy'; }
+function gifSearchURL(q, key){
+  const enc = encodeURIComponent(q);
+  return gifProvider()==='klipy'
+    ? 'https://api.klipy.com/api/v1/'+encodeURIComponent(key)+'/gifs/search?q='+enc+'&per_page=24'
+    : 'https://api.giphy.com/v1/gifs/search?api_key='+encodeURIComponent(key)+'&q='+enc+'&limit=24&rating=pg-13';
+}
+/* Both answer with a different shape; pull the small looping image out of either. */
+function gifHitsFrom(j){
+  const out = [];
+  const rows = (j && (j.data || (j.data&&j.data.data) || j.results)) || [];
+  const list = Array.isArray(rows) ? rows : (rows.data || []);
+  list.forEach(r=>{
+    if(!r) return;
+    const im = r.images || {};
+    const u = (im.fixed_height_small && im.fixed_height_small.url)
+           || (im.fixed_height && im.fixed_height.url)
+           || (im.downsized && im.downsized.url)
+           || (r.file && r.file.sm && r.file.sm.gif && r.file.sm.gif.url)
+           || (r.file && r.file.md && r.file.md.gif && r.file.md.gif.url)
+           || r.url || '';
+    if(u && /^https?:/.test(u)) out.push(u);
+  });
+  return out;
+}
 ACT.chatGifSearch = async ()=>{
   const q = String((($('#gifQ')||{}).value) || (ui.tmp.chat||{}).gifQ || '').trim();
   const key = gifKey();
@@ -8837,13 +8896,8 @@ ACT.chatGifSearch = async ()=>{
   if(!q) return toast('What are you after?','bad');
   ui.tmp.gifBusy = true; render();
   try{
-    const url = 'https://tenor.googleapis.com/v2/search?q='+encodeURIComponent(q)+
-      '&key='+encodeURIComponent(key)+'&limit=24&media_filter=tinygif';
-    const j = await getJSON(url);
-    const hits = (j.results||[]).map(r=>{
-      const mf = r.media_formats||{};
-      return (mf.tinygif&&mf.tinygif.url) || (mf.gif&&mf.gif.url) || '';
-    }).filter(Boolean);
+    const j = await getJSON(gifSearchURL(q, key));
+    const hits = gifHitsFrom(j);
     ui.tmp.gifHits = hits; ui.tmp.gifBusy = false; render();
     if(!hits.length) toast('Nothing came back for that','warn');
   }catch(e){
@@ -8971,7 +9025,7 @@ function gifPanel(){
         (hits.length? '<div class="gifgrid">'+hits.map(u=>
           '<button class="gifhit" data-a="chatGifPick" data-u="'+esc(u)+'">'+
           '<img src="'+esc(u)+'" alt="" loading="lazy"></button>').join('')+'</div>' : '')
-      : '<div class="hint">To search a whole library of GIFs, a commissioner can put a free Tenor key in '+
+      : '<div class="hint">To search a whole library of GIFs, a commissioner can put a Giphy or Klipy key in '+
         'Settings \u203a Notifications \u2014 it takes about a minute and covers everyone. '+
         'Without one you can still tap a reaction above or paste a link below.</div>')+
     '<div class="hr"></div>'+
@@ -10136,7 +10190,11 @@ function rookiePrice(round, slot, year){
   if((ov==null || ov==='' || isNaN(+ov)) && inFlatTail(round, slot))
     return Math.max(+r.minSalary||0, flatTailPrice(round, slot, year));
   const overall = (round-1)*n + slot;
-  const base = (ov!=null && ov!=='' && !isNaN(+ov)) ? +ov
+  /* Hand-set: the only prices are the ones typed in. Nothing is worked out from
+     a top price and a decay — a slot left blank simply pays the minimum. */
+  const typed = (ov!=null && ov!=='' && !isNaN(+ov)) ? +ov : null;
+  const base = typed != null ? typed
+             : r.handSet ? (+r.minSalary||0)
              : (+r.top||0) * Math.pow(+r.decay||1, overall-1);
   const lift = Math.max(0, (year||S.league.season) - (+r.baseSeason||S.league.season));
   return Math.max(+r.minSalary||0, roundInc(base * Math.pow(1 + (+r.growthPct||0)/100, lift)));
@@ -11678,10 +11736,13 @@ ACT.sleeperGo = async ()=>{
       /* Manual adjustments belong to the league, not to Sleeper. Keep them
          through the rebuild and put them back on the matching team, so an
          import can never quietly wipe money somebody was owed or charged. */
-      const oldAdj = {}, oldDead = {};
+      const oldAdj = {}, oldDead = {}, oldDues = {};
       S.teams.forEach(t=>{
-        if((t.adj||[]).length) oldAdj[String(t.name||'').toLowerCase()] = deep(t.adj);
-        if((t.dead||[]).length) oldDead[String(t.name||'').toLowerCase()] = deep(t.dead);
+        const k = String(t.name||'').toLowerCase();
+        if((t.adj||[]).length) oldAdj[k] = deep(t.adj);
+        if((t.dead||[]).length) oldDead[k] = deep(t.dead);
+        /* Who has paid is the league's business, not Sleeper's. */
+        if(t.dues) oldDues[k] = deep(t.dues);
       });
       /* Keep every deal that already exists. Sleeper decides WHERE a player
          sits; it does not get to change what he is paid. Matched on the Sleeper
@@ -11723,7 +11784,8 @@ ACT.sleeperGo = async ()=>{
           adj: oldAdj[String(name||'').toLowerCase()] || [],
           faSpent:0,
           color:TEAM_COLORS[i%TEAM_COLORS.length], mascot:mk[i%mk.length],
-          dues:{paid:false, paidOn:null, amount:null, method:'', note:''}};
+          dues: oldDues[String(name||'').toLowerCase()] ||
+                {paid:false, paidOn:null, amount:null, method:'', note:''}};
         S.teams.push(t);
         [].concat(r.players||[], r.taxi||[], r.reserve||[])
           .filter((v,j,a)=> v && a.indexOf(v)===j)
@@ -13298,11 +13360,14 @@ VIEWS.settings = function(){
         <div class="panel"><div class="ph"><h3>The scale</h3></div><div class="pb stack">
           <label class="check"><input type="checkbox" data-set="settings.rookie.on" ${r.on?'checked':''}>
             <span>Price rookie picks off a fixed scale</span></label>
+          <label class="check"><input type="checkbox" data-set="settings.rookie.handSet" ${r.handSet?'checked':''}>
+            <span>Type every slot in by hand
+              <span class="dim">— no top price, no decay; what you type for ${r.baseSeason} rises ${+r.growthPct||0}% a year</span></span></label>
           <div class="grid g2">
-            <label class="f"><span>Top pick is worth</span>
-              <input type="number" min="0" step="${c.cap.increment}" data-set="settings.rookie.top" value="${r.top}"></label>
-            <label class="f"><span>Each slot falls to (×)</span>
-              <input type="number" min="0.5" max="1" step="0.005" data-set="settings.rookie.decay" value="${r.decay}"></label>
+            ${r.handSet?'':`<label class="f"><span>Top pick is worth</span>
+              <input type="number" min="0" step="${c.cap.increment}" data-set="settings.rookie.top" value="${r.top}"></label>`}
+            ${r.handSet?'':`<label class="f"><span>Each slot falls to (×)</span>
+              <input type="number" min="0.5" max="1" step="0.005" data-set="settings.rookie.decay" value="${r.decay}"></label>`}
             <label class="f"><span>Scale rises each year (%)</span>
               <input type="number" min="0" max="25" step="0.1" data-set="settings.rookie.growthPct" value="${r.growthPct}"></label>
             <label class="f"><span>Those numbers are for</span>
@@ -13315,7 +13380,11 @@ VIEWS.settings = function(){
           <label class="f"><span>Structure for rookie deals</span>
             <select data-set="settings.rookie.structId">${S.settings.contracts.structures.map(x=>
               '<option value="'+x.id+'"'+(x.id===r.structId?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select></label>
-          <div class="hint">A decay of ${r.decay} means each slot is worth ${pct((1-r.decay)*100)} less than the one before it.
+          <div class="hint">${r.handSet
+            ? 'Every price comes from the grid below. Type the '+r.baseSeason+' figure into a slot and it rises '+
+              (+r.growthPct||0)+'% a year from there. A slot left blank pays '+money(+r.minSalary||0)+
+              '. The tail of the draft still follows its own rule.'
+            : `A decay of ${r.decay} means each slot is worth ${pct((1-r.decay)*100)} less than the one before it.`}
             Pick 1 gets ${money(rookiePrice(1,1,r.baseSeason))} in ${r.baseSeason},
             ${money(rookiePrice(1,1,S.league.season))} in ${S.league.season} and
             ${money(rookiePrice(1,1,S.league.season+1))} in ${S.league.season+1}.</div>
@@ -13756,20 +13825,36 @@ VIEWS.settings = function(){
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>League chat</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.chat.reporters" ${(S.settings.chat||{}).reporters!==false?'checked':''}>
           <span>Beat reporters <span class="dim">— a few hacks drop into the chat each week to praise and needle</span></span></label>
-        <label class="f"><span>Tenor key <span class="dim">— optional, turns on GIF search</span></span>
+        <label class="f"><span>GIF service</span>
+          <select data-set="settings.chat.gifProvider">
+            <option value="giphy"${gifProvider()==='giphy'?' selected':''}>Giphy — what X, WhatsApp and Windows moved to</option>
+            <option value="klipy"${gifProvider()==='klipy'?' selected':''}>Klipy — what Bluesky moved to</option>
+          </select></label>
+        <label class="f"><span>${gifProvider()==='klipy'?'Klipy':'Giphy'} key <span class="dim">— optional, turns on GIF search</span></span>
           <input type="text" data-set="settings.chat.gifKey" value="${esc((S.settings.chat||{}).gifKey||'')}" placeholder="leave empty to use the built-in set"></label>
         <div class="row" style="gap:6px">
           <button class="btn sm" data-a="gifKeyTest" ${ui.tmp.gifTestBusy?'disabled':''}>${ui.tmp.gifTestBusy?'Checking…':'Test the key'}</button>
           ${ui.tmp.gifTest ? '<span class="tiny '+(ui.tmp.gifTest.ok?'good':'bad')+'">'+esc(ui.tmp.gifTest.msg)+'</span>' : ''}
         </div>
-        <details><summary class="tiny dim" style="cursor:pointer">How to get one — about a minute, free</summary>
+        <details><summary class="tiny dim" style="cursor:pointer">How to get one</summary>
           <div class="hint">
-            1. Go to <b>developers.google.com/tenor/guides/quickstart</b> and press the button to get a key.<br>
-            2. It signs you in with a Google account and hands you a long string of letters and numbers.<br>
-            3. Paste it in the box above and press <b>Test the key</b>.<br>
-            There is no cost and no card. The key lives in your league settings, so everyone in the league
-            gets GIF search once it is in — nobody else needs their own.
+            ${gifProvider()==='klipy' ? `
+              1. Go to <b>klipy.com</b> and ask for developer access.<br>
+              2. They hand you a key.<br>
+              3. Paste it above and press <b>Test the key</b>.<br>
+              Klipy is free at the moment and is what Bluesky moved to. It is ad supported, so that may
+              not stay the case.`
+            : `
+              1. Go to <b>developers.giphy.com</b>, make an account and create an app.<br>
+              2. Choose the <b>API</b> option, not SDK. It hands you a key straight away.<br>
+              3. Paste it above and press <b>Test the key</b>.<br>
+              The free tier is rate limited but fine for a twelve-team league. Giphy is what X, WhatsApp
+              and Windows moved to when Tenor closed.`}
+            <br><br>The key lives in your league settings, so everyone gets GIF search once it is in —
+            nobody else needs their own.
           </div></details>
+        <div class="hint">Google shut the Tenor API down on 30 June 2026, so a Tenor key will not work
+          for anybody any more, old or new.</div>
         <div class="hint">Without a key the picker still offers a built-in set, and links can be pasted as before.</div>
       </div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Notifications</h3></div>
