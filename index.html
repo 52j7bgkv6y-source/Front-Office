@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17i · hand-set the rookie scale';
+const APP_BUILD = '2026-08-17k · comp rounds you choose';
 
 /* ============================================================
    HOME LEAGUE
@@ -1181,6 +1181,9 @@ function defaultState(){
                               7:1.75, 8:1.75, 9:1.50, 10:1.50, 11:1.25, 12:1.25} } },
       comp:{ on:true, moneyWeight:65, prodWeight:35, offset:true,
              tiers:{1:85, 2:70, 3:55, 4:40}, maxPerTeam:4, maxTotal:0, minAav:0,
+             /* Which rounds hand out comp picks, and how many each may hold. A
+                round that is off pushes its picks down to the next one that is on. */
+             rounds:{1:true, 2:true, 3:true, 4:true}, perRound:2,
              priceMode:'pctOfLast', pctOfLast:92, byRound:{}, overrides:{},
              growthPct:2.5, baseSeason:season },
       playoffs:{ teams:6, startWeek:15, weeks:3, byes:2, twoWeekFinal:false, reseed:true,
@@ -4181,7 +4184,9 @@ ACT.simReset = ()=>{
   S.settings.live.running=true; save(); render();
   toast('Week '+S.live.week+' kicked off — last week is in the books');
 };
-ACT.setLiveMode = (d)=>{ S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
+ACT.setLiveMode = (d)=>{
+  /* Once somebody picks a feed on purpose, that is the league's choice. */
+  S.settings.live.feedPicked = true; S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
 ACT.pollNow = ()=> pollEndpoint();
 ACT.closeWeek = ()=>{
   /* Work out the loser of each matchup first, so the brawl can lay that mascot
@@ -10257,10 +10262,30 @@ function compRoundFor(score){
   const keys = Object.keys(tiers).map(Number).filter(n=> !isNaN(n)).sort((a,b)=> a-b);
   for(const r of keys){
     const need = +tiers[r];
-    if(!isNaN(need) && score >= need) return r;
+    if(!isNaN(need) && score >= need) return compRoundAllowed(r);
   }
   return null;
 }
+/* Which rounds this league gives comp picks in. */
+function compRoundsOn(){
+  const cfg = S.settings.comp || {};
+  const on = cfg.rounds || {};
+  const rounds = Object.keys(cfg.tiers||{}).map(Number).filter(x=> !isNaN(x)).sort((a,b)=> a-b);
+  return rounds.filter(r=> on[r] !== false);
+}
+/* A score earns round r, but that round may be switched off — in which case the
+   pick drops to the next round that is on. Nothing is created above the round
+   the score actually earned. Named apart from compRoundFor(score), which asks a
+   different question. */
+function compRoundAllowed(r){
+  const on = compRoundsOn();
+  if(!on.length) return null;
+  if(on.indexOf(r) >= 0) return r;
+  const lower = on.filter(x=> x > r);
+  return lower.length ? lower[0] : null;
+}
+/* How many comp picks a round may hold. 0 means no limit. */
+function compPerRound(){ const v = +((S.settings.comp||{}).perRound); return v > 0 ? v : 0; }
 /* Losses are offset by signings of your own, biggest against biggest, the way
    the real thing works. What is left over earns a pick. */
 function compFor(year){
@@ -10327,16 +10352,32 @@ function awardCompPicks(year){
   S.picks = S.picks.filter(k=> !(isComp(k) && k.year===year));
   let made = 0;
   const perRound = {};
+  const cap = compPerRound(), on = compRoundsOn();
+  /* Best score first, so when a round fills it is the weaker claims that drop
+     down a round rather than whoever happened to be processed last. */
+  const queue = [];
   Object.keys(table).forEach(tid=>{
-    table[tid].awards.forEach(a=>{
-      const rd = a.round;
-      perRound[rd] = (perRound[rd]||0) + 1;
-      const pk = {id:uid('pk'), year, round:rd, ownerTeamId:tid, originTeamId:tid,
-        comp:{index:perRound[rd], score:a.score, forPlayer:a.sg.playerId, lostTo:a.sg.toTeam}};
-      S.picks.push(pk);
-      made++;
-    });
+    (table[tid].awards||[]).forEach(a=> queue.push({tid, a}));
   });
+  queue.sort((x,y)=> (+y.a.score||0) - (+x.a.score||0));
+  let skipped = 0;
+  queue.forEach(({tid, a})=>{
+    /* Start at the round earned and walk down until one has room. */
+    let rd = null;
+    for(const r of on){
+      if(r < a.round) continue;
+      if(!cap || (perRound[r]||0) < cap){ rd = r; break; }
+    }
+    if(rd == null){ skipped++; return; }
+    perRound[rd] = (perRound[rd]||0) + 1;
+    const pk = {id:uid('pk'), year, round:rd, ownerTeamId:tid, originTeamId:tid,
+      comp:{index:perRound[rd], score:a.score, forPlayer:a.sg.playerId, lostTo:a.sg.toTeam,
+            earned:a.round}};
+    S.picks.push(pk);
+    made++;
+  });
+  if(skipped) logIt(skipped+' compensatory claim'+(skipped===1?'':'s')+' found no room in any round',
+    {type:'admin'});
   logIt('Compensatory picks worked out for '+year+' — '+made+' awarded', {type:'admin'});
   return made;
 }
@@ -13444,6 +13485,28 @@ VIEWS.settings = function(){
           </div>
           <label class="check"><input type="checkbox" data-set="settings.comp.offset" ${S.settings.comp.offset?'checked':''}>
             <span>A player you sign cancels out a player you lost</span></label>
+          <div class="flabel" style="margin-top:6px">Which rounds hand out comp picks</div>
+          <div class="row" style="gap:10px;flex-wrap:wrap">
+            ${Array.from({length:r.rounds},(_,i)=>{
+              const rd=i+1, on=(S.settings.comp.rounds||{})[rd]!==false;
+              return '<label class="check" style="margin:0"><input type="checkbox" '+
+                'data-set="settings.comp.rounds.'+rd+'"'+(on?' checked':'')+'><span>Round '+rd+'</span></label>';
+            }).join('')}
+          </div>
+          <label class="f"><span>Most in any one round</span>
+            <select data-set="settings.comp.perRound">
+              ${[0,1,2,3,4,5].map(v=>'<option value="'+v+'"'+((+S.settings.comp.perRound||0)===v?' selected':'')+'>'+
+                (v===0?'no limit':v+' pick'+(v===1?'':'s'))+'</option>').join('')}
+            </select></label>
+          <div class="hint">${(()=>{
+            const on = compRoundsOn();
+            const cap = compPerRound();
+            if(!on.length) return 'No rounds are switched on, so no comp picks will be handed out.';
+            return 'Comp picks land in round'+(on.length===1?' ':'s ')+on.join(', ')+
+              (cap ? ', at most '+cap+' in each' : ', with no limit on how many')+
+              '. A claim that earns a round you have switched off drops to the next one that is on, '+
+              'and so does one that finds its round already full — best scores first.';
+          })()}</div>
           <div class="flabel" style="margin-top:6px">Score needed for each round</div>
           <div class="grid g4 keep2">
             ${Array.from({length:r.rounds},(_,i)=>`<label class="f"><span>Round ${i+1}</span>
@@ -16379,6 +16442,13 @@ function migrate(j){
     if(!t.mascot) t.mascot = mk[i%mk.length];
   });
   out.live.talk = Array.isArray(out.live.talk) ? out.live.talk : [];
+  /* Leagues saved before Sleeper became the default are still sitting on the
+     simulator. Move them across once — and only once, so anybody who genuinely
+     wants the simulator can pick it and keep it. */
+  if(!out.settings.live.feedPicked){
+    out.settings.live.mode = 'sleeper';
+    out.settings.live.feedPicked = true;
+  }
   return out;
 }
 /* Leagues saved before the Sleeper categories went in used shorter names. */
