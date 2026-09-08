@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17r · dues by year, coming free';
+const APP_BUILD = '2026-08-17w · free agents by week';
 
 /* ============================================================
    HOME LEAGUE
@@ -1212,7 +1212,7 @@ function defaultState(){
       dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'', remindDays:[14,7,1] },
       sync:{ on:false, url:'', leagueId:'', key:'', everySec:20 },
       supa:{ on:false, url:'', anonKey:'', leagueId:'' },
-      live:{ mode:'sleeper', endpoint:'', pollSec:30, speed:1, running:false,
+      live:{ mode:'sleeper', endpoint:'', pollSec:15, speed:1, running:false,
         /* Which Sleeper league to mirror, and what to take from it. Turn any of
            these off if this site drifts away from what Sleeper can do. */
         sleeperLeagueId:'', pullLineups:true, pullTaxi:true, pullIR:true },
@@ -2651,6 +2651,12 @@ document.addEventListener('change', e=>{
   /* Switching off the power puts you back on your own team straight away,
      rather than leaving trades pointed at whoever you were last on. */
   if(t.dataset.set==='settings.powers.actAs' && !actAsAllowed()) ui.tmp.actAs = null;
+  /* Typed in by hand: keep the spare copy in step so an update cannot lose it. */
+  if(t.dataset.set==='settings.live.sleeperLeagueId'){
+    const v = val(t);
+    if(v) S.settings.live.lastSleeperId = v;
+  }
+  if(t.dataset.set==='settings.live.pollSec') S.settings.live.pollPicked = true;
   save();
   if(t.dataset.norender===undefined) render();
 });
@@ -3994,10 +4000,12 @@ VIEWS.live = function(){
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
         ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
       <td class="right num" style="width:10%">${s.p?s.pts.toFixed(1):'—'}
-        ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(1)+'</div>':''}</td>
+        ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(1)+'</div>':''}
+        ${s.p&&kickoffLabel(s.p.nfl)?'<div class="tiny dim">'+kickoffLabel(s.p.nfl)+'</div>':''}</td>
       <td class="center" style="width:12%"><span class="eyebrow">${esc(s.slot)}</span></td>
       <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(1):'—'}
-        ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(1)+'</div>':''}</td>
+        ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(1)+'</div>':''}
+        ${o&&o.p&&kickoffLabel(o.p.nfl)?'<div class="tiny dim">'+kickoffLabel(o.p.nfl)+'</div>':''}</td>
       <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
     </tr>`;
   }).join('');
@@ -4009,6 +4017,23 @@ VIEWS.live = function(){
       <h1>Live scoring</h1></div>
       <div class="spacer"></div>
       ${live?'<span class="pill live">'+live+' games in progress</span>':''}
+      ${(()=>{
+        /* Whether the mirror is actually running, in plain words. */
+        const cfg = S.settings.live||{};
+        if(cfg.mode!=='sleeper') return '';
+        if(!sleeperLeague())
+          return '<span class="pill" style="border-color:#5C3227;color:var(--signal)" '+
+            'title="Run any pull on the Import page to tell the app which Sleeper league is yours">'+
+            'lineups not syncing</span>';
+        if(!cfg.pullLineups)
+          return '<span class="pill" title="Switched off in Settings \u203a Roster">lineups off</span>';
+        if(S.live.syncErr)
+          return '<span class="pill" style="border-color:#5C3227;color:var(--signal)" title="'+
+            esc(S.live.syncErr)+'">sync failed</span>';
+        return '<span class="pill ok" title="'+esc(S.live.syncNote||'')+'">lineups '+
+          (S.live.syncAt ? 'synced '+shortAgo(S.live.syncAt) : 'syncing\u2026')+'</span>';
+      })()}
+      <button class="btn sm ghost" data-a="sleeperSyncNow" ${ui.tmp.syncBusy?'disabled':''}>${ui.tmp.syncBusy?'Syncing…':'Sync now'}</button>
       <button class="btn ghost" data-a="go" data-r="schedule">Schedule</button>
       <button class="btn" data-a="editLineup" data-team="${t.id}" data-w="${+S.live.week||1}">Set lineup</button>
       ${cfg.mode==='demo' && isCommish() && powerOn('closeWeek')
@@ -4197,7 +4222,8 @@ ACT.simReset = ()=>{
 };
 ACT.setLiveMode = (d)=>{
   /* Once somebody picks a feed on purpose, that is the league's choice. */
-  S.settings.live.feedPicked = true; S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
+  S.settings.live.feedPicked = true;
+  S.settings.live.pollPicked = true; S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
 ACT.pollNow = ()=> pollEndpoint();
 ACT.closeWeek = ()=>{
   /* Work out the loser of each matchup first, so the brawl can lay that mascot
@@ -4535,6 +4561,8 @@ VIEWS.teams = function(){
         const a = +p.age||0;
         if(ageMin && a && a < ageMin) return false;
         if(ageMax && a && a > ageMax) return false;
+        const minPpg = +ui.tmp.offPpg||0;
+        if(minPpg){ const k = lastKnownPPG(p); if(!k || k.ppg < minPpg) return false; }
         return true;
       });
       const positions = Array.from(new Set(going.map(p=>p.pos).filter(Boolean))).sort();
@@ -4566,27 +4594,40 @@ VIEWS.teams = function(){
           <label class="f"><span>Age to</span>
             <input type="number" min="18" max="45" data-a="freeFilter" data-f="offAgeMax" data-k="offmax"
               value="${ageMax||''}" placeholder="any"></label>
+          <label class="f"><span>Scoring at least</span>
+            <input type="number" min="0" step="0.5" data-a="freeFilter" data-f="offPpg" data-k="offppg"
+              value="${(+ui.tmp.offPpg||0)||''}" placeholder="any"></label>
         </div>
         <div class="row"><span class="tiny dim">${rows.length} of ${going.length} coming free</span>
           <div class="spacer"></div>
-          ${(fPos||fTeam||ageMin||ageMax)?'<button class="btn sm ghost" data-a="offClear">Clear the filters</button>':''}</div>
+          ${(fPos||fTeam||ageMin||ageMax||+ui.tmp.offPpg)?'<button class="btn sm ghost" data-a="offClear">Clear the filters</button>':''}</div>
       </div></div>
 
       <div class="panel"><div class="pb tight scrollx"><table>
         <thead><tr>${sortTh('off','name','Player')}${sortTh('off','pos','Pos')}${sortTh('off','age','Age','right')}
-          ${sortTh('off','team','Leaving')}${sortTh('off','aav','Was on','right')}
+          ${sortTh('off','ppg','Pts / game','right')}${sortTh('off','team','Leaving')}
+          ${sortTh('off','aav','Was on','right')}
           ${sortTh('off','last','Through','right')}<th></th></tr></thead>
         <tbody>${sortRows('off', rows, {
           name:p=>p.name, pos:p=>p.pos, age:p=>+p.age||0,
           team:p=>teamName(p.contract.teamId), aav:p=>capHit(p,S.league.season),
+          ppg:p=>{ const k=lastKnownPPG(p); return k? k.ppg : -1; },
           last:p=>p.contract.startYear + p.contract.years - 1
-        }, {key:'aav',dir:-1}).map(p=>`<tr>
+        }, {key:'ppg',dir:-1}).map(p=>`<tr>
           <td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
             ${injuryTag(p)} ${slotTag(p)}</td>
           <td>${posTag(p.pos)}</td>
           <td class="right num">${p.age? (+p.age + (yr - S.league.season)) : '—'}</td>
+          <td class="right num">${(()=>{
+            const k = lastKnownPPG(p);
+            if(!k) return '<span class="dim">—</span>';
+            return k.year===S.league.season
+              ? '<b>'+k.ppg.toFixed(1)+'</b>'
+              : k.ppg.toFixed(1)+'<span class="dim tiny"> \u00b7 '+k.year+'</span>';
+          })()}</td>
           <td>${esc(teamName(p.contract.teamId))}</td>
-          <td class="right money">${money(capHit(p,S.league.season))}</td>
+          <td class="right money">${money(tradeHit(p,S.league.season))}${
+            offCap(p) ? '<div class="tiny dim">off the cap</div>' : ''}</td>
           <td class="right num dim">${p.contract.startYear + p.contract.years - 1}</td>
           <td class="right"><button class="btn sm ghost" data-a="playerCard" data-id="${p.id}">Open</button></td>
         </tr>`).join('') || '<tr><td colspan="7" class="dim center" style="padding:24px">Nobody matches that.</td></tr>'}
@@ -4696,11 +4737,15 @@ VIEWS.teams = function(){
         </tbody></table></div></div></div>` : ''}
 
     ${sub==='fa' ? `<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
+      <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
+        <select data-a="faWeekPick">${Array.from({length:seasonWeeks()},(_,i)=>i+1).map(w=>
+          '<option value="'+w+'"'+(w===faWeek()?' selected':'')+'>'+w+(w===(+S.live.week||1)?' · now':'')+'</option>').join('')}</select></label>
       <input type="text" placeholder="Search" data-k="fasearch" data-oninput="faSearch" value="${esc(ui.tmp.faq||'')}" style="max-width:220px"></div>
       ${waiverDeadlinePassed()?'<div class="pb" style="padding-bottom:0"><div class="hint bad">The waiver deadline of '+dayOnly(S.settings.waivers.deadline)+
         ' has passed. Anyone claimed now comes in at '+money(S.settings.waivers.salary)+' for this season only, cannot be extended, and carries the W tag until the year turns over.</div></div>':''}
       <div class="pb tight scrollx"><table><thead><tr>${sortTh('fa','name','Player')}${sortTh('fa','pos','Pos')}
         ${sortTh('fa','nfl','NFL','hide-xs')}${sortTh('fa','age','Age','right')}
+        ${sortTh('fa','proj','Projected','right')}${sortTh('fa','act','Actual','right')}
         ${sortTh('fa','price', waiverDeadlinePassed()?'Claim price':'Market', 'right')}<th></th></tr></thead>
       <tbody id="faBody">${faRows(fa)}</tbody></table></div></div>` : ''}
 
@@ -4923,7 +4968,9 @@ function faRows(list){
   const wv = waiverDeadlinePassed();
   const sorted = sortRows('fa', f, {
     name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', age:p=>+p.age||0,
-    price:p=> wv ? (+S.settings.waivers.salary||0) : marketPrice(p,0)
+    price:p=> wv ? (+S.settings.waivers.salary||0) : marketPrice(p,0),
+    proj:p=>{ const v = projFor(p, faWeek()); return v==null ? -1 : v; },
+    act:p=>{ const v = weekPoints(p, faWeek()); return v==null ? -1 : v; }
   }, {key:'price',dir:-1});
   /* Anyone the rest of the world is picking up goes to the top, busiest first.
      Only when the list is in its usual order — if you have sorted a column
@@ -4937,6 +4984,9 @@ function faRows(list){
   return rows.map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
     ${trendTag(p)} ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
     <td class="right num">${p.age||'—'}</td>
+    <td class="right num dim">${(()=>{ const v=projFor(p, faWeek()); return v==null?'—':v.toFixed(1); })()}</td>
+    <td class="right num">${(()=>{ const v=weekPoints(p, faWeek());
+      return v==null ? '<span class="dim">—</span>' : '<b>'+v.toFixed(1)+'</b>'; })()}</td>
     <td class="right money">${isOrphan(p) ? money(grossHit(p,S.league.season))
       : wv ? money(S.settings.waivers.salary) : money(marketPrice(p,0))}
       ${isOrphan(p)?'<div class="tiny dim">'+p.contract.years+'yr, fixed</div>':''}</td>
@@ -4951,6 +5001,7 @@ document.addEventListener('change', e=>{
   const s = e.target.closest('[data-a="pickTeamView"]');
   if(s){ ui.tmp.teamView = s.value; render(); }
 });
+ACT.faWeekPick = (d, el)=>{ ui.tmp.faWeek = +el.value; render(); };
 ACT.faSearch = (d,el)=>{ ui.tmp.faq = el.value; const b=$('#faBody'); if(b) b.innerHTML = faRows(freeAgents()); };
 ACT.signFree = ()=>{ ui.sub='fa'; render(); };
 ACT.saveAdj = ()=>{
@@ -5057,9 +5108,11 @@ function lineupForm(teamId, week){
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
             const pj = projFor(p);
+            const ko = kickoffLabel(p.nfl);
             return '<option value="'+p.id+'"'+(x.p&&x.p.id===p.id?' selected':'')+(disable?' disabled':'')+'>'+
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
+              (ko?' · '+ko:'')+
               (mt?' · '+esc(mt):'')+tail+'</option>';
           }).join('');
         return `<div style="border-bottom:1px solid var(--line);padding:6px 0">
@@ -5069,8 +5122,11 @@ function lineupForm(teamId, week){
             <option value="">— empty —</option>
             ${opts}
           </select>
-          <span class="tiny num" style="width:76px;text-align:right">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}${
-            x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
+          <span class="tiny" style="width:96px;text-align:right">
+            ${x.p && kickoffLabel(x.p.nfl) ? '<div class="dim">'+kickoffLabel(x.p.nfl)+'</div>' : ''}
+            <span class="num">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}${
+              x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
+          </span>
           </div>
           ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+'</div>':''}
         </div>`;
@@ -5420,10 +5476,11 @@ ACT.findType = (d, el)=>{ ui.tmp.findQ = el.value; render(); };   /* data-k keep
    the tag-offer form. */
 ACT.freeFilter = (d, el)=>{
   const v = el.value;
-  ui.tmp[d.f] = (d.f==='offYear' || d.f==='offAgeMin' || d.f==='offAgeMax') ? (+v||0) : v;
+  ui.tmp[d.f] = (d.f==='offYear' || d.f==='offAgeMin' || d.f==='offAgeMax' || d.f==='offPpg') ? (+v||0) : v;
   render();
 };
-ACT.offClear = ()=>{ ui.tmp.offPos=''; ui.tmp.offTeam=''; ui.tmp.offAgeMin=0; ui.tmp.offAgeMax=0; render(); };
+ACT.offClear = ()=>{ ui.tmp.offPos=''; ui.tmp.offTeam=''; ui.tmp.offAgeMin=0; ui.tmp.offAgeMax=0;
+  ui.tmp.offPpg=0; render(); };
 ACT.pcYear = (d)=>{ ui.tmp.pcYear = +d.y; const id=ui.tmp.pcId; if(id) ACT.playerCard({id}); };
 /* Tell the owner what you would give for him, straight into league chat. */
 ACT.askFor = (d)=>{
@@ -5649,7 +5706,82 @@ ACT.viewAsOff = ()=>{ ui.tmp.viewAs = null; ui.tmp.teamView = null; render(); to
    Starting lineups, taxi squads and injured reserve, taken from the Sleeper
    league so nobody has to set the same thing twice. Each part can be switched
    off, because this site does things Sleeper cannot. */
-function sleeperLeague(){ return (S.settings.live||{}).sleeperLeagueId || ''; }
+/* "2 min ago", for a status line. */
+function shortAgo(at){
+  const s2 = Math.max(0, Math.round((Date.now()-at)/1000));
+  if(s2 < 60) return s2+'s ago';
+  if(s2 < 3600) return Math.round(s2/60)+' min ago';
+  return Math.round(s2/3600)+'h ago';
+}
+/* ---- Kickoff times ---------------------------------------------------------
+   When each NFL club plays this week, so a lineup can be set knowing who is on
+   Thursday and who is on Monday night. */
+function kickoffFor(club, week){
+  const w = week || +S.live.week || 1;
+  const book = ((S.live.kicks||{})[w]) || {};
+  const at = book[String(club||'').toUpperCase()];
+  return at ? +at : null;
+}
+/* "Sun 1:00pm", or "Thu 8:15pm". Empty when we do not know. */
+function kickoffLabel(club, week){
+  const at = kickoffFor(club, week);
+  if(!at) return '';
+  const d = new Date(at);
+  const day = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getDay()];
+  let h = d.getHours(); const mm = String(d.getMinutes()).padStart(2,'0');
+  const ap = h >= 12 ? 'pm' : 'am';
+  h = h % 12; if(h === 0) h = 12;
+  return day+' '+h+':'+mm+ap;
+}
+/* Has his game already started, going by the clock rather than a feed? */
+function kickoffPassed(club, week){
+  const at = kickoffFor(club, week);
+  return at ? Date.now() >= at : false;
+}
+/* Bring this week's kickoff times across. Only the times are written. */
+async function pullKickoffs(week){
+  const w = week || +S.live.week || 1;
+  const season = S.league.season;
+  const tries = [
+    SLEEPER+'/schedule/nfl/regular/'+season+'/'+w,
+    'https://api.sleeper.app/schedule/nfl/regular/'+season+'/'+w
+  ];
+  let rows = null;
+  for(const u of tries){
+    try{
+      const j = await getJSON(u);
+      const list = Array.isArray(j) ? j : (j && j.games) || null;
+      if(list && list.length){ rows = list; break; }
+    }catch(e){ /* try the next shape */ }
+  }
+  if(!rows) return 0;
+  S.live.kicks = S.live.kicks || {};
+  const book = S.live.kicks[w] = {};
+  let n2 = 0;
+  rows.forEach(r=>{
+    const when = r.date || r.kickoff || r.start_time || r.gameday;
+    const t2 = when ? Date.parse(when) : NaN;
+    if(isNaN(t2)) return;
+    [r.home, r.away, r.home_team, r.away_team].forEach(c=>{
+      if(!c) return;
+      book[String(c).toUpperCase()] = t2;
+      n2++;
+    });
+  });
+  if(n2){ S.live.kicksAt = Date.now(); save(); }
+  return n2;
+}
+function sleeperLeague(){
+  const live = S.settings.live||{};
+  return live.sleeperLeagueId || live.lastSleeperId || '';
+}
+/* Store it in two places, so a half-cleared setting can be recovered. */
+function rememberSleeperLeague(id){
+  if(!id) return;
+  S.settings.live = S.settings.live || {};
+  S.settings.live.sleeperLeagueId = id;
+  S.settings.live.lastSleeperId = id;
+}
 function teamByRoster(rosters){
   const map = {};
   (rosters||[]).forEach((r,i)=>{
@@ -5713,17 +5845,40 @@ async function pullSleeperSlots(quiet){
   if(n){ clearCapCache(); save(); if(!quiet) render(); }
   return n;
 }
-ACT.sleeperSyncNow = async ()=>{
-  if(!sleeperLeague()) return toast('Put your Sleeper league id in first','bad');
-  ui.tmp.syncBusy = true; render();
+/* Pull whatever the league has asked to mirror. Records what happened so the
+   page can say whether it is actually working. */
+async function runSleeperSync(quiet){
+  const cfg = S.settings.live || {};
+  ui.tmp.syncBusy = true; ui.tmp.syncStartedAt = Date.now();
   try{
-    const a = (S.settings.live.pullLineups) ? await pullSleeperLineups(null, true) : 0;
-    const b = await pullSleeperSlots(true);
-    ui.tmp.syncBusy = false; save(); render();
-    toast('Lineups for '+a+' team'+(a===1?'':'s')+', '+b+' taxi and injured reserve spots','good');
+    let lines = 0, slots = 0;
+    /* Kickoff times move rarely — once an hour is plenty. */
+    if((Date.now() - (S.live.kicksAt||0)) > 3600000) { try{ await pullKickoffs(); }catch(e){} }
+    if(cfg.pullLineups) lines = await pullSleeperLineups(null, true);
+    if(cfg.pullTaxi || cfg.pullIR) slots = await pullSleeperSlots(true);
+    S.live.syncAt = Date.now(); S.live.syncErr = null;
+    S.live.syncNote = lines+' lineup'+(lines===1?'':'s')+', '+slots+' squad move'+(slots===1?'':'s');
+    ui.tmp.syncBusy = false;
+    if(route==='live' || route==='teams' || route==='dash') render();
+    return {lines, slots};
   }catch(e){
-    ui.tmp.syncBusy = false; render();
-    toast('Could not read that league — '+e.message,'bad');
+    S.live.syncErr = e.message || 'no answer';
+    S.live.syncAt = Date.now();
+    ui.tmp.syncBusy = false;
+    if(!quiet) render();
+    throw e;
+  }
+}
+ACT.sleeperSyncNow = async ()=>{
+  if(!sleeperLeague())
+    return toast('This app does not know your Sleeper league yet — run any pull on the Import page once','bad');
+  render();
+  try{
+    const r = await runSleeperSync(false);
+    save(); render();
+    toast('Lineups for '+r.lines+' team'+(r.lines===1?'':'s')+', '+r.slots+' taxi and injured reserve spots','good');
+  }catch(e){
+    toast('Could not read that league — '+(e.message||'no answer'),'bad');
   }
 };
 /* ---- Draft picks from Sleeper ----------------------------------------------
@@ -5733,7 +5888,7 @@ ACT.picksPull = async ()=>{
   const id = sleeperLeagueId(($('#pkSlId')||{}).value || ui.tmp.pkSlId || sleeperLeague() || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.pkSlId = ($('#pkSlId')||{}).value || ui.tmp.pkSlId || '';
-  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
+  if(id)rememberSleeperLeague(id);
   ui.tmp.pkBusy = true; ui.tmp.pkErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 25);
@@ -6000,9 +6155,17 @@ ACT.playerCard = (d)=>{
           '<span class="tiny dim">'+(tr.dir==='up'?'added':'dropped')+' in '+tr.count+
           ' leagues in the last day</span></div>'
         : '';
+      const k = lastKnownPPG(p);
+      const ppgLine = k
+        ? '<div class="hr"></div><div class="flabel">Scoring</div>'+
+          '<div class="row" style="gap:10px;align-items:baseline">'+
+            '<div class="num" style="font-size:26px">'+k.ppg.toFixed(1)+'</div>'+
+            '<div class="tiny dim">a game'+(k.year===S.league.season?' this season':' in '+k.year)+'</div>'+
+          '</div>'
+        : '';
       const v = projFor(p), src = projSource(p);
-      if(v==null) return trLine;
-      return trLine + (()=>{
+      if(v==null) return trLine + ppgLine;
+      return trLine + ppgLine + (()=>{
       return '<div class="hr"></div><div class="flabel">Week '+(S.live.week||1)+' projection</div>'+
         '<div class="row" style="gap:10px;align-items:baseline">'+
           '<div class="num" style="font-size:26px">'+v.toFixed(1)+'</div>'+
@@ -7362,6 +7525,10 @@ ACT.setActAs = (d,el)=>{
 };
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]');
   if(s){ if(!actAsAllowed()) return; ui.tmp.actAs=s.value; render(); } });
+document.addEventListener('change', e=>{
+  const fw = e.target.closest('[data-a="faWeekPick"]');
+  if(fw && ACT.faWeekPick){ ACT.faWeekPick(fw.dataset, fw, e); return; }
+});
 document.addEventListener('change', e=>{
   const of = e.target.closest('[data-a="freeFilter"]');
   if(of && ACT.freeFilter){ ACT.freeFilter(of.dataset, of, e); return; }
@@ -9300,14 +9467,21 @@ VIEWS.find = function(){
       ${!q ? '<div class="hint">Type a name to see who holds him, what he is on and until when.</div>' : ''}
       ${q && !hits.length ? '<div class="hint">Nobody matches that.</div>' : ''}
       ${hits.length?`<div class="scrollx"><table>
-        <thead><tr><th>Player</th><th></th><th>Held by</th><th class="right">This year</th><th class="right">Through</th><th></th></tr></thead>
+        <thead><tr><th>Player</th><th></th><th class="right">Pts / game</th><th>Held by</th><th class="right">This year</th><th class="right">Through</th><th></th></tr></thead>
         <tbody>${hits.map(p=>{
           const c=p.contract, held = c && c.teamId && byId(S.teams,c.teamId);
           return '<tr><td><a href="#" data-a="playerCard" data-id="'+p.id+'" style="color:inherit">'+esc(p.name)+'</a> '+
             injuryTag(p)+' '+slotTag(p)+'</td>'+
             '<td class="dim tiny">'+esc(p.pos||'')+' '+esc(p.nfl||'')+'</td>'+
+            '<td class="right num">'+(()=>{ const k=lastKnownPPG(p);
+              if(!k) return '<span class="dim">—</span>';
+              return k.year===S.league.season ? '<b>'+k.ppg.toFixed(1)+'</b>'
+                : k.ppg.toFixed(1)+'<span class="dim tiny"> \u00b7 '+k.year+'</span>'; })()+'</td>'+
             '<td>'+(held? esc(teamName(c.teamId)) : '<span class="good">free agent</span>')+'</td>'+
-            '<td class="right num">'+(c? money(capHit(p,S.league.season)) : '—')+'</td>'+
+            '<td class="right num">'+(c
+              ? money(tradeHit(p, S.league.season)) +
+                (offCap(p) ? '<div class="tiny dim">off the cap where he is</div>' : '')
+              : '—')+'</td>'+
             '<td class="right num dim">'+(c? (c.startYear+c.years-1) : '—')+'</td>'+
             '<td class="right"><button class="btn sm ghost" data-a="playerCard" data-id="'+p.id+'">Open</button></td></tr>';
         }).join('')}</tbody></table></div>`:''}
@@ -9860,6 +10034,44 @@ function ord(n){
    GAMES PLAYED, AND WHICH SEASON TO RANK HIM ON
    ============================================================ */
 function minGames(){ return clamp(+S.settings.contracts.minGames||0, 0, 25); }
+/* What he averaged per game in a season — this one unless another is asked
+   for. Null when he has not played, so a blank is never mistaken for a zero. */
+/* Which week the free agent list is showing. */
+function faWeek(){
+  const w = +ui.tmp.faWeek;
+  return (w >= 1 && w <= 25) ? w : (+S.live.week || 1);
+}
+/* What he actually scored in one week — the live figure for the week in play,
+   otherwise whatever was recorded when it closed. Null when he did not play. */
+function weekPoints(p, week){
+  if(!p) return null;
+  const w = week || faWeek();
+  if(w === (+S.live.week||1)){
+    const live = (S.live.stats||{})[p.id];
+    if(live) return Math.round(fpts(p.id)*10)/10;
+  }
+  const line = ((S.season||{}).byPlayer||{})[p.id];
+  const rec = line && line.weeks && line.weeks[w];
+  return rec ? Math.round((+rec.fpts||0)*10)/10 : null;
+}
+function seasonPPG(p, year){
+  if(!p) return null;
+  const y = year || S.league.season;
+  const line = lineIn(p.id, y);
+  if(line && line.gp) return Math.round((line.fpts / line.gp) * 10) / 10;
+  return null;
+}
+/* His best available average: this season, else the most recent one he played. */
+function lastKnownPPG(p){
+  const now = seasonPPG(p);
+  if(now != null) return {ppg:now, year:S.league.season};
+  const years = playerYears(p).filter(y=> y !== S.league.season);
+  for(const y of years){
+    const v = seasonPPG(p, y);
+    if(v != null) return {ppg:v, year:y};
+  }
+  return null;
+}
 function lineIn(pid, year){
   if(year === (S.season||{}).year) return (S.season.byPlayer||{})[pid] || null;
   return ((S.history||{})[year] || {})[pid] || null;
@@ -11864,7 +12076,7 @@ ACT.schedPullGo = async ()=>{
   const id = sleeperLeagueId(($('#schedSlId')||{}).value || ui.tmp.schedSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.schedSlId = ($('#schedSlId')||{}).value || ui.tmp.schedSlId || '';
-  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
+  if(id)rememberSleeperLeague(id);
   ui.tmp.schedBusy = true; ui.tmp.schedErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 10);
@@ -11923,7 +12135,7 @@ ACT.faPullGo = async ()=>{
   const id = sleeperLeagueId(($('#faSlId')||{}).value || ui.tmp.faSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
   ui.tmp.faSlId = ($('#faSlId')||{}).value || '';
-  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
+  if(id)rememberSleeperLeague(id);
   ui.tmp.faBusy = true; ui.tmp.faErr = null; render();
   try{
     impProgress('Reading the rosters\u2026', 20);
@@ -12038,7 +12250,7 @@ ACT.sleeperGo = async ()=>{
   const id = sleeperLeagueId(($('#slId')||{}).value);
   /* Remember it, so lineups, taxi and injured reserve can keep in step without
      the id having to be typed in a second place. */
-  if(id){ S.settings.live = S.settings.live||{}; S.settings.live.sleeperLeagueId = id; }
+  if(id)rememberSleeperLeague(id);
   if(!id) return toast('Paste your league id, or the sleeper.com address','bad');
   ui.tmp.slIdVal = ($('#slId')||{}).value || '';
   ui.tmp.slErr = null; ui.tmp.slBusy = true; render();
@@ -16294,7 +16506,16 @@ function adoptRemote(state, rev, force){
   S.rev = rev;
   S.settings.sync = keepSync;
   if(keepSupa && (keepSupa.url || keepSupa.leagueId)) S.settings.supa = keepSupa;
-  S.settings.live = Object.assign({}, S.settings.live, keepLive);
+  /* Keep what this device has set, but an empty value is not a setting — it is
+     the absence of one, and must not wipe a real value coming from the server.
+     That is how the Sleeper league id kept vanishing on a fresh browser. */
+  const liveKeep = {};
+  Object.keys(keepLive).forEach(k=>{
+    const v = keepLive[k];
+    if(v === '' || v === null || v === undefined) return;
+    liveKeep[k] = v;
+  });
+  S.settings.live = Object.assign({}, S.settings.live, liveKeep);
   /* The pulled state remembers whoever pushed it. A seat belongs to the signed-in
      account, so take it from the membership row, then the local one, and other-
      wise leave it empty rather than adopting the pusher's team. */
@@ -16778,6 +16999,15 @@ function migrate(j){
     out.settings.live.mode = 'sleeper';
     out.settings.live.feedPicked = true;
   }
+  /* Same for how often it checks: fifteen seconds unless somebody has set their
+     own, and once set it is left alone. */
+  if(!out.settings.live.pollPicked){
+    out.settings.live.pollSec = 15;
+    out.settings.live.pollPicked = true;
+  }
+  /* A league id, once known, is never dropped by an update. */
+  if(!out.settings.live.sleeperLeagueId && out.settings.live.lastSleeperId)
+    out.settings.live.sleeperLeagueId = out.settings.live.lastSleeperId;
   return out;
 }
 /* Leagues saved before the Sleeper categories went in used shorter names. */
@@ -16869,19 +17099,17 @@ function tickAll(){
     ui.tmp.trendBusy = true;
     setTimeout(()=>{ ACT.trendPull(true).then(()=>{ ui.tmp.trendBusy=false; }, ()=>{ ui.tmp.trendBusy=false; }); }, 1500);
   }
-  /* Lineups, taxi and injured reserve, kept in step with Sleeper. */
+  /* Lineups, taxi and injured reserve, kept in step with Sleeper. Checked often
+     while somebody is looking at a screen that shows them, and less often
+     otherwise. */
+  if(ui.tmp.syncBusy && Date.now() - (ui.tmp.syncStartedAt||0) > 30000) ui.tmp.syncBusy = false;
+  const watching = (route==='live' || route==='teams' || route==='dash');
+  const gap = watching ? 45000 : 5*60*1000;
   if(sleeperLeague() && !ui.tmp.syncBusy &&
-     (Date.now() - (ui.tmp.lastSlotSync||0)) > 5*60*1000){
+     (Date.now() - (ui.tmp.lastSlotSync||0)) > gap){
     ui.tmp.lastSlotSync = Date.now();
-    ui.tmp.syncBusy = true;
-    setTimeout(()=>{
-      const cfg = S.settings.live||{};
-      const jobs = [];
-      if(cfg.pullLineups) jobs.push(pullSleeperLineups(null, true));
-      if(cfg.pullTaxi || cfg.pullIR) jobs.push(pullSleeperSlots(true));
-      Promise.all(jobs).then(()=>{ ui.tmp.syncBusy=false; if(route==='live'||route==='teams') render(); },
-                             ()=>{ ui.tmp.syncBusy=false; });
-    }, 800);
+    ui.tmp.syncBusy = true; ui.tmp.syncStartedAt = Date.now();
+    setTimeout(()=> runSleeperSync(true), 400);
   }
   /* Real scores straight from Sleeper, on the same timer. */
   if(S.settings.live.mode==='sleeper'){
