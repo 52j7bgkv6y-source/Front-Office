@@ -728,7 +728,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17k · comp rounds you choose';
+const APP_BUILD = '2026-08-17r · dues by year, coming free';
 
 /* ============================================================
    HOME LEAGUE
@@ -1181,9 +1181,10 @@ function defaultState(){
                               7:1.75, 8:1.75, 9:1.50, 10:1.50, 11:1.25, 12:1.25} } },
       comp:{ on:true, moneyWeight:65, prodWeight:35, offset:true,
              tiers:{1:85, 2:70, 3:55, 4:40}, maxPerTeam:4, maxTotal:0, minAav:0,
-             /* Which rounds hand out comp picks, and how many each may hold. A
-                round that is off pushes its picks down to the next one that is on. */
-             rounds:{1:true, 2:true, 3:true, 4:true}, perRound:2,
+             /* How many comp picks each round hands out: a floor and a ceiling.
+                Both 0 means the round gives none at all. */
+             band:{1:{min:0,max:0}, 2:{min:1,max:1}, 3:{min:1,max:3},
+                   4:{min:1,max:3}, 5:{min:0,max:0}, 6:{min:0,max:0}},
              priceMode:'pctOfLast', pctOfLast:92, byRound:{}, overrides:{},
              growthPct:2.5, baseSeason:season },
       playoffs:{ teams:6, startWeek:15, weeks:3, byes:2, twoWeekFinal:false, reseed:true,
@@ -1926,6 +1927,15 @@ function rookieMaxYears(p){
 }
 /* Why a length is not allowed, or null when it is fine. */
 function rookieYearsBlocked(p, years){
+  /* Two ceilings can apply: the round he was drafted in, and the three-year
+     window. Whichever is lower wins. */
+  const rd = rookieRoundOf(p);
+  if(rd != null && rookieWindowLeft(p) != null){
+    const byRound = rookieMaxYearsForRound(rd);
+    if(years > byRound)
+      return esc(p.name)+' was a round '+rd+' pick, so his deal can run at most '+
+        byRound+' year'+(byRound===1?'':'s')+'. Anything shorter is up to you.';
+  }
   const max = rookieMaxYears(p);
   if(max == null) return null;
   if(years <= max) return null;
@@ -1935,9 +1945,10 @@ function rookieYearsBlocked(p, years){
     (max===0 ? 'he has none left.' : 'at most '+max+' more year'+(max===1?'':'s')+' from here.');
 }
 /* Mark a player as a rookie of this draft. */
-function markRookie(p, year, at){
+function markRookie(p, year, at, round){
   if(!p) return;
   p.rookie = Object.assign({}, p.rookie, {year:+year||S.league.season, at:at||Date.now()});
+  if(round!=null && !isNaN(+round)) p.rookie.round = +round;
 }
 /* Writing the rulebook, and editing the dues sheet. */
 function canEditRules(){ return isCommish() && powerOn('ruleEdit'); }
@@ -4252,6 +4263,7 @@ VIEWS.teams = function(){
       <button class="${sub==='roster'?'on':''}" data-a="sub" data-s="roster">Roster</button>
       <button class="${sub==='squads'?'on':''}" data-a="sub" data-s="squads">Squads${(S.taxiClaims||[]).filter(c=>c.status==='open'&&(c.fromTeam===tid||c.toTeam===tid)).length?' ·':''}</button>
       <button class="${sub==='values'?'on':''}" data-a="sub" data-s="values">Values & extensions</button>
+      <button class="${sub==='offseason'?'on':''}" data-a="sub" data-s="offseason">Coming free</button>
       <button class="${sub==='dead'?'on':''}" data-a="sub" data-s="dead">Dead cap & adjustments</button>
       <button class="${sub==='fa'?'on':''}" data-a="sub" data-s="fa">Free agents (${fa.length})</button>
       <button class="${sub==='picks'?'on':''}" data-a="sub" data-s="picks">Draft picks</button>
@@ -4505,6 +4517,80 @@ VIEWS.teams = function(){
         ${retired.map(p=>`<tr><td>${esc(p.name)} ${posTag(p.pos)} <span class="dim tiny">${esc(p.nfl||'')}</span></td>
           <td class="right">${isCommish()?'<button class="btn sm ghost" data-a="unretire" data-id="'+p.id+'">Bring him back</button>':'<span class="pill">retired</span>'}</td></tr>`).join('')}
         </tbody></table></div></div>`:''}`;
+    })() : ''}
+
+    ${sub==='offseason' ? (()=>{
+      const yr = +ui.tmp.offYear || (S.league.season+1);
+      /* Anybody whose deal runs out before that season starts. */
+      const going = S.players.filter(p=>{
+        const c = p.contract;
+        if(!c || !c.teamId || !byId(S.teams, c.teamId)) return false;
+        return (c.startYear + c.years) <= yr;
+      });
+      const fPos = ui.tmp.offPos || '', fTeam = ui.tmp.offTeam || '';
+      const ageMin = +ui.tmp.offAgeMin || 0, ageMax = +ui.tmp.offAgeMax || 0;
+      const rows = going.filter(p=>{
+        if(fPos && p.pos !== fPos) return false;
+        if(fTeam && p.contract.teamId !== fTeam) return false;
+        const a = +p.age||0;
+        if(ageMin && a && a < ageMin) return false;
+        if(ageMax && a && a > ageMax) return false;
+        return true;
+      });
+      const positions = Array.from(new Set(going.map(p=>p.pos).filter(Boolean))).sort();
+      const byTeam = {};
+      rows.forEach(p=> byTeam[p.contract.teamId] = (byTeam[p.contract.teamId]||0) + 1);
+      return `
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Coming free</h3><div class="spacer"></div>
+        <label class="row" style="gap:6px"><span class="eyebrow">Before</span>
+          <select data-a="freeFilter" data-f="offYear">${Array.from({length:6},(_,i)=>S.league.season+1+i).map(y2=>
+            '<option value="'+y2+'"'+(y2===yr?' selected':'')+'>'+y2+'</option>').join('')}</select></label>
+      </div><div class="pb stack">
+        <p class="muted" style="margin:0">Everyone whose deal has run out by the start of ${yr} — who they are
+          leaving, how old they will be, and what they were on.</p>
+        <div class="grid g4 keep2">
+          <label class="f"><span>Position</span>
+            <select data-a="freeFilter" data-f="offPos">
+              <option value="">any</option>
+              ${positions.map(x=>'<option value="'+x+'"'+(fPos===x?' selected':'')+'>'+esc(x)+'</option>').join('')}
+            </select></label>
+          <label class="f"><span>Leaving</span>
+            <select data-a="freeFilter" data-f="offTeam">
+              <option value="">any team</option>
+              ${S.teams.map(t2=>'<option value="'+t2.id+'"'+(fTeam===t2.id?' selected':'')+'>'+esc(t2.name)+
+                (byTeam[t2.id]?' ('+byTeam[t2.id]+')':'')+'</option>').join('')}
+            </select></label>
+          <label class="f"><span>Age from</span>
+            <input type="number" min="18" max="45" data-a="freeFilter" data-f="offAgeMin" data-k="offmin"
+              value="${ageMin||''}" placeholder="any"></label>
+          <label class="f"><span>Age to</span>
+            <input type="number" min="18" max="45" data-a="freeFilter" data-f="offAgeMax" data-k="offmax"
+              value="${ageMax||''}" placeholder="any"></label>
+        </div>
+        <div class="row"><span class="tiny dim">${rows.length} of ${going.length} coming free</span>
+          <div class="spacer"></div>
+          ${(fPos||fTeam||ageMin||ageMax)?'<button class="btn sm ghost" data-a="offClear">Clear the filters</button>':''}</div>
+      </div></div>
+
+      <div class="panel"><div class="pb tight scrollx"><table>
+        <thead><tr>${sortTh('off','name','Player')}${sortTh('off','pos','Pos')}${sortTh('off','age','Age','right')}
+          ${sortTh('off','team','Leaving')}${sortTh('off','aav','Was on','right')}
+          ${sortTh('off','last','Through','right')}<th></th></tr></thead>
+        <tbody>${sortRows('off', rows, {
+          name:p=>p.name, pos:p=>p.pos, age:p=>+p.age||0,
+          team:p=>teamName(p.contract.teamId), aav:p=>capHit(p,S.league.season),
+          last:p=>p.contract.startYear + p.contract.years - 1
+        }, {key:'aav',dir:-1}).map(p=>`<tr>
+          <td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
+            ${injuryTag(p)} ${slotTag(p)}</td>
+          <td>${posTag(p.pos)}</td>
+          <td class="right num">${p.age? (+p.age + (yr - S.league.season)) : '—'}</td>
+          <td>${esc(teamName(p.contract.teamId))}</td>
+          <td class="right money">${money(capHit(p,S.league.season))}</td>
+          <td class="right num dim">${p.contract.startYear + p.contract.years - 1}</td>
+          <td class="right"><button class="btn sm ghost" data-a="playerCard" data-id="${p.id}">Open</button></td>
+        </tr>`).join('') || '<tr><td colspan="7" class="dim center" style="padding:24px">Nobody matches that.</td></tr>'}
+        </tbody></table></div></div>`;
     })() : ''}
 
     ${sub==='values' ? (()=>{
@@ -5330,6 +5416,14 @@ function depthAt(p){
     .sort((a,b)=> a.depth - b.depth);
 }
 ACT.findType = (d, el)=>{ ui.tmp.findQ = el.value; render(); };   /* data-k keeps the caret */
+/* Filters on the coming-free list. Named apart from offField, which belongs to
+   the tag-offer form. */
+ACT.freeFilter = (d, el)=>{
+  const v = el.value;
+  ui.tmp[d.f] = (d.f==='offYear' || d.f==='offAgeMin' || d.f==='offAgeMax') ? (+v||0) : v;
+  render();
+};
+ACT.offClear = ()=>{ ui.tmp.offPos=''; ui.tmp.offTeam=''; ui.tmp.offAgeMin=0; ui.tmp.offAgeMax=0; render(); };
 ACT.pcYear = (d)=>{ ui.tmp.pcYear = +d.y; const id=ui.tmp.pcId; if(id) ACT.playerCard({id}); };
 /* Tell the owner what you would give for him, straight into league chat. */
 ACT.askFor = (d)=>{
@@ -5769,9 +5863,18 @@ ACT.rkApply = ()=>{
 ACT.rookieMark = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const p = byId(S.players, d.id); if(!p) return;
-  markRookie(p, +d.y || S.league.season);
+  markRookie(p, +d.y || S.league.season, null, d.rd);
   logIt(p.name+' marked as a '+(+d.y||S.league.season)+' rookie', {type:'admin', players:[p.id]});
   save(); render(); toast('Held to the rookie rule until '+((+d.y||S.league.season)+(+rookieRules().windowYears||3)),'good');
+};
+ACT.rookieRound = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p || !p.rookie) return;
+  const v = el ? el.value : d.rd;
+  if(v==='' || v==null) delete p.rookie.round; else p.rookie.round = +v;
+  logIt(p.name+(v?' recorded as a round '+v+' pick':' no longer has a draft round'),
+    {type:'admin', players:[p.id]});
+  save(); render();
 };
 ACT.rookieFree = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
@@ -5862,12 +5965,26 @@ ACT.playerCard = (d)=>{
           'Mark as a '+S.league.season+' rookie</button></div>'
         : '';
       const left = rookieWindowLeft(p), max = rookieMaxYears(p);
+      const rd = rookieRoundOf(p);
+      const roundBit = left==null ? '' :
+        (rd != null
+          ? ' Taken in round '+rd+', so at most '+rookieMaxYearsForRound(rd)+
+            ' year'+(rookieMaxYearsForRound(rd)===1?'':'s')+' on any deal \u2014 shorter is your choice.'
+          : '');
+      const roundPick = (isCommish() && left!=null)
+        ? '<label class="f" style="margin-top:6px"><span>Drafted in round</span>'+
+          '<select data-a="rookieRound" data-id="'+p.id+'">'+
+          '<option value="">not recorded</option>'+
+          Array.from({length:rookieRounds()},(_,i)=>'<option value="'+(i+1)+'"'+
+            (rd===i+1?' selected':'')+'>round '+(i+1)+'</option>').join('')+
+          '</select></label>'
+        : '';
       return '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
         '<div class="tiny">Taken in the '+from+' rookie draft. '+
         (rookieFreed(p) ? 'He has been through the free agency draft, so the limit no longer applies.'
          : left==null ? 'His window has run out — normal rules from here.'
          : 'Window runs to '+(from+(+rookieRules().windowYears||3))+'; at most '+max+
-           ' more year'+(max===1?'':'s')+' on any deal from here.')+'</div>'+
+           ' more year'+(max===1?'':'s')+' on any deal from here.'+roundBit)+'</div>'+roundPick+
         (isCommish()
           ? '<div class="row" style="gap:6px;margin-top:6px">'+
             '<button class="btn sm ghost" data-a="rookieFree" data-id="'+p.id+'">'+
@@ -6264,7 +6381,10 @@ ACT.cdField = (d, el)=>{
     /* Hold a rookie to his window rather than letting a number be typed that
        will only be refused on save. */
     const pr = byId(S.players, cd.pid);
-    const rmax = pr ? rookieMaxYears(pr) : null;
+    let rmax = pr ? rookieMaxYears(pr) : null;
+    const prRd = pr ? rookieRoundOf(pr) : null;
+    if(prRd != null && rookieWindowLeft(pr) != null)
+      rmax = rmax == null ? rookieMaxYearsForRound(prRd) : Math.min(rmax, rookieMaxYearsForRound(prRd));
     if(rmax != null && v > rmax){
       v = Math.max(1, rmax);
       toast('Rookie deal \u2014 at most '+rmax+' year'+(rmax===1?'':'s')+' from here','warn');
@@ -7243,6 +7363,18 @@ ACT.setActAs = (d,el)=>{
 document.addEventListener('change', e=>{ const s=e.target.closest('[data-a="setActAs"]');
   if(s){ if(!actAsAllowed()) return; ui.tmp.actAs=s.value; render(); } });
 document.addEventListener('change', e=>{
+  const of = e.target.closest('[data-a="freeFilter"]');
+  if(of && ACT.freeFilter){ ACT.freeFilter(of.dataset, of, e); return; }
+});
+document.addEventListener('change', e=>{
+  const dy = e.target.closest('[data-a="duesYearPick"]');
+  if(dy && ACT.duesYearPick){ ACT.duesYearPick(dy.dataset, dy, e); return; }
+});
+document.addEventListener('change', e=>{
+  const rr = e.target.closest('[data-a="rookieRound"]');
+  if(rr && ACT.rookieRound){ ACT.rookieRound(rr.dataset, rr, e); return; }
+});
+document.addEventListener('change', e=>{
   const ry = e.target.closest('[data-a="rookieYearView"]');
   if(ry && ACT.rookieYearView){ ACT.rookieYearView(ry.dataset, ry, e); return; }
 });
@@ -8152,14 +8284,39 @@ ACT.newTrade = ()=>{
   modal('Propose a trade', tradeForm(),
     '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="sendTrade">Send it</button>');
 };
+/* The offer always comes from you. A commissioner standing in for somebody
+   sends as that team, which is the same rule. */
+function tbFixSender(){
+  const tb = ui.tmp.tb; if(!tb) return;
+  const me = actingTeam();
+  if(tb.a && tb.a.teamId !== me){
+    /* If the other side was set to you, swap it out rather than leaving a team
+       trading with itself. */
+    if(tb.b && tb.b.teamId === me){
+      const other = (S.teams.find(t=> t.id!==me)||{}).id || null;
+      tb.b = {teamId:other, players:[], picks:[], cash:0};
+    }
+    tb.a = {teamId:me, players:[], picks:[], cash:0};
+  }
+  if(tb.b && tb.a && tb.b.teamId === tb.a.teamId){
+    const other = (S.teams.find(t=> t.id!==tb.a.teamId)||{}).id || null;
+    tb.b = {teamId:other, players:[], picks:[], cash:0};
+  }
+}
 function tbSide(side){
+  tbFixSender();
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
   /* Somebody on the taxi squad costs nothing where he is, but he cannot stay
      there once he is traded — so the trade is priced at what he actually earns. */
   const out = sum(s.players.map(id=>{const p=byId(S.players,id);return p?tradeHit(p,y):0;}));
   return `<div class="assetbox">
-    <label class="f" style="margin-bottom:8px"><span>${side==='a'?'Sending team':'Receiving team'}</span>
-      <select data-a="tbTeam" data-side="${side}">${S.teams.map(t=>'<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+'</option>').join('')}</select></label>
+    <label class="f" style="margin-bottom:8px"><span>${side==='a'?'You are sending':'Receiving team'}</span>
+      ${side==='a'
+        ? '<div class="pill" style="align-self:flex-start">'+esc(teamName(tid))+'</div>'
+        : '<select data-a="tbTeam" data-side="'+side+'">'+
+          S.teams.filter(t=> t.id!==(ui.tmp.tb&&ui.tmp.tb.a&&ui.tmp.tb.a.teamId))
+            .map(t=>'<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+'</option>').join('')+
+          '</select>'}</label>
     <div style="margin-bottom:8px">${assetChips(s,{rm:'tbRm', side:side})}</div>
     <div class="row">
       <select id="tbp_${side}" style="flex:1;min-width:140px"><option value="">Player…</option>
@@ -8456,7 +8613,14 @@ function remodal(html){
 /* "12." and "-" are half-typed, not numbers. Redrawing on them rewrites the box
    and eats the next keystroke, so we wait until it settles. */
 function midNumber(v){ const t=String(v==null?'':v); return t==='' || /[.\-+eE]$/.test(t); }
-ACT.tbTeam = (d,el)=>{ const s=ui.tmp.tb[d.side]; s.teamId=el.value; s.players=[]; s.picks=[]; $('#modalBox .mb').innerHTML=tradeForm(); };
+ACT.tbTeam = (d,el)=>{
+  /* Only the receiving side is anybody's to change. */
+  if(d.side==='a') return;
+  const s=ui.tmp.tb[d.side];
+  if(el.value === (ui.tmp.tb.a||{}).teamId) return toast('You are already the sending team','bad');
+  s.teamId=el.value; s.players=[]; s.picks=[];
+  $('#modalBox .mb').innerHTML=tradeForm();
+};
 document.addEventListener('change', e=>{
   const s = e.target.closest('[data-a="tbTeam"]'); if(s) return ACT.tbTeam(s.dataset, s);
   const a = e.target.closest('[data-a="mtAddTeam"]'); if(a) return ACT.mtAddTeam(a.dataset, a);
@@ -8646,11 +8810,19 @@ function counterForm(){
         </div>
       </div></div>
   </div>
-  <div class="hint ${c.mustIncludeOriginal && !hits ? 'bad':''}">
-    ${c.mustIncludeOriginal ? 'This league requires a counter to reach into the original trade. You have '+hits+' ★ asset'+(hits===1?'':'s')+' in your ask.'
-      : 'Counters may ask for anything that side holds.'}
-    ${c.outcome==='chain' ? ' If accepted, the original trade processes first and your counter goes through right behind it.'
-      : ' If accepted, the original trade is voided and yours replaces it.'}</div>`;
+  ${(()=>{
+    const gone = c.mustIncludeOriginal ? counterMissing(byId(S.trades, ct.tradeId), ct) : [];
+    const note = c.mustIncludeOriginal
+      ? (gone.length
+          ? 'Everything from the original trade has to be in your counter. Still missing: '+
+            gone.map(esc).join(', ')+'.'
+          : 'Everything from the original trade is in \u2014 you can add to it, but not take from it.')
+      : 'Counters may ask for anything that side holds.';
+    const outcome = c.outcome==='chain'
+      ? ' If accepted, the original trade processes first and your counter goes through right behind it.'
+      : ' If accepted, the original trade is voided and yours replaces it.';
+    return '<div class="hint '+(gone.length?'bad':'')+'">'+note+outcome+'</div>';
+  })()}`;
 }
 ACT.ctAdd = (d)=>{
   if(d.kind==='cash') return setCashFrom('#ctgc', v=>{ ui.tmp.ct.gives.cash = v; }, counterForm);
@@ -8662,11 +8834,41 @@ ACT.ctAdd = (d)=>{
 ACT.ctRm = (d)=>{
   if(d.kind==='cash'){ ui.tmp.ct.gives.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
   const arr=ui.tmp.ct[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=counterForm(); };
+/* Everything the countered side put into the original trade. A counter has to
+   carry all of it — you can add, you cannot take away. */
+function originalSideAssets(tr, side){
+  const s = tr && tr[side];
+  if(!s) return {players:[], picks:[]};
+  return {players:(s.players||[]).slice(), picks:(s.picks||[]).slice()};
+}
+/* Anything from the original that a counter has left out. */
+function counterMissing(tr, ct){
+  const c = S.settings.trades.counters || {};
+  if(!c.mustIncludeOriginal) return [];
+  const out = [];
+  /* Both sides of the original have to survive: what you are asking for must
+     include everything that side was already giving, and what you are putting
+     in must include everything the other side was already giving. */
+  const askedFrom = originalSideAssets(tr, ct.side);
+  const givenBy   = originalSideAssets(tr, ct.side==='a' ? 'b' : 'a');
+  askedFrom.players.forEach(id=>{ if((ct.wants.players||[]).indexOf(id)<0) out.push(nameOfAsset(id)); });
+  askedFrom.picks.forEach(id=>{   if((ct.wants.picks||[]).indexOf(id)<0)   out.push(nameOfAsset(id)); });
+  givenBy.players.forEach(id=>{   if((ct.gives.players||[]).indexOf(id)<0) out.push(nameOfAsset(id)); });
+  givenBy.picks.forEach(id=>{     if((ct.gives.picks||[]).indexOf(id)<0)   out.push(nameOfAsset(id)); });
+  return out;
+}
+function nameOfAsset(id){
+  const p = byId(S.players, id);
+  if(p) return p.name;
+  const k = byId(S.picks, id);
+  return k ? pickLabel(k) : 'an asset';
+}
 ACT.sendCounter = ()=>{
   const ct = ui.tmp.ct, tr = byId(S.trades,ct.tradeId), c = S.settings.trades.counters, orig = originalAssets(tr);
   if(!ct.wants.players.length && !ct.wants.picks.length) return toast('Ask for something','bad');
-  const hits = [].concat(ct.wants.players, ct.wants.picks).filter(id=> orig[id]).length;
-  if(c.mustIncludeOriginal && !hits) return toast('Your counter has to include a piece of the original trade','bad');
+  const missing = counterMissing(tr, ct);
+  if(missing.length) return toast('Your counter has to carry the whole original trade — still missing '+
+    missing.slice(0,3).join(', ') + (missing.length>3 ? ' and '+(missing.length-3)+' more' : ''), 'bad');
   if(c.outcome==='replace'){
     const incoming = tr[ct.side==='a'?'b':'a'];
     const bad = [].concat(ct.wants.players, ct.wants.picks).some(id=> incoming.players.indexOf(id)>=0 || incoming.picks.indexOf(id)>=0);
@@ -9299,7 +9501,7 @@ VIEWS.trades = function(){
         <label class="check"><input type="checkbox" data-set="settings.trades.counters.on" ${c.counters.on?'checked':''}>
           <span>Allow other teams to counter a trade during its review window</span></label>
         <label class="check"><input type="checkbox" data-set="settings.trades.counters.mustIncludeOriginal" ${c.counters.mustIncludeOriginal?'checked':''}>
-          <span>A counter must ask for at least one asset from the original trade</span></label>
+          <span>Counters must include everything from the original trade's side</span></label>
         <label class="f"><span>Which side can be countered</span>
           <select data-set="settings.trades.counters.side">
             <option value="either"${c.counters.side==='either'?' selected':''}>Either side</option>
@@ -10204,9 +10406,20 @@ function rookiePrice(round, slot, year){
   const lift = Math.max(0, (year||S.league.season) - (+r.baseSeason||S.league.season));
   return Math.max(+r.minSalary||0, roundInc(base * Math.pow(1 + (+r.growthPct||0)/100, lift)));
 }
-function rookieYears(round){
+/* The longest deal a pick from this round may be signed to. Anything shorter is
+   the team's own choice once they have drafted him. */
+function rookieMaxYearsForRound(round){
   const y = (S.settings.rookie.roundYears||{})[round];
   return clamp(+y||1, 1, +S.settings.contracts.maxYears||10);
+}
+/* What a fresh pick is written at before anybody edits it — the full length the
+   round allows. */
+function rookieYears(round){ return rookieMaxYearsForRound(round); }
+/* The round a player was drafted in, if we know it. */
+function rookieRoundOf(p){
+  const r = p && p.rookie;
+  const v = r && r.round;
+  return (v!=null && !isNaN(+v)) ? +v : null;
 }
 function rookieDeal(round, slot, teamId, year){
   const aav = rookiePrice(round, slot, year), yrs = rookieYears(round);
@@ -10266,13 +10479,23 @@ function compRoundFor(score){
   }
   return null;
 }
-/* Which rounds this league gives comp picks in. */
-function compRoundsOn(){
+/* Every round the league could use, in order. */
+function compAllRounds(){
   const cfg = S.settings.comp || {};
-  const on = cfg.rounds || {};
-  const rounds = Object.keys(cfg.tiers||{}).map(Number).filter(x=> !isNaN(x)).sort((a,b)=> a-b);
-  return rounds.filter(r=> on[r] !== false);
+  const keys = Object.keys(cfg.band||{}).map(Number).filter(x=> !isNaN(x));
+  const fromTiers = Object.keys(cfg.tiers||{}).map(Number).filter(x=> !isNaN(x));
+  const all = Array.from(new Set(keys.concat(fromTiers))).sort((a,b)=> a-b);
+  return all.length ? all : [1,2,3,4];
 }
+/* The floor and ceiling for one round. */
+function compBand(r){
+  const b = ((S.settings.comp||{}).band||{})[r] || {};
+  const max = Math.max(0, +b.max||0);
+  const min = Math.max(0, Math.min(+b.min||0, max));
+  return {min, max};
+}
+/* Rounds that hand out anything at all. */
+function compRoundsOn(){ return compAllRounds().filter(r=> compBand(r).max > 0); }
 /* A score earns round r, but that round may be switched off — in which case the
    pick drops to the next round that is on. Nothing is created above the round
    the score actually earned. Named apart from compRoundFor(score), which asks a
@@ -10284,8 +10507,7 @@ function compRoundAllowed(r){
   const lower = on.filter(x=> x > r);
   return lower.length ? lower[0] : null;
 }
-/* How many comp picks a round may hold. 0 means no limit. */
-function compPerRound(){ const v = +((S.settings.comp||{}).perRound); return v > 0 ? v : 0; }
+
 /* Losses are offset by signings of your own, biggest against biggest, the way
    the real thing works. What is left over earns a pick. */
 function compFor(year){
@@ -10352,32 +10574,68 @@ function awardCompPicks(year){
   S.picks = S.picks.filter(k=> !(isComp(k) && k.year===year));
   let made = 0;
   const perRound = {};
-  const cap = compPerRound(), on = compRoundsOn();
+  const on = compRoundsOn();
   /* Best score first, so when a round fills it is the weaker claims that drop
-     down a round rather than whoever happened to be processed last. */
+     down rather than whoever happened to be processed last. */
   const queue = [];
   Object.keys(table).forEach(tid=>{
     (table[tid].awards||[]).forEach(a=> queue.push({tid, a}));
   });
   queue.sort((x,y)=> (+y.a.score||0) - (+x.a.score||0));
-  let skipped = 0;
-  queue.forEach(({tid, a})=>{
+
+  const placed = [], leftOver = [];
+  queue.forEach(entry=>{
     /* Start at the round earned and walk down until one has room. */
     let rd = null;
     for(const r of on){
-      if(r < a.round) continue;
-      if(!cap || (perRound[r]||0) < cap){ rd = r; break; }
+      if(r < entry.a.round) continue;
+      if((perRound[r]||0) < compBand(r).max){ rd = r; break; }
     }
-    if(rd == null){ skipped++; return; }
+    if(rd == null){ leftOver.push(entry); return; }
     perRound[rd] = (perRound[rd]||0) + 1;
-    const pk = {id:uid('pk'), year, round:rd, ownerTeamId:tid, originTeamId:tid,
-      comp:{index:perRound[rd], score:a.score, forPlayer:a.sg.playerId, lostTo:a.sg.toTeam,
-            earned:a.round}};
-    S.picks.push(pk);
+    placed.push({entry, round:rd});
+  });
+
+  /* A round that has to hand out a minimum still does, even when nobody scored
+     well enough for it. The best claim sitting in a lower round moves up. */
+  on.forEach(r=>{
+    const need = compBand(r).min;
+    while((perRound[r]||0) < need){
+      /* Take from the lowest round that is above its own floor. */
+      let from = null;
+      for(let i=on.length-1; i>=0; i--){
+        const lower = on[i];
+        if(lower <= r) break;
+        if((perRound[lower]||0) > compBand(lower).min){ from = lower; break; }
+      }
+      let moved = null;
+      if(from != null){
+        const pool = placed.filter(x=> x.round===from);
+        moved = pool[0];                       /* best score in that round */
+      } else if(leftOver.length){
+        moved = {entry:leftOver.shift(), round:null};
+        placed.push(moved);
+      }
+      if(!moved) break;                        /* nothing left to promote */
+      if(moved.round != null) perRound[moved.round]--;
+      moved.round = r;
+      perRound[r] = (perRound[r]||0) + 1;
+    }
+  });
+
+  /* Write them out, numbered within each round by score. */
+  const idx = {};
+  placed.sort((x,y)=> x.round - y.round || (+y.entry.a.score||0) - (+x.entry.a.score||0));
+  placed.forEach(({entry, round})=>{
+    idx[round] = (idx[round]||0) + 1;
+    const a = entry.a;
+    S.picks.push({id:uid('pk'), year, round, ownerTeamId:entry.tid, originTeamId:entry.tid,
+      comp:{index:idx[round], score:a.score, forPlayer:a.sg.playerId, lostTo:a.sg.toTeam,
+            earned:a.round}});
     made++;
   });
-  if(skipped) logIt(skipped+' compensatory claim'+(skipped===1?'':'s')+' found no room in any round',
-    {type:'admin'});
+  if(leftOver.length) logIt(leftOver.length+' compensatory claim'+(leftOver.length===1?'':'s')+
+    ' found no room in any round', {type:'admin'});
   logIt('Compensatory picks worked out for '+year+' — '+made+' awarded', {type:'admin'});
   return made;
 }
@@ -11203,7 +11461,29 @@ document.addEventListener('input', e=>{
 /* ============================================================
    VIEW · DUES
    ============================================================ */
-function dueAmount(t){ return t.dues.amount!=null && t.dues.amount!=='' ? +t.dues.amount : +S.settings.dues.amount||0; }
+/* Which season's dues we are looking at. */
+function duesYear(){
+  const y = +ui.tmp.duesYear;
+  return (y >= 2000 && y <= 2100) ? y : S.league.season;
+}
+/* Dues are kept per season. Anything recorded before that lived on t.dues, so
+   it is treated as belonging to the season it was entered in. */
+function duesFor(t, year){
+  const y = year || duesYear();
+  t.duesBy = t.duesBy || {};
+  if(!t.duesBy[y]){
+    const legacy = (y === (t.duesLegacyYear || S.league.season)) ? t.dues : null;
+    t.duesBy[y] = legacy && typeof legacy==='object'
+      ? {paid:!!legacy.paid, paidOn:legacy.paidOn||null, amount:legacy.amount??null,
+         method:legacy.method||'', note:legacy.note||''}
+      : {paid:false, paidOn:null, amount:null, method:'', note:''};
+  }
+  return t.duesBy[y];
+}
+function dueAmount(t, year){
+  const d = duesFor(t, year);
+  return d.amount!=null && d.amount!=='' ? +d.amount : +S.settings.dues.amount||0;
+}
 function duesSym(){ return S.settings.dues.symbol || '$'; }
 function duesMoney(n){ return duesSym() + Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2}); }
 function daysUntilDue(){
@@ -11211,13 +11491,16 @@ function daysUntilDue(){
   return Math.ceil((new Date(d+'T23:59:59').getTime() - Date.now())/86400000);
 }
 VIEWS.dues = function(){
-  const d = S.settings.dues, paid = S.teams.filter(t=>t.dues.paid), owing = S.teams.filter(t=>!t.dues.paid);
+  const d = S.settings.dues, paid = S.teams.filter(t=>duesFor(t).paid), owing = S.teams.filter(t=>!duesFor(t).paid);
   const collected = sum(paid.map(dueAmount)), expected = sum(S.teams.map(dueAmount));
   const dl = daysUntilDue();
   return `
   <div class="section">
     <header><div><div class="eyebrow">${dl==null?'No due date set':dl<0?Math.abs(dl)+' days overdue':dl+' days to go'} · due ${dayOnly(d.dueDate)}</div>
       <h1>League dues</h1></div><div class="spacer"></div>
+      <label class="row" style="gap:6px"><span class="eyebrow">Season</span>
+        <select data-a="duesYearPick">${Array.from({length:6},(_,i)=>S.league.season+i).map(yy=>
+          '<option value="'+yy+'"'+(yy===duesYear()?' selected':'')+'>'+yy+'</option>').join('')}</select></label>
       ${!canEditDues() ? '' : `<button class="btn" data-a="markAllUnpaid">Reset the year</button>
       <button class="btn pri" data-a="remindAll" ${owing.length?'':'disabled'}>Send reminders (${owing.length})</button>`}</header>
 
@@ -11238,13 +11521,13 @@ VIEWS.dues = function(){
           <td><b style="font-weight:500">${esc(t.name)}</b></td>
           <td class="muted tiny">${esc(t.owner||'')}${t.email?'<br><span class="dim">'+esc(t.email)+'</span>':''}</td>
           <td class="right">${canEditDues()
-            ? '<input type="number" style="width:92px;text-align:right" placeholder="'+d.amount+'" value="'+(t.dues.amount??'')+'" data-a="dueAmt" data-id="'+t.id+'" data-k="da_'+t.id+'">'
+            ? '<input type="number" style="width:92px;text-align:right" placeholder="'+d.amount+'" value="'+(duesFor(t).amount??'')+'" data-a="dueAmt" data-id="'+t.id+'" data-k="da_'+t.id+'">'
             : '<span class="num">'+money(dueAmount(t))+'</span>'}</td>
-          <td class="right num tiny">${t.dues.paid&&t.dues.paidOn?dstr(t.dues.paidOn):'—'}</td>
-          <td class="right">${t.dues.paid?'<span class="pill ok">Paid</span>':'<span class="pill" style="border-color:#5C3227;color:var(--signal)">Owing</span>'}</td>
+          <td class="right num tiny">${duesFor(t).paid&&duesFor(t).paidOn?dstr(duesFor(t).paidOn):'—'}</td>
+          <td class="right">${duesFor(t).paid?'<span class="pill ok">Paid</span>':'<span class="pill" style="border-color:#5C3227;color:var(--signal)">Owing</span>'}</td>
           <td class="right nowrap">${!canEditDues() ? '' : `
-            <button class="btn sm ${t.dues.paid?'ghost':'pri'}" data-a="togglePaid" data-id="${t.id}">${t.dues.paid?'Mark unpaid':'Mark paid'}</button>
-            ${!t.dues.paid?'<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>':''}`}
+            <button class="btn sm ${duesFor(t).paid?'ghost':'pri'}" data-a="togglePaid" data-id="${t.id}">${duesFor(t).paid?'Mark unpaid':'Mark paid'}</button>
+            ${!duesFor(t).paid?'<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>':''}`}
           </td></tr>`).join('')}
         </tbody></table></div></div>
 
@@ -11276,10 +11559,12 @@ document.addEventListener('input', e=>{
   if(!t) return;
   const tm = byId(S.teams, t.dataset.id); if(tm){ tm.dues.amount = t.value===''?null:+t.value; save(); }
 });
+ACT.duesYearPick = (d, el)=>{ ui.tmp.duesYear = +el.value; render(); };
 ACT.togglePaid = (d)=>{
   const t = byId(S.teams,d.id);
-  t.dues.paid = !t.dues.paid; t.dues.paidOn = t.dues.paid ? Date.now() : null;
-  logIt(t.name+(t.dues.paid?' paid dues':' marked unpaid'), {type:'admin', teams:[t.id]});
+  const rec = duesFor(t);
+  rec.paid = !rec.paid; rec.paidOn = rec.paid ? Date.now() : null;
+  logIt(t.name+(rec.paid?' paid '+duesYear()+' dues':' marked unpaid for '+duesYear()), {type:'admin', teams:[t.id]});
   save(); render();
 };
 ACT.markAllUnpaid = ()=>{
@@ -11287,7 +11572,7 @@ ACT.markAllUnpaid = ()=>{
   '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn danger" data-a="markAllUnpaidGo">Reset</button>');
 };
 ACT.markAllUnpaidGo = ()=>{
-  S.teams.forEach(t=>{ t.dues.paid=false; t.dues.paidOn=null; });
+  S.teams.forEach(t=>{ const rec=duesFor(t); rec.paid=false; rec.paidOn=null; });
   closeModal(); save(); render(); toast('Dues reset');
 };
 function reminderText(t){
@@ -11309,7 +11594,7 @@ ACT.remindOne = (d)=>{
     '<button class="btn pri" data-a="copyRem">Copy</button>');
 };
 ACT.remindAll = ()=>{
-  const owing = S.teams.filter(t=>!t.dues.paid);
+  const owing = S.teams.filter(t=>!duesFor(t).paid);
   owing.forEach(t=> S.notices.unshift({id:uid('n'), at:Date.now(), kind:'dues', title:'Reminder sent',
     body:'Reminded '+t.name+' — '+duesMoney(dueAmount(t))+' outstanding', read:false}));
   save();
@@ -13434,6 +13719,9 @@ VIEWS.settings = function(){
           <div class="grid g2">
           ${Array.from({length:r.rounds},(_,i)=>`<label class="f"><span>Round ${i+1}</span>
             <input type="number" min="1" max="${ct.maxYears}" data-set="settings.rookie.roundYears.${i+1}" value="${(r.roundYears||{})[i+1]||1}"></label>`).join('')}
+          <div class="hint">These are ceilings, not fixed terms. A pick is written at the full length to begin
+            with, and whoever drafted him can shorten it to anything down to one year — they just cannot go
+            past the number for his round.</div>
           </div>
           <div class="hr"></div>
           <div class="hint">Longer deals for earlier picks is the usual arrangement — it is what makes a high pick worth
@@ -13485,27 +13773,28 @@ VIEWS.settings = function(){
           </div>
           <label class="check"><input type="checkbox" data-set="settings.comp.offset" ${S.settings.comp.offset?'checked':''}>
             <span>A player you sign cancels out a player you lost</span></label>
-          <div class="flabel" style="margin-top:6px">Which rounds hand out comp picks</div>
-          <div class="row" style="gap:10px;flex-wrap:wrap">
-            ${Array.from({length:r.rounds},(_,i)=>{
-              const rd=i+1, on=(S.settings.comp.rounds||{})[rd]!==false;
-              return '<label class="check" style="margin:0"><input type="checkbox" '+
-                'data-set="settings.comp.rounds.'+rd+'"'+(on?' checked':'')+'><span>Round '+rd+'</span></label>';
-            }).join('')}
-          </div>
-          <label class="f"><span>Most in any one round</span>
-            <select data-set="settings.comp.perRound">
-              ${[0,1,2,3,4,5].map(v=>'<option value="'+v+'"'+((+S.settings.comp.perRound||0)===v?' selected':'')+'>'+
-                (v===0?'no limit':v+' pick'+(v===1?'':'s'))+'</option>').join('')}
-            </select></label>
+          <div class="flabel" style="margin-top:6px">How many comp picks in each round</div>
+          <div class="scrollx"><table>
+            <thead><tr><th>Round</th><th class="right">At least</th><th class="right">At most</th><th></th></tr></thead>
+            <tbody>${compAllRounds().map(rd=>{
+              const b = compBand(rd);
+              return '<tr><td class="num">'+rd+'</td>'+
+                '<td class="right"><input type="number" min="0" max="9" style="width:64px;text-align:right" '+
+                  'data-set="settings.comp.band.'+rd+'.min" value="'+b.min+'"></td>'+
+                '<td class="right"><input type="number" min="0" max="9" style="width:64px;text-align:right" '+
+                  'data-set="settings.comp.band.'+rd+'.max" value="'+b.max+'"></td>'+
+                '<td class="dim tiny">'+(b.max===0 ? 'none in this round'
+                  : b.min===b.max ? 'always '+b.max
+                  : b.min+' to '+b.max)+'</td></tr>';
+            }).join('')}</tbody></table></div>
           <div class="hint">${(()=>{
             const on = compRoundsOn();
-            const cap = compPerRound();
-            if(!on.length) return 'No rounds are switched on, so no comp picks will be handed out.';
-            return 'Comp picks land in round'+(on.length===1?' ':'s ')+on.join(', ')+
-              (cap ? ', at most '+cap+' in each' : ', with no limit on how many')+
-              '. A claim that earns a round you have switched off drops to the next one that is on, '+
-              'and so does one that finds its round already full — best scores first.';
+            if(!on.length) return 'Every round is set to none, so no comp picks will be handed out.';
+            const parts = on.map(r=>{ const b=compBand(r);
+              return 'round '+r+' '+(b.min===b.max ? b.max : b.min+'\u2013'+b.max); });
+            return parts.join(', ')+'. A claim that earns a round with no room drops to the next one that has '+
+              'some, best scores first. A round that has to hand out a minimum still does — the best claim '+
+              'sitting below it moves up to fill the spot.';
           })()}</div>
           <div class="flabel" style="margin-top:6px">Score needed for each round</div>
           <div class="grid g4 keep2">
@@ -15746,7 +16035,7 @@ ACT.rollSeasonGo = ()=>{
     }
   });
   S.players.forEach(p=>{ if(p.age) p.age++; });
-  S.teams.forEach(t=>{ t.dues.paid=false; t.dues.paidOn=null; });
+  S.teams.forEach(t=>{ const rec=duesFor(t); rec.paid=false; rec.paidOn=null; });
   S.season = {year:S.league.season, byPlayer:{}};
   S.dvp = {};
   S.bbd = {status:'idle', round:1, clock:null, bids:[], rounds:[]};
@@ -15949,6 +16238,33 @@ function adoptWouldLose(incoming){
   if(mine <= 0) return false;                 /* nothing here to lose */
   return theirs < mine * 0.6;                 /* they have lost a big chunk of it */
 }
+/* Every countdown in a league, so one copy can be checked against another. */
+function clocksIn(st){
+  const out = {};
+  const add = (kind, list)=> (list||[]).forEach(o=>{ if(o && o.id && o.clock) out[kind+':'+o.id] = o.clock; });
+  add('tr', st && st.trades);
+  add('auc', st && st.auctions);
+  add('fa', st && st.faAuctions);
+  add('tc', st && st.taxiClaims);
+  add('pd', st && st.pending);
+  add('to', st && st.tagOffers);
+  if(st && st.bbd && st.bbd.clock) out['bbd:bbd'] = st.bbd.clock;
+  return out;
+}
+/* A timer only ever runs down. If a copy arriving from the server thinks a trade
+   has longer left than this device does, the device is right — it has been
+   counting. Without this, a deploy or a sync could hand somebody back hours. */
+function keepClocksRunning(before, after){
+  const was = clocksIn(before), now = clocksIn(after);
+  Object.keys(now).forEach(k=>{
+    const a = was[k], b = now[k];
+    if(!a || !b) return;
+    if((+b.remain||0) > (+a.remain||0)){
+      b.remain = +a.remain||0;
+      b.lastAt = Math.max(+a.lastAt||0, +b.lastAt||0);
+    }
+  });
+}
 function adoptRemote(state, rev, force){
   /* A server copy that would wipe the contracts is never taken quietly, however
      it arrived — a pull, the live feed, or a clash while saving. */
@@ -15969,6 +16285,7 @@ function adoptRemote(state, rev, force){
   /* Whatever the reason, keep what is on this device before replacing it.
      Settings - Data can put it back. */
   try{ keepBackup(deep(S), 'before taking revision '+rev+' from the server'); }catch(e){}
+  const clocksBefore = deep(clocksIn(S));
   const keepSync = deep(S.settings.sync||{});
   const keepSupa = deep(S.settings.supa||{});
   const keepLive = deep(S.settings.live||{});
@@ -15985,6 +16302,18 @@ function adoptRemote(state, rev, force){
   if(seat && byId(S.teams, seat)) S.league.myTeamId = seat;
   else if(keepMe && byId(S.teams, keepMe)) S.league.myTeamId = keepMe;
   else if(typeof Supa==='object' && Supa.user && !seat) S.league.myTeamId = null;
+  /* Countdowns never go back up, whatever the server thinks. */
+  try{ keepClocksRunning({trades:[], auctions:[]}, S); }catch(e){}
+  try{
+    const now = clocksIn(S);
+    Object.keys(clocksBefore||{}).forEach(k=>{
+      const a = clocksBefore[k], b = now[k];
+      if(a && b && (+b.remain||0) > (+a.remain||0)){
+        b.remain = +a.remain||0;
+        b.lastAt = Math.max(+a.lastAt||0, +b.lastAt||0);
+      }
+    });
+  }catch(e){}
   Store.set(KEY, S);
 }
 let pushT=null;
