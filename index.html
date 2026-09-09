@@ -829,7 +829,7 @@ tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-18l · clear the season back to week 1';
+const APP_BUILD = '2026-08-18q · every man, and what you left out';
 
 /* ============================================================
    HOME LEAGUE
@@ -1352,7 +1352,7 @@ function defaultState(){
         sleeperLeagueId:'', pullLineups:true, pullTaxi:true, pullIR:true },
       notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 },
       /* Chat extras: the beat reporters, and a key if you want GIF search. */
-      chat:{ reporters:true, gifKey:'', gifProvider:'giphy' },
+      chat:{ reporters:true, gifKey:'', gifProvider:'giphy', weekReport:true },
       /* What commissioners are allowed to do. The head commissioner turns
          these on and off. */
       powers:{ actAs:false, closeWeek:true, feedSource:true, capTools:true,
@@ -3495,7 +3495,12 @@ function matchupLine(p){
     (splitBit?' <span class="tiny dim">· '+esc(splitBit)+'</span>':'');
 }
 function bestLineup(teamId){
-  const pool = teamPlayers(teamId).map(p=>({p, pts:fpts(p.id)})).sort((a,b)=> b.pts-a.pts);
+  /* Only men who could actually have been started. Somebody on the taxi squad or
+     injured reserve was never an option, so counting him would make every
+     manager look worse than he was. */
+  const pool = teamPlayers(teamId)
+    .filter(p=> playerSlot(p)==='active')
+    .map(p=>({p, pts:fpts(p.id)})).sort((a,b)=> b.pts-a.pts);
   const used = {}, starters=[];
   S.settings.roster.slots.forEach(sl=>{
     for(let i=0;i<sl.count;i++){
@@ -4359,6 +4364,58 @@ ACT.simToggle = ()=>{
   if(!S.live.games.length) buildWeek(S.live.week||1);
   S.settings.live.running = !S.settings.live.running; save(); render();
 };
+/* Wipe what has been scored this week and stay where we are. Nothing is
+   recorded, nobody moves on — the week simply starts again with a clean sheet.
+   If the week had already been closed out, its result is unpicked too. */
+ACT.weekWipe = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const w = +S.live.week||1;
+  modal('Clear week '+w,
+    '<p class="muted" style="margin:0 0 8px">Everything scored in week '+w+' goes and the week starts again. '+
+    'You stay on week '+w+' — nothing is recorded and nobody moves on.</p>'+
+    '<div class="hint">Records, points for and against, and any result already logged for this week are unpicked. '+
+    'Earlier weeks, rosters, contracts and picks are untouched.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn danger" data-a="weekWipeGo">Clear week '+w+'</button>');
+};
+ACT.weekWipeGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const w = +S.live.week||1;
+  keepBackup(S, 'before clearing week '+w);
+  /* If this week was already closed out, take the result back off the books. */
+  const logged = (S.schedule||[]).filter(g=> g.week===w && g.hp!=null);
+  logged.forEach(g=>{
+    const th = byId(S.teams,g.home), ta = byId(S.teams,g.away);
+    if(!th || !ta) return;
+    const rh = teamRecord(th), ra = teamRecord(ta);
+    rh.pf = Math.round((rh.pf - (+g.hp||0))*100)/100; rh.pa = Math.round((rh.pa - (+g.ap||0))*100)/100;
+    ra.pf = Math.round((ra.pf - (+g.ap||0))*100)/100; ra.pa = Math.round((ra.pa - (+g.hp||0))*100)/100;
+    if(g.hp > g.ap){ rh.w=Math.max(0,rh.w-1); ra.l=Math.max(0,ra.l-1); }
+    else if(g.ap > g.hp){ ra.w=Math.max(0,ra.w-1); rh.l=Math.max(0,rh.l-1); }
+    else { rh.t=Math.max(0,rh.t-1); ra.t=Math.max(0,ra.t-1); }
+    g.hp = null; g.ap = null;                 /* the fixture stays, the result goes */
+  });
+  /* And what each player scored that week. */
+  const byP = (S.season||{}).byPlayer || {};
+  Object.keys(byP).forEach(pid=>{
+    const line = byP[pid];
+    const rec = line && line.weeks && line.weeks[w];
+    if(!rec) return;
+    line.fpts = Math.round(((+line.fpts||0) - (+rec.fpts||0))*100)/100;
+    line.gp = Math.max(0, (+line.gp||0) - 1);
+    delete line.weeks[w];
+    if(!line.gp) delete byP[pid];
+  });
+  /* Start the week over, on the same week. */
+  buildWeek(w);
+  S.live.koLosers = {}; S.live.koWeek = null;
+  S.settings.live.running = false;
+  dppCache = null; clearCapCache();
+  logIt('Week '+w+' cleared — scoring wiped, still on week '+w, {type:'admin'});
+  closeModal();
+  save(true); render();
+  toast('Week '+w+' cleared — still on week '+w,'good');
+};
 ACT.simReset = ()=>{
   const justPlayed = +S.live.week||1;
   recordWeek(); foldWeekIntoSeason(); foldWeekIntoDvp();
@@ -4946,6 +5003,15 @@ VIEWS.teams = function(){
       <input type="text" placeholder="Search" data-k="fasearch" data-oninput="faSearch" value="${esc(ui.tmp.faq||'')}" style="max-width:220px"></div>
       ${waiverDeadlinePassed()?'<div class="pb" style="padding-bottom:0"><div class="hint bad">The waiver deadline of '+dayOnly(S.settings.waivers.deadline)+
         ' has passed. Anyone claimed now comes in at '+money(S.settings.waivers.salary)+' for this season only, cannot be extended, and carries the W tag until the year turns over.</div></div>':''}
+      ${(()=>{
+        const t = trendStore();
+        const hits = S.players.filter(pl=> !pl.contract && trendFor(pl)).length;
+        if(!t.at) return '<div class="pb"><div class="hint">Trending has not been pulled yet \u2014 '+
+          '<button class="btn sm ghost" data-a="trendPull">get it now</button></div></div>';
+        if(!hits) return '<div class="pb"><div class="hint">Trending is loaded but nobody here matched. '+
+          '<button class="btn sm ghost" data-a="trendPull">Try again</button></div></div>';
+        return '';
+      })()}
       <div class="pb tight scrollx"><table><thead><tr>${sortTh('fa','name','Player')}${sortTh('fa','pos','Pos')}
         ${sortTh('fa','nfl','NFL','hide-xs')}${sortTh('fa','age','Age','right')}
         ${sortTh('fa','proj','Projected','right')}${sortTh('fa','act','Actual','right')}
@@ -5882,22 +5948,42 @@ ACT.projPull = async ()=>{
    A player can appear on both lists; whichever side is bigger is the direction
    we show. */
 function trendStore(){
-  S.trend = S.trend || {at:0, up:{}, down:{}};
+  S.trend = S.trend || {at:0, up:{}, down:{}, upNames:{}, downNames:{}};
+  S.trend.upNames = S.trend.upNames || {};
+  S.trend.downNames = S.trend.downNames || {};
   return S.trend;
 }
 /* null, or {dir:'up'|'down', count:n} for this player. */
+/* Adds and drops from Sleeper. A player can be on both lists — plenty of people
+   are dropping him while plenty of others are picking him up — so whichever is
+   the bigger number is the one that gets shown, with that count.
+   Matched on his Sleeper id where we have one, and on his name where we do not,
+   because a league imported by name has no ids on its players. */
 function trendFor(p){
-  if(!p || !p.sleeperId) return null;
+  if(!p) return null;
   const t = trendStore();
-  const up = +t.up[String(p.sleeperId)] || 0;
-  const dn = +t.down[String(p.sleeperId)] || 0;
+  let up = 0, dn = 0;
+  if(p.sleeperId){
+    up = +t.up[String(p.sleeperId)] || 0;
+    dn = +t.down[String(p.sleeperId)] || 0;
+  }
+  if(!up && !dn){
+    const k = flatName(p.name||'');
+    if(k){
+      up = +((t.upNames||{})[k]) || 0;
+      dn = +((t.downNames||{})[k]) || 0;
+    }
+  }
   if(!up && !dn) return null;
   return up >= dn ? {dir:'up', count:up} : {dir:'down', count:dn};
 }
 function trendTag(p){
   const t = trendFor(p);
   if(!t) return '';
-  const n = t.count>=1000 ? Math.round(t.count/1000)+'k' : t.count;
+  /* 1,500 reading as "2k" is worse than useless — keep a decimal until 10k. */
+  const n = t.count>=10000 ? Math.round(t.count/1000)+'k'
+          : t.count>=1000  ? (Math.round(t.count/100)/10)+'k'
+          : t.count;
   return t.dir==='up'
     ? '<span class="trend up" title="added in '+t.count+' leagues in the last day">\u25B2 '+n+'</span>'
     : '<span class="trend down" title="dropped in '+t.count+' leagues in the last day">\u25BC '+n+'</span>';
@@ -6337,8 +6423,32 @@ ACT.trendPull = async (quiet)=>{
       return o;
     };
     t.up = toMap(addRaw); t.down = toMap(dropRaw); t.at = Date.now();
+    /* Put names against those ids, so a league whose players carry no Sleeper id
+       still gets its arrows. Only the ids on the two lists are kept, so this is
+       a few hundred entries rather than the whole of the NFL. */
+    try{
+      const want = {};
+      Object.keys(t.up).forEach(id=> want[id] = 1);
+      Object.keys(t.down).forEach(id=> want[id] = 1);
+      const all = await getJSON(SLEEPER+'/players/nfl');
+      const upN = {}, dnN = {};
+      Object.keys(want).forEach(id=>{
+        const rec = all[id];
+        if(!rec) return;
+        const nm = rec.full_name || ((rec.first_name||'')+' '+(rec.last_name||'')).trim();
+        const k = flatName(nm);
+        if(!k) return;
+        if(t.up[id]) upN[k] = Math.max(+upN[k]||0, +t.up[id]||0);
+        if(t.down[id]) dnN[k] = Math.max(+dnN[k]||0, +t.down[id]||0);
+      });
+      t.upNames = upN; t.downNames = dnN;
+    }catch(e){ /* ids alone will have to do */ }
     save(); render();
-    if(!quiet) toast(Object.keys(t.up).length+' trending up, '+Object.keys(t.down).length+' down','good');
+    if(!quiet){
+      const hits = S.players.filter(pl=> trendFor(pl)).length;
+      toast(Object.keys(t.up).length+' trending up, '+Object.keys(t.down).length+' down \u2014 '+
+        hits+' matched in your league', hits ? 'good' : 'warn');
+    }
   }catch(e){
     if(!quiet) toast('Could not read the trending lists — '+e.message,'bad');
   }
@@ -7812,6 +7922,12 @@ document.addEventListener('change', e=>{
   if(of && ACT.freeFilter){ ACT.freeFilter(of.dataset, of, e); return; }
 });
 document.addEventListener('change', e=>{
+  const rw = e.target.closest('[data-a="repWeek"]');
+  if(rw && ACT.repWeek){ ACT.repWeek(rw.dataset, rw, e); return; }
+  const rt = e.target.closest('[data-a="repTeam"]');
+  if(rt && ACT.repTeam){ ACT.repTeam(rt.dataset, rt, e); return; }
+});
+document.addEventListener('change', e=>{
   const dy = e.target.closest('[data-a="duesYearPick"]');
   if(dy && ACT.duesYearPick){ ACT.duesYearPick(dy.dataset, dy, e); return; }
 });
@@ -8748,6 +8864,61 @@ function tbFixSender(){
     tb.b = {teamId:other, players:[], picks:[], cash:0};
   }
 }
+/* The trade in plain words, for whoever is looking at it. */
+function tradeReadHTML(tb){
+  const w = tradeWorth(tb);
+  if(!w) return '';
+  const anything = (tb.a.players||[]).length + (tb.a.picks||[]).length +
+                   (tb.b.players||[]).length + (tb.b.picks||[]).length;
+  if(!anything) return '<div class="hint">Put something on each side and a read on the deal appears here.</div>';
+  const me = w.a.teamId === actingTeam() ? w.a : w.b;
+  const them = me === w.a ? w.b : w.a;
+  const mine = verdictWord(me.now), mineL = verdictWord(me.future);
+  /* Named apart from money(), which is the app's own formatter. */
+  const signed = (v)=> (v>=0?'+':'\u2212') + money(Math.abs(v));
+  const line = (x)=> x.players.map(pw=>
+      '<div class="tiny"><b>'+esc(pw.p.name)+'</b> '+esc(pw.p.pos||'')+
+      (pw.age? ' \u00b7 '+pw.age : '')+
+      ' \u00b7 '+pw.ppg+' a game \u00b7 on '+money(pw.cost)+
+      (pw.left? ' for '+pw.left+' more year'+(pw.left===1?'':'s') : ', expiring')+
+      ' \u00b7 <span class="'+(pw.now>=0?'good':'bad')+'">'+signed(pw.now)+' this year</span>'+
+      (pw.fading? ' <span class="dim">past his best</span>' : pw.peak? ' <span class="dim">in his prime</span>' : '')+
+      '</div>').join('')
+    + x.picks.map(kw=> '<div class="tiny"><b>'+esc(pickLabel(kw.k))+'</b> \u00b7 worth about '+
+      money(kw.future)+' beyond its price</div>').join('')
+    + (x.cash ? '<div class="tiny">'+money(x.cash)+' in cash</div>' : '');
+  return `
+  <div class="hr"></div>
+  <div class="flabel">How the deal reads for ${esc(teamName(me.teamId))}</div>
+  <div class="grid g2">
+    <div class="panel"><div class="pb">
+      <div class="eyebrow">This season</div>
+      <div class="big ${mine.c}">${signed(me.now)}</div>
+      <div class="tiny">${esc(mine.t)} \u2014 what it does for you now, after what they cost against the cap</div>
+    </div></div>
+    <div class="panel"><div class="pb">
+      <div class="eyebrow">Over the contracts</div>
+      <div class="big ${mineL.c}">${signed(me.future)}</div>
+      <div class="tiny">${esc(mineL.t)} \u2014 the rest of the deals, ageing everybody as they go</div>
+    </div></div>
+  </div>
+  <div class="grid g2" style="margin-top:8px">
+    <div><div class="flabel">You give</div>${line(me.gives) || '<div class="tiny dim">nothing</div>'}</div>
+    <div><div class="flabel">You get</div>${line(me.gets) || '<div class="tiny dim">nothing</div>'}</div>
+  </div>
+  <div class="hint">${(()=>{
+    const now = me.now, fut = me.future;
+    if(now > 6 && fut < -6) return 'A win-now deal. You are better this season and worse afterwards \u2014 '+
+      'worth it if you are chasing a title, expensive if you are not.';
+    if(now < -6 && fut > 6) return 'A deal for later. It costs you this season and pays afterwards \u2014 '+
+      'the right shape if you are building.';
+    if(now > 6 && fut > 6) return 'Better now and better later. If the other side agrees to this, take it.';
+    if(now < -6 && fut < -6) return 'Worse now and worse later. There is nothing here for you as it stands.';
+    return 'Close enough either way that it comes down to what you need rather than what it is worth.';
+  })()}</div>
+  <div class="hint dim">Worked out from what each man is scoring, what this league pays for that at his
+    position, his age against the years that position holds up, and what he costs this year and after.</div>`;
+}
 function tbSide(side){
   tbFixSender();
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
@@ -8821,6 +8992,7 @@ function tradeForm(){
   const m = ui.tmp.multi;
   if(m) return multiForm();
   return `<div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
+  ${tradeReadHTML(ui.tmp.tb)}
   <div id="capBoardBox">${capBoard(builderTrade())}</div>
   <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>
   <div class="hint">Once the other side accepts, the trade sits in a ${S.settings.trades.reviewHours}-hour review window
@@ -9766,6 +9938,88 @@ VIEWS.find = function(){
     </div></div>
   </section>`;
 };
+/* Everyone's score for a week, and the six things worth knowing. */
+function weekReportHTML(w){
+  const rep = weekReport(w);
+  if(!rep) return '<div class="panel"><div class="pb"><div class="empty-state"><h3>Nothing played yet</h3>'+
+    '<p>Scores for week '+w+' will appear here once the games are under way.</p></div></div></div>';
+  const nm = (id)=> esc(teamName(id));
+  const card = (label, body)=> '<div class="panel"><div class="pb">'+
+    '<div class="eyebrow">'+label+'</div>'+body+'</div></div>';
+  const pts = (v)=> (Math.round((+v||0)*10)/10).toFixed(1);
+  const roster = weekReportTeam();
+  const wr = roster ? weekRoster(roster, w) : null;
+  return `
+  ${wr ? `
+  <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Every man, week ${w}</h3><div class="spacer"></div>
+    <select data-a="repTeam">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===roster?' selected':'')+'>'+
+      esc(x.name)+'</option>').join('')}</select>
+    <span class="pill ${wr.eff==null?'':wr.eff>=99.9?'ok':wr.eff<80?'':''}">${
+      wr.eff==null?'—':wr.eff.toFixed(1)+'%'}</span></div>
+    <div class="pb">
+      <div class="row" style="gap:16px;align-items:baseline">
+        <div><div class="eyebrow">Scored</div><div class="big">${(wr.got||0).toFixed(1)}</div></div>
+        <div><div class="eyebrow">Best possible</div><div class="big dim">${(wr.best||0).toFixed(1)}</div></div>
+        <div><div class="eyebrow">Left on the bench</div><div class="big ${wr.left>0.05?'bad':'good'}">${
+          wr.left>0.05 ? wr.left.toFixed(1) : '0.0'}</div></div>
+      </div>
+      ${wr.left>0.05
+        ? '<div class="hint bad">'+wr.rows.filter(r=>r.missed).map(r=>
+            esc(r.p.name)+' ('+r.pts.toFixed(1)+') should have started ahead of '+
+            (wr.rows.filter(x=>x.wasted).map(x=>esc(x.p.name)+' ('+x.pts.toFixed(1)+')')[0] || 'somebody')
+          ).join('; ')+'</div>'
+        : '<div class="hint good">Nothing was left on the bench — this is the best that could have been done.</div>'}
+    </div>
+    <div class="pb tight scrollx"><table>
+      <thead><tr><th>Player</th><th>Pos</th><th class="right">Points</th><th>Started</th><th></th></tr></thead>
+      <tbody>${wr.rows.map(r=>`<tr class="${r.missed?'liverow':''}">
+        <td>${esc(r.p.name)}${r.slot!=='active'?' <span class="tiny dim">'+esc(r.slot)+'</span>':''}</td>
+        <td>${posTag(r.p.pos)}</td>
+        <td class="right num"><b>${r.pts.toFixed(1)}</b></td>
+        <td>${r.started?'<span class="pill ok">started</span>':'<span class="dim tiny">bench</span>'}</td>
+        <td class="tiny ${r.missed?'bad':r.wasted?'dim':''}">${
+          r.missed ? 'should have started' : r.wasted ? 'someone better was sat down' : ''}</td>
+      </tr>`).join('')}</tbody></table></div>
+    <div class="pb"><div class="hint">Only men who could actually have been started count \u2014 anybody on the
+      taxi squad or injured reserve was never an option, so he is not held against you.</div></div>
+  </div>` : ''}
+  <div class="grid g3" style="margin-bottom:14px">
+    ${card('Highest scoring', '<div class="big">'+pts(rep.high.pts)+'</div>'+
+      '<div class="tiny">'+nm(rep.high.teamId)+'</div>')}
+    ${card('Lowest scoring', '<div class="big">'+pts(rep.low.pts)+'</div>'+
+      '<div class="tiny">'+nm(rep.low.teamId)+'</div>')}
+    ${rep.blowout ? card('Biggest blowout',
+      '<div class="big">'+pts(rep.blowout.gap)+'</div>'+
+      '<div class="tiny">'+(rep.blowout.ap>=rep.blowout.bp ? nm(rep.blowout.a)+' over '+nm(rep.blowout.b)
+        : nm(rep.blowout.b)+' over '+nm(rep.blowout.a))+'</div>') : ''}
+    ${rep.closest ? card('Closest game',
+      '<div class="big">'+pts(rep.closest.gap)+'</div>'+
+      '<div class="tiny">'+nm(rep.closest.a)+' and '+nm(rep.closest.b)+'</div>') : ''}
+    ${rep.bestManager ? card('Best managed',
+      '<div class="big good">'+rep.bestManager.eff.toFixed(1)+'%</div>'+
+      '<div class="tiny">'+nm(rep.bestManager.teamId)+' of a best lineup</div>') : ''}
+    ${rep.worstManager ? card('Points left out',
+      '<div class="big bad">'+rep.worstManager.eff.toFixed(1)+'%</div>'+
+      '<div class="tiny">'+nm(rep.worstManager.teamId)+' of a best lineup</div>') : ''}
+  </div>
+  <div class="panel"><div class="ph"><h3>Every score, week ${w}</h3></div>
+    <div class="pb tight scrollx"><table>
+      <thead><tr><th></th><th>Team</th><th class="right">Scored</th><th>Against</th>
+        <th class="right">Their score</th><th class="right">Best possible</th><th class="right">Fielded</th></tr></thead>
+      <tbody>${rep.rows.map((r,i)=>`<tr>
+        <td class="num dim">${i+1}</td>
+        <td>${nm(r.teamId)}</td>
+        <td class="right num"><b>${pts(r.pts)}</b></td>
+        <td class="dim">${nm(r.vs)}</td>
+        <td class="right num dim">${pts(r.theirs)}</td>
+        <td class="right num dim">${r.best!=null?pts(r.best):'—'}</td>
+        <td class="right num ${r.eff==null?'dim':r.eff>=95?'good':r.eff<80?'bad':''}">${
+          r.eff==null?'—':r.eff.toFixed(1)+'%'}</td>
+      </tr>`).join('')}</tbody></table></div>
+    <div class="pb"><div class="hint">Fielded is what a manager actually scored against the best he could have
+      done with the players he had. Anything under 80% means points were left on the bench.</div></div>
+  </div>`;
+}
 VIEWS.schedule = function(){
   const tid = currentTeamId();
   const t = byId(S.teams, tid);
@@ -9780,6 +10034,14 @@ VIEWS.schedule = function(){
     <div class="head"><h1>Schedule</h1><div class="spacer"></div>
       ${S.teams.length>1?`<select data-a="pickTeamView">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===tid?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select>`:''}
     </div>
+    <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The week in figures</h3><div class="spacer"></div>
+      <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
+        <select data-a="repWeek">${Array.from({length:seasonWeeks()},(_,i)=>i+1).map(w2=>
+          '<option value="'+w2+'"'+(w2===repWeek()?' selected':'')+'>'+w2+
+          (w2===(+S.live.week||1)?' \u00b7 now':'')+'</option>').join('')}</select></label>
+    </div></div>
+    ${weekReportHTML(repWeek())}
+
     <div class="panel"><div class="ph"><h3>${esc(t.name)} · ${S.league.season}</h3><div class="spacer"></div>
       <span class="pill">${wins}-${loss}${tie?'-'+tie:''}</span></div>
       <div class="pb">
@@ -11415,6 +11677,234 @@ function fieldedTotal(teamId){
   const got = sum(saved.map(pid=> fpts(pid)));
   return {got: Math.round(got*100)/100, best: best.total};
 }
+/* ---- What a trade is worth --------------------------------------------------
+   Two numbers per side: what it does for you now, and what it does for you over
+   the life of the contracts. They can disagree sharply, and usually should —
+   that is the whole point of a dynasty trade. */
+
+/* When a position is at its best, and when it falls away. Running backs peak
+   early and go early; quarterbacks hold on for years. */
+const POS_ARC = {
+  QB:  {rise:24, peak:[27,34], cliff:38},
+  RB:  {rise:21, peak:[23,27], cliff:31},
+  WR:  {rise:22, peak:[25,30], cliff:34},
+  TE:  {rise:23, peak:[26,31], cliff:35},
+  K:   {rise:23, peak:[25,36], cliff:40},
+  DEF: {rise:20, peak:[20,40], cliff:99},
+  DL:  {rise:23, peak:[25,31], cliff:35},
+  LB:  {rise:22, peak:[24,30], cliff:34},
+  DB:  {rise:22, peak:[24,30], cliff:34}
+};
+function posArc(pos){ return POS_ARC[pos] || POS_ARC.WR; }
+/* How much of his best a player is likely to give in a season, by age. 1 at the
+   peak, tailing off either side, and steeply once past the cliff. */
+function ageFactor(pos, age){
+  const a = +age||0;
+  if(!a) return 1;
+  const arc = posArc(pos);
+  const [lo, hi] = arc.peak;
+  if(a >= lo && a <= hi) return 1;
+  if(a < lo){
+    /* Still coming: a young man is close, and closer the nearer he is. */
+    const gap = lo - a;
+    return Math.max(0.62, 1 - gap * 0.09);
+  }
+  const past = a - hi;
+  const room = Math.max(1, arc.cliff - hi);
+  const drop = past <= room ? past * (0.30/room) : 0.30 + (past-room) * 0.16;
+  return Math.max(0.12, 1 - drop);
+}
+/* What he is producing, in points per game, from the best evidence available. */
+function formPPG(p){
+  const k = lastKnownPPG(p);
+  if(k) return k.ppg;
+  const pj = projFor(p);
+  return pj != null ? pj : (projFromPosition(p) || 0);
+}
+/* Points per game turned into money, using what this league actually pays for
+   production at that position. A player worth more than he costs is an asset. */
+function worthPerYear(p){
+  const pos = p.pos;
+  const peers = S.players.filter(x=> x.pos===pos && x.contract);
+  const pts = peers.map(formPPG).filter(v=> v>0).sort((a,b)=> b-a);
+  const pay = peers.map(baseSalary).filter(v=> v>0).sort((a,b)=> b-a);
+  if(!pts.length || !pay.length) return 0;
+  const mine = formPPG(p);
+  /* Where he sits among his position, and what the league pays at that rank. */
+  let rank = pts.findIndex(v=> v <= mine);
+  if(rank < 0) rank = pts.length - 1;
+  const at = pay[Math.min(rank, pay.length-1)] || 0;
+  return Math.round(at * 100) / 100;
+}
+/* One player, weighed up. */
+function playerWorth(p, year){
+  const y = year || S.league.season;
+  const c = p.contract;
+  const age = +p.age || 0;
+  const arc = posArc(p.pos);
+  const fit = ageFactor(p.pos, age);
+  const worth = worthPerYear(p) * fit;          /* what he is worth this season */
+  const cost = c ? capHit(p, y) : 0;            /* what he costs this season */
+  const nowSurplus = Math.round((worth - cost) * 100) / 100;
+
+  /* Over the rest of the deal, ageing as he goes. */
+  const left = c ? Math.max(0, (c.startYear + c.years) - y) : 0;
+  let future = 0;
+  for(let i=0; i<left; i++){
+    const f = ageFactor(p.pos, age + i);
+    const w = worthPerYear(p) * f;
+    const cst = c ? capHit(p, y + i) : 0;
+    future += (w - cst);
+  }
+  return {
+    p, age, fit, left,
+    worth: Math.round(worth*100)/100,
+    cost: Math.round(cost*100)/100,
+    now: nowSurplus,
+    future: Math.round(future*100)/100,
+    ppg: Math.round(formPPG(p)*10)/10,
+    peak: age && age >= arc.peak[0] && age <= arc.peak[1],
+    fading: age && age > arc.peak[1]
+  };
+}
+/* A pick is worth what it would cost to sign the man it becomes, less that
+   price — plus a little for the years of control it brings. */
+function pickWorth(k){
+  const price = rookiePrice(k.round, pickSlot(k) || 6, k.year);
+  const yearsOut = Math.max(0, (+k.year||0) - draftBaseYear());
+  /* An early pick is worth a good deal more than it costs; a late one is not. */
+  const mult = k.round<=1 ? 3.2 : k.round===2 ? 2.1 : k.round===3 ? 1.4 : 1.05;
+  const raw = price * (mult - 1);
+  /* A pick years away is worth less today. */
+  const discount = Math.pow(0.82, yearsOut);
+  return {
+    k, price,
+    /* A pick is never help for the season being played — the man it becomes has
+       not been drafted yet. It counts only in the long view. */
+    now: 0,
+    future: Math.round(raw * discount * 100)/100
+  };
+}
+/* Everything one side of a trade is giving up. */
+function sideWorth(side){
+  const y = S.league.season;
+  const players = (side.players||[]).map(id=> byId(S.players, id)).filter(Boolean).map(p=> playerWorth(p, y));
+  const picks = (side.picks||[]).map(id=> byId(S.picks, id)).filter(Boolean).map(pickWorth);
+  const cash = +side.cash || 0;
+  return {
+    players, picks, cash,
+    now: Math.round((sum(players.map(x=>x.now)) + sum(picks.map(x=>x.now)) + cash) * 100)/100,
+    future: Math.round((sum(players.map(x=>x.future)) + sum(picks.map(x=>x.future)) + cash) * 100)/100
+  };
+}
+/* The trade, from both ends. */
+function tradeWorth(tb){
+  if(!tb || !tb.a || !tb.b) return null;
+  const A2 = sideWorth(tb.a), B2 = sideWorth(tb.b);
+  /* Each side receives what the other gives. */
+  return {
+    a: {gives:A2, gets:B2, now: Math.round((B2.now - A2.now)*100)/100,
+        future: Math.round((B2.future - A2.future)*100)/100, teamId:tb.a.teamId},
+    b: {gives:B2, gets:A2, now: Math.round((A2.now - B2.now)*100)/100,
+        future: Math.round((A2.future - B2.future)*100)/100, teamId:tb.b.teamId}
+  };
+}
+/* Put a number in words, so nobody has to interpret it. */
+function verdictWord(v, scale){
+  const s2 = scale || 12;
+  if(v >  s2*1.6) return {t:'a clear win', c:'good'};
+  if(v >  s2*0.5) return {t:'the better of it', c:'good'};
+  if(v > -s2*0.5) return {t:'about even', c:''};
+  if(v > -s2*1.6) return {t:'the worse of it', c:'bad'};
+  return {t:'a poor deal', c:'bad'};
+}
+/* ---- The week in figures -----------------------------------------------
+   Everyone's score for a week, and the handful of facts worth telling. Reads
+   from the closed-out fixtures where they exist, and from what is on the field
+   when the week is still running. */
+function weekScores(week){
+  const w = +week || +S.live.week || 1;
+  const done = (S.schedule||[]).filter(g=> g.week===w && g.hp!=null);
+  const out = [];
+  if(done.length){
+    done.forEach(g=>{
+      out.push({teamId:g.home, pts:+g.hp||0, vs:g.away, theirs:+g.ap||0});
+      out.push({teamId:g.away, pts:+g.ap||0, vs:g.home, theirs:+g.hp||0});
+    });
+  } else if(w === (+S.live.week||1)){
+    (S.live.matchups||[]).forEach(mm=>{
+      const H = fieldedTotal(mm.home), A2 = fieldedTotal(mm.away);
+      out.push({teamId:mm.home, pts:H.got, best:H.best, vs:mm.away, theirs:A2.got});
+      out.push({teamId:mm.away, pts:A2.got, best:A2.best, vs:mm.home, theirs:H.got});
+    });
+  }
+  /* How much of his best lineup each manager actually fielded. */
+  out.forEach(r=>{
+    if(r.best == null){
+      const e = weekEff(r.teamId, w);
+      if(e){ r.best = e.best; }
+    }
+    r.eff = (r.best && r.best > 0) ? Math.round((r.pts / r.best) * 1000)/10 : null;
+  });
+  return out.sort((a,b)=> b.pts - a.pts);
+}
+/* Every man on a team for a week: what he scored, whether he was started, and
+   whether leaving him out cost anything. */
+function weekRoster(teamId, week){
+  const w = +week || +S.live.week || 1;
+  const saved = ((S.lineups||{})[w]||{})[teamId] || [];
+  const started = {}; saved.forEach(id=>{ if(id) started[id] = 1; });
+  const best = bestLineup(teamId);
+  const shouldHave = {}; best.starters.forEach(sl=>{ if(sl.p) shouldHave[sl.p.id] = sl.slot; });
+  const rows = teamPlayers(teamId).map(p=>{
+    const slot = playerSlot(p);
+    const pts = Math.round(fpts(p.id)*100)/100;
+    /* With no lineup saved, the app fields his best, so everybody in that best
+       lineup counts as started. */
+    const wasIn = saved.length ? !!started[p.id] : !!shouldHave[p.id];
+    return {p, slot, pts, started:wasIn, optimal:!!shouldHave[p.id],
+            missed: !wasIn && !!shouldHave[p.id], wasted: wasIn && !shouldHave[p.id]};
+  }).sort((a,b)=> b.pts - a.pts);
+  const got = saved.length ? Math.round(sum(saved.map(id=> fpts(id)))*100)/100 : best.total;
+  return {
+    week:w, rows, got, best:best.total,
+    eff: best.total>0 ? Math.round((got/best.total)*1000)/10 : null,
+    left: Math.round((best.total - got)*100)/100,
+    bestSlots: best.starters
+  };
+}
+/* What a manager could have scored that week, if we kept it. */
+function weekEff(teamId, week){
+  const book = ((S.effByWeek||{})[week]||{})[teamId];
+  return book || null;
+}
+/* The facts worth telling about a week. Null when nothing was played. */
+function weekReport(week){
+  const w = +week || +S.live.week || 1;
+  const rows = weekScores(w);
+  if(!rows.length) return null;
+  const high = rows[0], low = rows[rows.length-1];
+  /* One entry per fixture, so a game is not counted twice. */
+  const seen = {}, games = [];
+  rows.forEach(r=>{
+    const key = [r.teamId, r.vs].sort().join('|');
+    if(seen[key]) return; seen[key] = 1;
+    games.push({a:r.teamId, b:r.vs, ap:r.pts, bp:r.theirs, gap:Math.abs(r.pts - r.theirs)});
+  });
+  const byGap = games.slice().sort((x,y)=> y.gap - x.gap);
+  const blowout = byGap[0] || null;
+  const closest = byGap[byGap.length-1] || null;
+  const withEff = rows.filter(r=> r.eff != null);
+  const byEff = withEff.slice().sort((x,y)=> y.eff - x.eff);
+  return {
+    week: w,
+    rows,
+    high, low,
+    blowout, closest,
+    bestManager: byEff[0] || null,
+    worstManager: byEff.length>1 ? byEff[byEff.length-1] : null
+  };
+}
 function recordWeek(){
   S.schedule = S.schedule || [];
   (S.live.matchups||[]).forEach(m=>{
@@ -11428,6 +11918,10 @@ function recordWeek(){
     h2hAdd(m.home, m.away, h, a);
     S.schedule.push({week:S.live.week, home:m.home, away:m.away, hp:h, ap:a});
     [[th,H],[ta,A]].forEach(([t,x])=>{
+      /* Keep this week's own figures, so a report can be run on it later. */
+      S.effByWeek = S.effByWeek || {};
+      S.effByWeek[S.live.week] = S.effByWeek[S.live.week] || {};
+      S.effByWeek[S.live.week][t.id] = {got:x.got, best:x.best};
       t.eff = t.eff || {weeks:0, got:0, best:0};
       t.eff.weeks++; t.eff.got = Math.round((t.eff.got + x.got)*100)/100;
       t.eff.best = Math.round((t.eff.best + Math.max(x.best, x.got))*100)/100;
@@ -12172,6 +12666,17 @@ document.addEventListener('input', e=>{
   if(!t) return;
   const tm = byId(S.teams, t.dataset.id); if(tm){ tm.dues.amount = t.value===''?null:+t.value; save(); }
 });
+function weekReportTeam(){
+  const id = ui.tmp.repTeam;
+  if(id && byId(S.teams, id)) return id;
+  return currentTeamId() || (S.teams[0]||{}).id || null;
+}
+function repWeek(){
+  const w = +ui.tmp.repWeek;
+  return (w>=1 && w<=25) ? w : (+S.live.week||1);
+}
+ACT.repWeek = (d, el)=>{ ui.tmp.repWeek = +el.value; render(); };
+ACT.repTeam = (d, el)=>{ ui.tmp.repTeam = el.value; render(); };
 ACT.duesYearPick = (d, el)=>{ ui.tmp.duesYear = +el.value; render(); };
 ACT.togglePaid = (d)=>{
   const t = byId(S.teams,d.id);
@@ -12224,6 +12729,41 @@ function clearDuesNotices(teamId){
     !(nt.kind==='dues' && Array.isArray(nt.teams) && nt.teams.length===1 && nt.teams[0]===teamId));
 }
 /* Once a week, nudge whoever is still outstanding. */
+/* The week just gone, told once, on a Tuesday morning. */
+function weeklyReportRun(){
+  if((S.settings.chat||{}).weekReport === false) return 0;
+  const now = new Date();
+  if(now.getDay() !== 2) return 0;             /* Tuesday */
+  if(now.getHours() < 8) return 0;             /* morning */
+  const w = Math.max(1, (+S.live.week||1) - 1);   /* the week just finished */
+  S.reportSent = S.reportSent || {};
+  if(S.reportSent[w]) return 0;
+  const rep = weekReport(w);
+  if(!rep) return 0;
+  S.reportSent[w] = Date.now();
+  const nm = (id)=> teamName(id);
+  const pts = (v)=> (Math.round((+v||0)*10)/10).toFixed(1);
+  const lines = [];
+  lines.push('Highest: '+nm(rep.high.teamId)+' on '+pts(rep.high.pts));
+  lines.push('Lowest: '+nm(rep.low.teamId)+' on '+pts(rep.low.pts));
+  if(rep.blowout) lines.push('Biggest win: '+
+    (rep.blowout.ap>=rep.blowout.bp ? nm(rep.blowout.a)+' over '+nm(rep.blowout.b)
+                                    : nm(rep.blowout.b)+' over '+nm(rep.blowout.a))+
+    ' by '+pts(rep.blowout.gap));
+  if(rep.closest) lines.push('Closest: '+nm(rep.closest.a)+' and '+nm(rep.closest.b)+
+    ', '+pts(rep.closest.gap)+' between them');
+  if(rep.bestManager) lines.push('Best managed: '+nm(rep.bestManager.teamId)+
+    ' fielded '+rep.bestManager.eff.toFixed(1)+'% of his best');
+  if(rep.worstManager) lines.push('Most left on the bench: '+nm(rep.worstManager.teamId)+
+    ' on '+rep.worstManager.eff.toFixed(1)+'%');
+  S.chat = S.chat || [];
+  S.chat.unshift({id:uid('m'), at:Date.now(), teamId:null,
+    reporter:'The Monday Post', outlet:'week '+w+' in figures', reporterWeek:w,
+    text: lines.join('\n'), media:null, notify:'none'});
+  notify('Week '+w+' in figures', lines.slice(0,2).join(' \u00b7 '), 'info');
+  save();
+  return 1;
+}
 function duesWeeklyRun(){
   const d = S.settings.dues || {};
   if(!d.remindWeekly) return 0;
@@ -14319,11 +14859,14 @@ VIEWS.settings = function(){
         <div class="row" style="gap:8px;align-items:center">
           <div>Week <b>${S.live.week}</b> of ${seasonWeeks()}</div><div class="spacer"></div>
           <button class="btn" data-a="closeWeek">Close out week ${S.live.week}</button>
-          <button class="btn ghost" data-a="simReset">Clear this week</button>
+          <button class="btn ghost" data-a="weekWipe">Clear this week</button>
+          <button class="btn ghost" data-a="simReset">Start the next week</button>
           <button class="btn ghost danger" data-a="wipeSeason">Clear the whole season</button>
         </div>
         <div class="hint">Closing a week records the scores, rolls everyone on, and brings the beat reporters in.
           It has been taken off Live scoring so nobody trips over it mid-Sunday.<br>
+          <b>Clear this week</b> wipes what has been scored and leaves you on the same week.
+          <b>Start the next week</b> records this one and moves everybody on.
           <b>Clear the whole season</b> puts everything back to week 1 with nothing played — for when you have
           been trying the simulator out and want a clean start. Rosters, contracts and picks are untouched.</div>
       </div></div>`}
@@ -14866,6 +15409,9 @@ VIEWS.settings = function(){
 
     ${sub==='notify'?`<div class="grid g2">
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>League chat</h3></div><div class="pb stack">
+        <label class="check"><input type="checkbox" data-set="settings.chat.weekReport" ${(S.settings.chat||{}).weekReport!==false?'checked':''}>
+          <span>Post the week in figures on a Tuesday morning
+            <span class="dim">— highest and lowest, the blowout, the closest game, best and worst managed</span></span></label>
         <label class="check"><input type="checkbox" data-set="settings.chat.reporters" ${(S.settings.chat||{}).reporters!==false?'checked':''}>
           <span>Beat reporters <span class="dim">— a few hacks drop into the chat each week to praise and needle</span></span></label>
         <label class="f"><span>GIF service</span>
@@ -17583,6 +18129,7 @@ function tickAll(){
   if(ui.tmp.syncBusy && Date.now() - (ui.tmp.syncStartedAt||0) > 30000) ui.tmp.syncBusy = false;
   /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
+  try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
   /* Kickoff times need no league and no key, so they are fetched whether or not
      the Sleeper mirror is set up. */
   const anyLive = Object.values(((S.live.gstate||{})[+S.live.week||1]) || {})
