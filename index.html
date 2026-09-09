@@ -336,40 +336,87 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .m-head{transform-origin:50% 96%}
 
 /* breathing, so nobody stands like a shop dummy */
-.fo-idle .m-torso{animation:brTorso 3.4s ease-in-out infinite}
-.fo-idle .m-armL{animation:brArmL 3.4s ease-in-out infinite}
-.fo-idle .m-armR{animation:brArmR 3.4s ease-in-out infinite}
-.fo-idle .m-head{animation:brHead 5.2s ease-in-out infinite}
-@keyframes brTorso{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.025)}}
-@keyframes brArmL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(4deg)}}
-@keyframes brArmR{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-4deg)}}
-@keyframes brHead{0%,100%{transform:rotate(0deg)}30%{transform:rotate(-3deg)}70%{transform:rotate(3deg)}}
+.fo-idle .m-torso{animation:brTorso 3.4s var(--soft) infinite}
+/* Nothing here shares a clock — arms lag the chest, the head drifts on its own
+   much slower cycle, and a breath in is quicker than a breath out. That mix is
+   what stops it reading as a machine. */
+.fo-idle .m-armL{animation:brArmL 3.9s var(--soft) infinite;animation-delay:-.5s}
+.fo-idle .m-armR{animation:brArmR 4.3s var(--soft) infinite;animation-delay:-1.7s}
+.fo-idle .m-head{animation:brHead 7.1s var(--soft) infinite;animation-delay:-2.3s}
+@keyframes brTorso{
+  0%{transform:scaleY(1)}
+  38%{transform:scaleY(1.028) translateY(-.6px)}   /* in, quickly */
+  100%{transform:scaleY(1)}                        /* out, slower */
+}
+@keyframes brArmL{0%{transform:rotate(0deg)}42%{transform:rotate(3.5deg)}100%{transform:rotate(0deg)}}
+@keyframes brArmR{0%{transform:rotate(0deg)}46%{transform:rotate(-4.2deg)}100%{transform:rotate(0deg)}}
+@keyframes brHead{
+  0%{transform:rotate(0deg) translateX(0)}
+  22%{transform:rotate(-2.4deg) translateX(-.6px)}
+  55%{transform:rotate(1.1deg) translateX(.4px)}
+  78%{transform:rotate(2.6deg) translateX(.7px)}
+  100%{transform:rotate(0deg) translateX(0)}
+}
 
 /* winning: a bit of a strut, arms pumping */
-.fo-win .m-armL{animation:winArmL 1.6s ease-in-out infinite}
-.fo-win .m-armR{animation:winArmR 1.6s ease-in-out infinite}
-.fo-win .m-legL{animation:winLegL 1.6s ease-in-out infinite}
-.fo-win .m-legR{animation:winLegR 1.6s ease-in-out infinite}
-.fo-win .m-head{animation:winHead 1.6s ease-in-out infinite}
-@keyframes winArmL{0%,100%{transform:rotate(6deg)}50%{transform:rotate(-42deg)}}
-@keyframes winArmR{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(42deg)}}
-@keyframes winLegL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-9deg)}}
-@keyframes winLegR{0%,100%{transform:rotate(0deg)}50%{transform:rotate(9deg)}}
-@keyframes winHead{0%,100%{transform:rotate(0deg) translateY(0)}50%{transform:rotate(-5deg) translateY(-3px)}}
+/* A strut: the arm drives up fast and falls back slower, legs run opposite it,
+   and the head bobs at half speed so it is not nodding on every step. */
+.fo-win .m-torso{animation:winTorso .82s var(--drive) infinite}
+.fo-win .m-armL{animation:winArmL .82s var(--drive) infinite}
+.fo-win .m-armR{animation:winArmR .82s var(--drive) infinite;animation-delay:-.41s}
+.fo-win .m-legL{animation:winLegL .82s var(--drive) infinite;animation-delay:-.41s}
+.fo-win .m-legR{animation:winLegR .82s var(--drive) infinite}
+.fo-win .m-head{animation:winHead 1.64s var(--soft) infinite}
+@keyframes winTorso{
+  0%{transform:translateY(0) rotate(0deg)}
+  30%{transform:translateY(-2.5px) rotate(-1.5deg)}   /* push off */
+  55%{transform:translateY(.5px) rotate(1deg)}        /* land, weight through */
+  100%{transform:translateY(0) rotate(0deg)}
+}
+@keyframes winArmL{
+  0%{transform:rotate(10deg)}
+  26%{transform:rotate(-46deg)}                        /* snaps up */
+  40%{transform:rotate(-38deg)}                        /* settles back a touch */
+  100%{transform:rotate(10deg)}
+}
+@keyframes winArmR{
+  0%{transform:rotate(-10deg)}
+  26%{transform:rotate(46deg)}
+  40%{transform:rotate(38deg)}
+  100%{transform:rotate(-10deg)}
+}
+@keyframes winLegL{0%{transform:rotate(0deg)}34%{transform:rotate(-11deg)}100%{transform:rotate(0deg)}}
+@keyframes winLegR{0%{transform:rotate(0deg)}34%{transform:rotate(11deg)}100%{transform:rotate(0deg)}}
+@keyframes winHead{
+  0%{transform:rotate(0deg) translateY(0)}
+  28%{transform:rotate(-5deg) translateY(-3px)}
+  62%{transform:rotate(2deg) translateY(.5px)}
+  100%{transform:rotate(0deg) translateY(0)}
+}
 
 /* losing: shoulders drop, head hangs */
-.fo-lose .m-torso{animation:loseTorso 4s ease-in-out infinite}
-.fo-lose .m-head{animation:loseHead 4s ease-in-out infinite}
-.fo-lose .m-armL{animation:loseArmL 4s ease-in-out infinite}
-.fo-lose .m-armR{animation:loseArmR 4s ease-in-out infinite}
-@keyframes loseTorso{0%,100%{transform:rotate(0deg)}50%{transform:rotate(4deg) translateY(2px)}}
-@keyframes loseHead{0%,100%{transform:rotate(6deg) translateY(2px)}50%{transform:rotate(10deg) translateY(4px)}}
-@keyframes loseArmL{0%,100%{transform:rotate(14deg)}50%{transform:rotate(18deg)}}
-@keyframes loseArmR{0%,100%{transform:rotate(-14deg)}50%{transform:rotate(-18deg)}}
+.fo-lose .m-torso{animation:loseTorso 4.4s var(--soft) infinite}
+.fo-lose .m-head{animation:loseHead 4.4s var(--soft) infinite;animation-delay:-.35s}
+.fo-lose .m-armL{animation:loseArmL 4.9s var(--soft) infinite;animation-delay:-.8s}
+.fo-lose .m-armR{animation:loseArmR 5.3s var(--soft) infinite;animation-delay:-1.4s}
+/* A sigh: shoulders go down quickly and come back up slowly, and the head
+   follows a beat behind rather than moving with them. */
+@keyframes loseTorso{
+  0%{transform:rotate(0deg) translateY(0)}
+  30%{transform:rotate(4.5deg) translateY(2.5px)}
+  100%{transform:rotate(0deg) translateY(0)}
+}
+@keyframes loseHead{
+  0%{transform:rotate(6deg) translateY(2px)}
+  42%{transform:rotate(11deg) translateY(4.5px)}       /* lags the chest */
+  100%{transform:rotate(6deg) translateY(2px)}
+}
+@keyframes loseArmL{0%{transform:rotate(14deg)}36%{transform:rotate(18.5deg)}100%{transform:rotate(14deg)}}
+@keyframes loseArmR{0%{transform:rotate(-14deg)}36%{transform:rotate(-18.5deg)}100%{transform:rotate(-14deg)}}
 
 /* out on his feet */
-.fo-out .m-torso{animation:outTorso 4.5s ease-in-out infinite}
-.fo-out .m-head{animation:outHead 4.5s ease-in-out infinite}
+.fo-out .m-torso{animation:outTorso 4.5s var(--soft) infinite}
+.fo-out .m-head{animation:outHead 4.5s var(--soft) infinite}
 .fo-out .m-armL{transform:rotate(26deg)}
 .fo-out .m-armR{transform:rotate(-26deg)}
 .fo-out .m-legL{transform:rotate(-7deg)}
@@ -380,50 +427,87 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 /* ── taunts, joint by joint ───────────────────────────────────────────── */
 
 /* flex — both arms curl up, chest out, weight settles */
-.fo-t-flex .m-armL{animation:flexAL 1.5s ease-in-out infinite}
-.fo-t-flex .m-armR{animation:flexAR 1.5s ease-in-out infinite}
-.fo-t-flex .m-torso{animation:flexT 1.5s ease-in-out infinite}
-.fo-t-flex .m-head{animation:flexH 1.5s ease-in-out infinite}
-@keyframes flexAL{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(-128deg) translateX(6px)}}
-@keyframes flexAR{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(128deg) translateX(-6px)}}
-@keyframes flexT{0%,100%{transform:scale(1,1)}35%,80%{transform:scale(1.1,.95)}}
-@keyframes flexH{0%,100%{transform:rotate(0deg)}35%,80%{transform:rotate(-4deg) translateY(2px)}}
+.fo-t-flex .m-armL{animation:flexAL 1.5s var(--snap) infinite}
+.fo-t-flex .m-armR{animation:flexAR 1.5s var(--snap) infinite}
+.fo-t-flex .m-torso{animation:flexT 1.5s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-flex .m-head{animation:flexH 1.5s var(--drive) infinite;animation-delay:0.05s}
+/* Anticipation first — the arms drop a little before they come up, the way a
+   person loads a movement. Then a small overshoot and a settle. */
+@keyframes flexAL{
+  0%{transform:rotate(0deg)}
+  12%{transform:rotate(14deg)}                          /* wind up */
+  34%{transform:rotate(-134deg) translateX(7px)}        /* past the mark */
+  44%{transform:rotate(-124deg) translateX(6px)}        /* settles onto it */
+  80%{transform:rotate(-126deg) translateX(6px)}        /* held, with a tremble */
+  100%{transform:rotate(0deg)}
+}
+@keyframes flexAR{
+  0%{transform:rotate(0deg)}
+  12%{transform:rotate(-14deg)}
+  34%{transform:rotate(134deg) translateX(-7px)}
+  44%{transform:rotate(124deg) translateX(-6px)}
+  80%{transform:rotate(126deg) translateX(-6px)}
+  100%{transform:rotate(0deg)}
+}
+@keyframes flexT{
+  0%{transform:scale(1,1)}
+  12%{transform:scale(.98,1.01)}                        /* sinks before it swells */
+  34%{transform:scale(1.12,.94)}
+  80%{transform:scale(1.09,.955)}
+  100%{transform:scale(1,1)}
+}
+@keyframes flexH{
+  0%{transform:rotate(0deg)}
+  12%{transform:rotate(2deg)}
+  38%{transform:rotate(-5deg) translateY(2px)}
+  80%{transform:rotate(-4deg) translateY(2px)}
+  100%{transform:rotate(0deg)}
+}
 
 /* point — right arm out straight, body turns behind it */
-.fo-t-point .m-armR{animation:ptAR 1.7s ease-in-out infinite}
-.fo-t-point .m-armL{animation:ptAL 1.7s ease-in-out infinite}
-.fo-t-point .m-torso{animation:ptT 1.7s ease-in-out infinite}
-.fo-t-point .m-head{animation:ptH 1.7s ease-in-out infinite}
-@keyframes ptAR{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-16deg) translateX(9px) scaleX(1.16)}}
-@keyframes ptAL{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(34deg)}}
-@keyframes ptT{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-5deg) translateX(4px)}}
-@keyframes ptH{0%,100%{transform:rotate(0deg)}30%,75%{transform:rotate(-7deg) translateX(3px)}}
+.fo-t-point .m-armR{animation:ptAR 1.7s var(--snap) infinite}
+.fo-t-point .m-armL{animation:ptAL 1.7s var(--snap) infinite}
+.fo-t-point .m-torso{animation:ptT 1.7s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-point .m-head{animation:ptH 1.7s var(--drive) infinite;animation-delay:0.05s}
+/* The arm draws back before it points, and the head turns a beat after the
+   body rather than with it. */
+@keyframes ptAR{
+  0%{transform:rotate(0deg) translateX(0) scaleX(1)}
+  14%{transform:rotate(10deg) translateX(-3px)}          /* draws back */
+  32%{transform:rotate(-19deg) translateX(10px) scaleX(1.19)}
+  42%{transform:rotate(-15deg) translateX(9px) scaleX(1.15)}
+  75%{transform:rotate(-16deg) translateX(9px) scaleX(1.16)}
+  100%{transform:rotate(0deg) translateX(0) scaleX(1)}
+}
+@keyframes ptAL{0%{transform:rotate(0deg)}14%{transform:rotate(-6deg)}34%{transform:rotate(36deg)}75%{transform:rotate(34deg)}100%{transform:rotate(0deg)}}
+@keyframes ptT{0%{transform:rotate(0deg)}14%{transform:rotate(3deg)}34%{transform:rotate(-6deg) translateX(4px)}75%{transform:rotate(-5deg) translateX(4px)}100%{transform:rotate(0deg)}}
+@keyframes ptH{0%{transform:rotate(0deg)}20%{transform:rotate(1deg)}40%{transform:rotate(-8deg) translateX(3px)}75%{transform:rotate(-7deg) translateX(3px)}100%{transform:rotate(0deg)}}
 
 /* roar — head back, arms flung wide, chest heaving */
-.fo-t-roar .m-head{animation:roarH .7s ease-in-out infinite}
-.fo-t-roar .m-armL{animation:roarAL .7s ease-in-out infinite}
-.fo-t-roar .m-armR{animation:roarAR .7s ease-in-out infinite}
-.fo-t-roar .m-torso{animation:roarT .7s ease-in-out infinite}
+.fo-t-roar .m-head{animation:roarH .7s var(--drive) infinite;animation-delay:0.05s}
+.fo-t-roar .m-armL{animation:roarAL .7s var(--snap) infinite}
+.fo-t-roar .m-armR{animation:roarAR .7s var(--snap) infinite}
+.fo-t-roar .m-torso{animation:roarT .7s var(--drive) infinite;animation-delay:0.02s}
 @keyframes roarH{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-15deg) translateY(-3px)}}
 @keyframes roarAL{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(-58deg) translateX(-5px)}}
 @keyframes roarAR{0%,100%{transform:rotate(10deg)}50%{transform:rotate(58deg) translateX(5px)}}
 @keyframes roarT{0%,100%{transform:scale(1)}50%{transform:scale(1.07,1.04)}}
 
 /* beckon — the come-here curl, twice a cycle */
-.fo-t-beckon .m-armR{animation:bkAR .85s ease-in-out infinite}
-.fo-t-beckon .m-torso{animation:bkT 1.7s ease-in-out infinite}
-.fo-t-beckon .m-head{animation:bkH 1.7s ease-in-out infinite}
+.fo-t-beckon .m-armR{animation:bkAR .85s var(--snap) infinite}
+.fo-t-beckon .m-torso{animation:bkT 1.7s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-beckon .m-head{animation:bkH 1.7s var(--drive) infinite;animation-delay:0.05s}
 @keyframes bkAR{0%,100%{transform:rotate(-52deg) translateX(2px)}50%{transform:rotate(-96deg) translateX(-6px)}}
 @keyframes bkT{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-3deg)}}
 @keyframes bkH{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(2deg)}}
 
 /* dance — hips and shoulders out of phase, feet keeping time */
-.fo-t-dance .m-torso{animation:dnT .62s ease-in-out infinite}
-.fo-t-dance .m-armL{animation:dnAL .62s ease-in-out infinite}
-.fo-t-dance .m-armR{animation:dnAR .62s ease-in-out infinite}
-.fo-t-dance .m-legL{animation:dnLL .62s ease-in-out infinite}
-.fo-t-dance .m-legR{animation:dnLR .62s ease-in-out infinite}
-.fo-t-dance .m-head{animation:dnH .62s ease-in-out infinite}
+.fo-t-dance .m-torso{animation:dnT .62s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-dance .m-armL{animation:dnAL .62s var(--snap) infinite}
+.fo-t-dance .m-armR{animation:dnAR .62s var(--snap) infinite}
+.fo-t-dance .m-legL{animation:dnLL .62s var(--drive) infinite;animation-delay:0.03s}
+.fo-t-dance .m-legR{animation:dnLR .62s var(--drive) infinite;animation-delay:0.04s}
+.fo-t-dance .m-head{animation:dnH .62s var(--drive) infinite;animation-delay:0.05s}
 @keyframes dnT{0%,100%{transform:rotate(-7deg) translateX(-3px)}50%{transform:rotate(7deg) translateX(3px)}}
 @keyframes dnAL{0%,100%{transform:rotate(-64deg)}50%{transform:rotate(22deg)}}
 @keyframes dnAR{0%,100%{transform:rotate(-22deg)}50%{transform:rotate(64deg)}}
@@ -432,28 +516,28 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 @keyframes dnH{0%,100%{transform:rotate(7deg)}50%{transform:rotate(-7deg)}}
 
 /* bow — folds at the waist, arms swing forward under gravity */
-.fo-t-bow .m-torso{animation:bwT 2.4s ease-in-out infinite}
-.fo-t-bow .m-head{animation:bwH 2.4s ease-in-out infinite}
-.fo-t-bow .m-armL{animation:bwAL 2.4s ease-in-out infinite}
-.fo-t-bow .m-armR{animation:bwAR 2.4s ease-in-out infinite}
+.fo-t-bow .m-torso{animation:bwT 2.4s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-bow .m-head{animation:bwH 2.4s var(--drive) infinite;animation-delay:0.05s}
+.fo-t-bow .m-armL{animation:bwAL 2.4s var(--snap) infinite}
+.fo-t-bow .m-armR{animation:bwAR 2.4s var(--snap) infinite}
 @keyframes bwT{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(34deg) translateY(4px)}}
 @keyframes bwH{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(22deg) translateY(3px)}}
 @keyframes bwAL{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(-46deg) translateY(6px)}}
 @keyframes bwAR{0%,100%{transform:rotate(0deg)}40%,62%{transform:rotate(46deg) translateY(6px)}}
 
 /* facepalm — hand up to the face, head sinks into it */
-.fo-t-facepalm .m-armR{animation:fpAR 2.6s ease-in-out infinite}
-.fo-t-facepalm .m-head{animation:fpH 2.6s ease-in-out infinite}
-.fo-t-facepalm .m-torso{animation:fpT 2.6s ease-in-out infinite}
+.fo-t-facepalm .m-armR{animation:fpAR 2.6s var(--snap) infinite}
+.fo-t-facepalm .m-head{animation:fpH 2.6s var(--drive) infinite;animation-delay:0.05s}
+.fo-t-facepalm .m-torso{animation:fpT 2.6s var(--drive) infinite;animation-delay:0.02s}
 @keyframes fpAR{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(-152deg) translate(-14px,4px)}}
 @keyframes fpH{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(11deg) translateY(4px)}}
 @keyframes fpT{0%,100%{transform:rotate(0deg)}32%,72%{transform:rotate(3deg) translateY(2px)}}
 
 /* shrug — shoulders up, palms out, head tucked between them */
-.fo-t-shrug .m-armL{animation:shAL 2s ease-in-out infinite}
-.fo-t-shrug .m-armR{animation:shAR 2s ease-in-out infinite}
-.fo-t-shrug .m-head{animation:shH 2s ease-in-out infinite}
-.fo-t-shrug .m-torso{animation:shT 2s ease-in-out infinite}
+.fo-t-shrug .m-armL{animation:shAL 2s var(--snap) infinite}
+.fo-t-shrug .m-armR{animation:shAR 2s var(--snap) infinite}
+.fo-t-shrug .m-head{animation:shH 2s var(--drive) infinite;animation-delay:0.05s}
+.fo-t-shrug .m-torso{animation:shT 2s var(--drive) infinite;animation-delay:0.02s}
 @keyframes shAL{0%,100%{transform:rotate(0deg)}35%,70%{transform:rotate(-40deg) translateY(-5px)}}
 @keyframes shAR{0%,100%{transform:rotate(0deg)}35%,70%{transform:rotate(40deg) translateY(-5px)}}
 @keyframes shH{0%,100%{transform:translateY(0)}35%,70%{transform:translateY(5px) scaleY(.94)}}
@@ -490,10 +574,10 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 }
 
 /* nap — knees give, torso sags, head lolls, arms dangle */
-.fo-t-nap .m-torso{animation:npT 4.4s ease-in-out infinite}
-.fo-t-nap .m-head{animation:npH 4.4s ease-in-out infinite}
-.fo-t-nap .m-armL{animation:npAL 4.4s ease-in-out infinite}
-.fo-t-nap .m-armR{animation:npAR 4.4s ease-in-out infinite}
+.fo-t-nap .m-torso{animation:npT 4.4s var(--drive) infinite;animation-delay:0.02s}
+.fo-t-nap .m-head{animation:npH 4.4s var(--drive) infinite;animation-delay:0.05s}
+.fo-t-nap .m-armL{animation:npAL 4.4s var(--snap) infinite}
+.fo-t-nap .m-armR{animation:npAR 4.4s var(--snap) infinite}
 .fo-t-nap .m-legL{transform:rotate(-5deg)}
 .fo-t-nap .m-legR{transform:rotate(5deg)}
 @keyframes npT{0%,100%{transform:rotate(-9deg) translateY(3px)}50%{transform:rotate(-12deg) translateY(6px)}}
@@ -675,6 +759,15 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .tickname{max-width:92px}
 }
 
+/* How the mascots move. Linear and plain ease-in-out are what make an animation
+   read as a machine; these give a body's weight — quick to start, slow to settle,
+   with a touch of overshoot on anything thrown. */
+:root{
+  --soft:cubic-bezier(.37,.16,.34,1);        /* breathing, drifting */
+  --drive:cubic-bezier(.22,.68,.29,1.02);    /* a limb driven then let go */
+  --snap:cubic-bezier(.16,.9,.22,1.14);      /* a throw, with overshoot */
+  --settle:cubic-bezier(.3,1.28,.5,1);       /* lands past the mark, comes back */
+}
 /* Trending, from Sleeper */
 .trend{font-size:11px;font-variant-numeric:tabular-nums;border-radius:6px;padding:1px 5px;white-space:nowrap}
 .trend.up{color:var(--sage);background:rgba(91,196,150,.12)}
@@ -728,7 +821,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-17w · free agents by week';
+const APP_BUILD = '2026-08-18d · weekly dues reminders';
 
 /* ============================================================
    HOME LEAGUE
@@ -1173,6 +1266,11 @@ function defaultState(){
                   signed within a week of the draft ending is treated the same and
                   costs the minimum. */
                windowOn:true, windowYears:3, windowMaxDeal:3, draftEnd:'', signWindowDays:7,
+               /* Draft prices land on a round figure — a dime by default. */
+               roundTo:0.10,
+               /* Left alone this follows the draft-end date. Set it true or false
+                  to say so outright. */
+               draftDone:null,
                /* The tail of the draft is held at a flat price for now. From
                   holdUntil onward it follows the ladder below, and that ladder
                   then rises with everything else. */
@@ -1183,6 +1281,8 @@ function defaultState(){
              tiers:{1:85, 2:70, 3:55, 4:40}, maxPerTeam:4, maxTotal:0, minAav:0,
              /* How many comp picks each round hands out: a floor and a ceiling.
                 Both 0 means the round gives none at all. */
+             /* How a signing answers a loss: by what it cost, or one for one. */
+             offsetMode:'value',
              band:{1:{min:0,max:0}, 2:{min:1,max:1}, 3:{min:1,max:3},
                    4:{min:1,max:3}, 5:{min:0,max:0}, 6:{min:0,max:0}},
              priceMode:'pctOfLast', pctOfLast:92, byRound:{}, overrides:{},
@@ -1209,7 +1309,10 @@ function defaultState(){
         counters:{on:true, mustIncludeOriginal:true, side:'either', outcome:'replace'},
         vetoOn:false, vetoVotes:6, capMustBeLegal:true
       },
-      dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'', remindDays:[14,7,1] },
+      dues:{ amount:100, symbol:'$', dueDate:(season)+'-08-15', payTo:'', instructions:'',
+        remindDays:[14,7,1],
+        /* A nudge once a week for anyone still owing, until they pay. */
+        remindWeekly:true, remindDay:1, lastRemind:0 },
       sync:{ on:false, url:'', leagueId:'', key:'', everySec:20 },
       supa:{ on:false, url:'', anonKey:'', leagueId:'' },
       live:{ mode:'sleeper', endpoint:'', pollSec:15, speed:1, running:false,
@@ -2657,6 +2760,12 @@ document.addEventListener('change', e=>{
     if(v) S.settings.live.lastSleeperId = v;
   }
   if(t.dataset.set==='settings.live.pollSec') S.settings.live.pollPicked = true;
+  /* Three-way switches come back as strings; store them as what they mean. */
+  if(t.dataset.set==='settings.rookie.draftDone'){
+    const v = val(t);
+    S.settings.rookie.draftDone = (v==='true') ? true : (v==='false') ? false : null;
+    clearCapCache(); save(); render(); return;
+  }
   save();
   if(t.dataset.norender===undefined) render();
 });
@@ -4034,6 +4143,10 @@ VIEWS.live = function(){
           (S.live.syncAt ? 'synced '+shortAgo(S.live.syncAt) : 'syncing\u2026')+'</span>';
       })()}
       <button class="btn sm ghost" data-a="sleeperSyncNow" ${ui.tmp.syncBusy?'disabled':''}>${ui.tmp.syncBusy?'Syncing…':'Sync now'}</button>
+      ${(S.live.kicks||{})[+S.live.week||1]
+        ? ''
+        : '<button class="btn sm ghost" data-a="kickPull"'+(ui.tmp.kickBusy?' disabled':'')+'>'+
+          (ui.tmp.kickBusy?'Getting times…':'Get kickoff times')+'</button>'}
       <button class="btn ghost" data-a="go" data-r="schedule">Schedule</button>
       <button class="btn" data-a="editLineup" data-team="${t.id}" data-w="${+S.live.week||1}">Set lineup</button>
       ${cfg.mode==='demo' && isCommish() && powerOn('closeWeek')
@@ -4717,24 +4830,34 @@ VIEWS.teams = function(){
           :'<tr><td colspan="4" class="dim center" style="padding:20px">No dead money. Nice.</td></tr>'}
         </tbody></table></div></div>
       <div class="panel"><div class="ph"><h3>Manual adjustments</h3><div class="spacer"></div>
-        <button class="btn sm ghost" data-a="addAdj">Add</button>
-        <button class="btn sm pri" data-a="saveAdj">Save</button></div><div class="pb tight scrollx"><table>
+        ${!isCommish() ? '' : `<button class="btn sm ghost" data-a="addAdj">Add</button>
+        <button class="btn sm pri" data-a="saveAdj">Save</button>`}</div><div class="pb tight scrollx"><table>
         <thead><tr>${sortTh('adj','note','Note')}${sortTh('adj','year','Year','right')}
           ${sortTh('adj','amt','Amount','right')}<th></th></tr></thead><tbody>
         ${(t.adj||[]).length?sortRows('adj', (t.adj||[]),
           {note:d=>d.note||'', year:d=>+d.year||0, amt:d=>+d.amount||0}, {key:'year',dir:1})
           .map(d=>{ const i = (t.adj||[]).indexOf(d);   // where it really lives, not where it is shown
           return `<tr>
+          ${!isCommish() ? `
+          <td>${esc(d.note||'')||'<span class="dim">no note</span>'}</td>
+          <td class="right num">${+d.year||S.league.season}</td>
+          <td class="right money">${money(d.amount==null?0:d.amount)}</td>
+          <td></td></tr>` : `
           <td><input type="text" value="${esc(d.note||'')}" placeholder="what it is for"
             data-oninput="adjField" data-i="${i}" data-f="note" data-k="adjn${i}"></td>
           <td class="right"><input type="number" step="1" value="${+d.year||S.league.season}" style="width:78px;text-align:right"
             data-oninput="adjField" data-i="${i}" data-f="year" data-k="adjy${i}"></td>
           <td class="right"><input type="number" step="0.01" value="${d.amount==null?0:d.amount}" style="width:96px;text-align:right"
             data-oninput="adjField" data-i="${i}" data-f="amount" data-k="adja${i}"></td>
-          <td class="right"><button class="btn sm ghost danger" data-a="rmAdj" data-i="${i}">Remove</button></td></tr>`;
+          <td class="right"><button class="btn sm ghost danger" data-a="rmAdj" data-i="${i}">Remove</button></td></tr>`}`;
           }).join('')
-          :'<tr><td colspan="4" class="dim center" style="padding:20px">Use these for penalties, rollover, or cash trades.</td></tr>'}
-        </tbody></table></div></div></div>` : ''}
+          :'<tr><td colspan="4" class="dim center" style="padding:20px">'+
+            (isCommish() ? 'Use these for penalties, rollover, or cash trades.' : 'None on this team.')+
+            '</td></tr>'}
+        </tbody></table></div>
+        ${isCommish() ? '' : '<div class="pb"><div class="hint">Adjustments are the commissioner\u2019s to set. '+
+          'These count against the cap alongside contracts.</div></div>'}
+        </div></div>` : ''}
 
     ${sub==='fa' ? `<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
       <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
@@ -5005,6 +5128,7 @@ ACT.faWeekPick = (d, el)=>{ ui.tmp.faWeek = +el.value; render(); };
 ACT.faSearch = (d,el)=>{ ui.tmp.faq = el.value; const b=$('#faBody'); if(b) b.innerHTML = faRows(freeAgents()); };
 ACT.signFree = ()=>{ ui.sub='fa'; render(); };
 ACT.saveAdj = ()=>{
+  if(!isCommish()) return toast('Adjustments are the commissioner\u2019s to set','bad');
   const t = byId(S.teams, currentTeamId());
   /* Tidy each row on save: blank notes are fine, but a missing year defaults to
      this season and the amount is snapped to the cap's precision. */
@@ -5018,6 +5142,9 @@ ACT.saveAdj = ()=>{
   toast('Adjustments saved','good');
 };
 ACT.addAdj = ()=>{
+  /* Adjustments move real money against the cap, so the guard is here and not
+     only on whether the button was drawn. */
+  if(!isCommish()) return toast('Adjustments are the commissioner\u2019s to set','bad');
   const t = byId(S.teams,currentTeamId()); t.adj=t.adj||[];
   t.adj.push({year:S.league.season, amount:0, note:''});
   save(); render();
@@ -5027,6 +5154,7 @@ ACT.addAdj = ()=>{
    only the first character would land. The cap figures catch up on the next
    render, which any other click will cause. */
 ACT.adjField = (d, el)=>{
+  if(!isCommish()) return;
   const t = byId(S.teams, currentTeamId());
   const row = (t.adj||[])[+d.i]; if(!row) return;
   if(d.f==='note') row.note = el.value;
@@ -5034,7 +5162,10 @@ ACT.adjField = (d, el)=>{
   else if(d.f==='amount') row.amount = fixCents(el.value);
   save();
 };
-ACT.rmAdj = (d)=>{ const t=byId(S.teams,currentTeamId()); t.adj.splice(+d.i,1); save(); render(); };
+ACT.rmAdj = (d)=>{
+  if(!isCommish()) return toast('Adjustments are the commissioner\u2019s to set','bad');
+  const t=byId(S.teams,currentTeamId()); t.adj.splice(+d.i,1); save(); render();
+};
 ACT.zeroDead = (d)=>{
   const tid = currentTeamId();
   if(!isCommish()) return toast('Commissioners only','bad');
@@ -5742,33 +5873,49 @@ function kickoffPassed(club, week){
 async function pullKickoffs(week){
   const w = week || +S.live.week || 1;
   const season = S.league.season;
-  const tries = [
-    SLEEPER+'/schedule/nfl/regular/'+season+'/'+w,
-    'https://api.sleeper.app/schedule/nfl/regular/'+season+'/'+w
-  ];
-  let rows = null;
-  for(const u of tries){
-    try{
-      const j = await getJSON(u);
-      const list = Array.isArray(j) ? j : (j && j.games) || null;
-      if(list && list.length){ rows = list; break; }
-    }catch(e){ /* try the next shape */ }
-  }
-  if(!rows) return 0;
   S.live.kicks = S.live.kicks || {};
-  const book = S.live.kicks[w] = {};
+  const book = {};
   let n2 = 0;
-  rows.forEach(r=>{
-    const when = r.date || r.kickoff || r.start_time || r.gameday;
-    const t2 = when ? Date.parse(when) : NaN;
-    if(isNaN(t2)) return;
-    [r.home, r.away, r.home_team, r.away_team].forEach(c=>{
-      if(!c) return;
-      book[String(c).toUpperCase()] = t2;
-      n2++;
+  /* ESPN publishes the fixture list with kickoff times and club codes, and does
+     not need a key. Sleeper is tried after it in case that ever stops. */
+  try{
+    const j = await getJSON('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'+
+      '?seasontype=2&week='+w+'&dates='+season);
+    (j.events||[]).forEach(ev=>{
+      const t2 = ev.date ? Date.parse(ev.date) : NaN;
+      if(isNaN(t2)) return;
+      const comps = ((ev.competitions||[])[0]||{}).competitors || [];
+      comps.forEach(c=>{
+        const ab = c && c.team && (c.team.abbreviation || c.team.shortDisplayName);
+        if(!ab) return;
+        book[String(ab).toUpperCase()] = t2; n2++;
+      });
     });
-  });
-  if(n2){ S.live.kicksAt = Date.now(); save(); }
+  }catch(e){ /* fall through to Sleeper */ }
+  if(!n2){
+    try{
+      const j2 = await getJSON('https://api.sleeper.app/schedule/nfl/regular/'+season+'/'+w);
+      const list = Array.isArray(j2) ? j2 : (j2 && j2.games) || [];
+      list.forEach(r=>{
+        const when = r.date || r.kickoff || r.start_time || r.gameday;
+        const t2 = when ? Date.parse(when) : NaN;
+        if(isNaN(t2)) return;
+        [r.home, r.away, r.home_team, r.away_team].forEach(c=>{
+          if(!c) return;
+          book[String(c).toUpperCase()] = t2; n2++;
+        });
+      });
+    }catch(e){ /* nothing available */ }
+  }
+  if(!n2){ S.live.kicksErr = 'no schedule available'; return 0; }
+  /* Club codes differ between sources; map the handful that disagree. */
+  const ALIAS = {WSH:'WAS', WAS:'WSH', LAR:'LA', LA:'LAR', JAX:'JAC', JAC:'JAX',
+                 ARZ:'ARI', ARI:'ARZ', CLV:'CLE', CLE:'CLV', HST:'HOU', HOU:'HST',
+                 BLT:'BAL', BAL:'BLT', SD:'LAC', LAC:'SD', OAK:'LV', LV:'OAK'};
+  Object.keys(ALIAS).forEach(k=>{ if(book[k] && !book[ALIAS[k]]) book[ALIAS[k]] = book[k]; });
+  S.live.kicks[w] = book;
+  S.live.kicksAt = Date.now(); S.live.kicksErr = null;
+  save();
   return n2;
 }
 function sleeperLeague(){
@@ -5869,6 +6016,14 @@ async function runSleeperSync(quiet){
     throw e;
   }
 }
+ACT.kickPull = async ()=>{
+  ui.tmp.kickBusy = true; render();
+  try{
+    const nn = await pullKickoffs();
+    ui.tmp.kickBusy = false; render();
+    toast(nn ? 'Kickoff times are in' : 'Could not get the fixture list just now','' + (nn?'good':'bad'));
+  }catch(e){ ui.tmp.kickBusy = false; render(); toast('Could not get the fixture list — '+e.message,'bad'); }
+};
 ACT.sleeperSyncNow = async ()=>{
   if(!sleeperLeague())
     return toast('This app does not know your Sleeper league yet — run any pull on the Import page once','bad');
@@ -10203,7 +10358,17 @@ function makeWaiverContract(teamId){
    A first in this draft costs nothing extra; one two drafts away costs two
    seconds on top, because making somebody wait is worth something.
    ============================================================ */
-function draftBaseYear(){ return S.league.season; }
+/* The next rookie draft that has not happened yet. Once this season's draft is
+   done, a pick for next season is the near one and costs nothing extra to use —
+   before then, it is a year away. */
+function draftDone(){
+  const r = S.settings.rookie || {};
+  if(r.draftDone === true) return true;
+  if(r.draftDone === false) return false;
+  const end = rookieDraftEnd();
+  return end != null && Date.now() > end;      /* the date it finished has passed */
+}
+function draftBaseYear(){ return S.league.season + (draftDone() ? 1 : 0); }
 function yearsOut(pk){ return Math.max(0, (+pk.year||0) - draftBaseYear()); }
 /* Earliest year first, then the better slot; comp picks rank below the rest. */
 function pickRank(a, b){
@@ -10600,7 +10765,19 @@ function flatTailPrice(round, slot, year){
   if(base == null && keys.length) base = lad[keys[keys.length-1]];   /* past the end: the last rung */
   base = +base || 0;
   const lift = Math.max(0, yr - hold);
-  return roundInc(base * Math.pow(1 + (+r.growthPct||0)/100, lift));
+  return rookieRound(base * Math.pow(1 + (+r.growthPct||0)/100, lift));
+}
+/* Rookie money is rounded to its own step rather than the league's cap
+   increment, so a scale that grows 2.5% a year still lands on tidy figures. */
+function rookieRound(v){
+  const step = +((S.settings.rookie||{}).roundTo);
+  if(!(step > 0)) return roundInc(v);
+  /* Scale to cents before dividing, so an exact half does not fall a hair below
+     the line the way v/0.1 does — but do not round to cents first, or 22.649
+     would be pushed up to 22.65 and then to 22.70. */
+  const cents = (+v||0) * 100;
+  const stepC = Math.max(1, Math.round(step * 100));
+  return (Math.round(cents / stepC) * stepC) / 100;
 }
 function rookiePrice(round, slot, year){
   const r = S.settings.rookie, n = Math.max(1, S.teams.length);
@@ -10616,7 +10793,10 @@ function rookiePrice(round, slot, year){
              : r.handSet ? (+r.minSalary||0)
              : (+r.top||0) * Math.pow(+r.decay||1, overall-1);
   const lift = Math.max(0, (year||S.league.season) - (+r.baseSeason||S.league.season));
-  return Math.max(+r.minSalary||0, roundInc(base * Math.pow(1 + (+r.growthPct||0)/100, lift)));
+  /* A price typed in by hand is the price, exactly as typed, in its own season.
+     Rounding is for what growth produces after that. */
+  if(lift === 0 && typed != null) return Math.max(+r.minSalary||0, typed);
+  return Math.max(+r.minSalary||0, rookieRound(base * Math.pow(1 + (+r.growthPct||0)/100, lift)));
 }
 /* The longest deal a pick from this round may be signed to. Anything shorter is
    the team's own choice once they have drafted him. */
@@ -10744,8 +10924,37 @@ function compFor(year){
     const b = byTeam[t.id];
     b.lost.sort((x,y)=> y.score-x.score);
     b.gained.sort((x,y)=> y.score-x.score);
-    const cancelled = cfg.offset ? Math.min(b.lost.length, b.gained.length) : 0;
-    const net = b.lost.slice(cancelled).filter(r=> r.round!=null);
+    /* A signing counts against the man you lost, but only for what it cost. Lose
+       someone on 50 and replace him with someone on 10 and you are still 40 down
+       — the claim survives, worth less. Replace him with someone on 60 and the
+       claim is gone. Both lists are richest first, so the big signing answers
+       the big loss. */
+    let cancelled = 0;
+    let net = b.lost.filter(r=> r.round!=null);
+    if(cfg.offset){
+      if(cfg.offsetMode === 'count'){
+        /* The old way: one signing wipes out one loss, whatever they cost. */
+        cancelled = Math.min(b.lost.length, b.gained.length);
+        net = b.lost.slice(cancelled).filter(r=> r.round!=null);
+      }else{
+        const spend = b.gained.map(g=> +g.sg.aav||0).sort((x,y)=> y-x);
+        net = [];
+        b.lost.forEach((r, i)=>{
+          const against = +spend[i] || 0;               /* the signing it answers */
+          const left = (+r.sg.aav||0) - against;
+          if(left <= 0){ cancelled++; return; }         /* fully answered */
+          if(against <= 0){ if(r.round!=null) net.push(r); return; }
+          /* Rescore the claim on what is left of it, so a partly replaced player
+             earns a later round rather than the same one. */
+          const thin = Object.assign({}, r.sg, {aav:left});
+          const score = compScore(thin, pool);
+          const round = compRoundFor(score);
+          if(round == null){ cancelled++; return; }
+          net.push({sg:r.sg, score, round, player:r.player,
+                    offsetBy:against, netAav:left});
+        });
+      }
+    }
     out[t.id] = { lost:b.lost, gained:b.gained, cancelled,
                   awards: net.slice(0, Math.max(0, +cfg.maxPerTeam||0) || net.length) };
   });
@@ -11752,7 +11961,21 @@ VIEWS.dues = function(){
           </div>
           <label class="f"><span>Due date</span><input type="date" data-norender data-set="settings.dues.dueDate" value="${esc(d.dueDate||'')}"></label>
           <label class="f"><span>Pay to</span><input type="text" data-set="settings.dues.payTo" value="${esc(d.payTo||'')}" placeholder="Venmo @commissioner"></label>
-          <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>`
+          <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>
+          <div class="hr"></div>
+          <label class="check"><input type="checkbox" data-set="settings.dues.remindWeekly" ${d.remindWeekly!==false?'checked':''}>
+            <span>Remind anyone still owing, once a week</span></label>
+          ${d.remindWeekly===false ? '' : `<label class="f"><span>On a</span>
+            <select data-set="settings.dues.remindDay">
+              ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
+                '<option value="'+i+'"'+((+d.remindDay||0)===i?' selected':'')+'>'+nm+'</option>').join('')}
+            </select></label>
+          <div class="hint">${(()=>{
+            const owing = duesOwing(S.league.season).length;
+            return owing
+              ? owing+' team'+(owing===1?'':'s')+' would be reminded. Anyone marked paid drops off straight away.'
+              : 'Everyone has paid, so nothing would be sent.';
+          })()}</div>`}`
           : `<div class="row"><span class="eyebrow" style="width:110px">Each team</span><b>${duesMoney(d.amount)}</b></div>
              <div class="row"><span class="eyebrow" style="width:110px">Due</span><b>${dayOnly(d.dueDate)}</b></div>
              ${d.payTo?'<div class="row"><span class="eyebrow" style="width:110px">Pay to</span><b>'+esc(d.payTo)+'</b></div>':''}
@@ -11776,6 +11999,7 @@ ACT.togglePaid = (d)=>{
   const t = byId(S.teams,d.id);
   const rec = duesFor(t);
   rec.paid = !rec.paid; rec.paidOn = rec.paid ? Date.now() : null;
+  if(rec.paid) clearDuesNotices(t.id);        /* off the list the moment they pay */
   logIt(t.name+(rec.paid?' paid '+duesYear()+' dues':' marked unpaid for '+duesYear()), {type:'admin', teams:[t.id]});
   save(); render();
 };
@@ -11797,7 +12021,7 @@ function reminderText(t){
 }
 ACT.remindOne = (d)=>{
   const t = byId(S.teams,d.id);
-  S.notices.unshift({id:uid('n'), at:Date.now(), kind:'dues', title:'Reminder sent', body:'Reminded '+t.name+' — '+duesMoney(dueAmount(t))+' outstanding', read:false});
+  noteReminder(t);
   save();
   modal('Reminder for '+t.name, '<textarea id="remtext" style="min-height:200px">'+esc(reminderText(t))+'</textarea>'+
     '<div class="hint">Copy this into your league chat, or open it in your mail app. This page has no mail server of its own.</div>',
@@ -11805,10 +12029,44 @@ ACT.remindOne = (d)=>{
     (t.email?'<a class="btn" href="mailto:'+encodeURIComponent(t.email)+'?subject='+encodeURIComponent('Dues — '+S.league.name)+'&body='+encodeURIComponent(reminderText(t))+'">Open in mail</a>':'')+
     '<button class="btn pri" data-a="copyRem">Copy</button>');
 };
+/* Anyone who still owes for the season being looked at. */
+function duesOwing(year){
+  return S.teams.filter(t=> !duesFor(t, year).paid);
+}
+/* A reminder is about an unpaid debt, so it belongs to that team alone. */
+function noteReminder(t, year){
+  S.notices.unshift({id:uid('n'), at:Date.now(), kind:'dues', title:'Dues reminder',
+    body:t.name+' still owes '+duesMoney(dueAmount(t, year))+' for '+(year||duesYear()),
+    teams:[t.id], read:false});
+}
+/* Once somebody pays, their reminders go straight away rather than sitting
+   there looking like they still owe. */
+function clearDuesNotices(teamId){
+  S.notices = (S.notices||[]).filter(nt=>
+    !(nt.kind==='dues' && Array.isArray(nt.teams) && nt.teams.length===1 && nt.teams[0]===teamId));
+}
+/* Once a week, nudge whoever is still outstanding. */
+function duesWeeklyRun(){
+  const d = S.settings.dues || {};
+  if(!d.remindWeekly) return 0;
+  const now = new Date();
+  if(now.getDay() !== (+d.remindDay||0)) return 0;
+  /* Once per calendar week, not once per visit. */
+  const last = +d.lastRemind || 0;
+  if(last && (Date.now() - last) < 6*24*3600000) return 0;
+  const y = S.league.season;
+  const owing = duesOwing(y);
+  d.lastRemind = Date.now();
+  if(!owing.length){ save(); return 0; }
+  owing.forEach(t=> noteReminder(t, y));
+  notify('Dues still owing', owing.length+' team'+(owing.length===1?'':'s')+
+    ' have not paid for '+y+'.', 'warn');
+  save();
+  return owing.length;
+}
 ACT.remindAll = ()=>{
-  const owing = S.teams.filter(t=>!duesFor(t).paid);
-  owing.forEach(t=> S.notices.unshift({id:uid('n'), at:Date.now(), kind:'dues', title:'Reminder sent',
-    body:'Reminded '+t.name+' — '+duesMoney(dueAmount(t))+' outstanding', read:false}));
+  const owing = duesOwing();
+  owing.forEach(t=> noteReminder(t));
   save();
   modal('Reminders for '+owing.length+' teams',
     '<textarea id="remtext" style="min-height:220px">'+esc(reminderText(null))+'</textarea>'+
@@ -12274,13 +12532,17 @@ ACT.sleeperGo = async ()=>{
       /* Manual adjustments belong to the league, not to Sleeper. Keep them
          through the rebuild and put them back on the matching team, so an
          import can never quietly wipe money somebody was owed or charged. */
-      const oldAdj = {}, oldDead = {}, oldDues = {};
+      const oldAdj = {}, oldDead = {}, oldDues = {}, oldLook = {};
       S.teams.forEach(t=>{
         const k = String(t.name||'').toLowerCase();
         if((t.adj||[]).length) oldAdj[k] = deep(t.adj);
         if((t.dead||[]).length) oldDead[k] = deep(t.dead);
         /* Who has paid is the league's business, not Sleeper's. */
         if(t.dues) oldDues[k] = deep(t.dues);
+        /* So is how somebody dressed their mascot. */
+        oldLook[k] = {mascot:t.mascot, mascotName:t.mascotName, color:t.color,
+                      uniform:t.uniform, uniformName:t.uniformName,
+                      jersey:t.jersey, jerseys:t.jerseys, pants:t.pants};
       });
       /* Keep every deal that already exists. Sleeper decides WHERE a player
          sits; it does not get to change what he is paid. Matched on the Sleeper
@@ -12321,9 +12583,19 @@ ACT.sleeperGo = async ()=>{
           dead:oldDead[String(name||'').toLowerCase()] || [],
           adj: oldAdj[String(name||'').toLowerCase()] || [],
           faSpent:0,
-          color:TEAM_COLORS[i%TEAM_COLORS.length], mascot:mk[i%mk.length],
           dues: oldDues[String(name||'').toLowerCase()] ||
                 {paid:false, paidOn:null, amount:null, method:'', note:''}};
+        /* Put the mascot and kit back exactly as it was; only fall back to a
+           default for a team this league has not seen before. */
+        const look = oldLook[String(name||'').toLowerCase()] || {};
+        t.color      = look.color      != null ? look.color      : TEAM_COLORS[i%TEAM_COLORS.length];
+        t.mascot     = look.mascot     != null ? look.mascot     : mk[i%mk.length];
+        if(look.mascotName  != null) t.mascotName  = look.mascotName;
+        if(look.uniform     != null) t.uniform     = look.uniform;
+        if(look.uniformName != null) t.uniformName = look.uniformName;
+        if(look.jersey      != null) t.jersey      = look.jersey;
+        if(look.jerseys     != null) t.jerseys     = look.jerseys;
+        if(look.pants       != null) t.pants       = look.pants;
         S.teams.push(t);
         [].concat(r.players||[], r.taxi||[], r.reserve||[])
           .filter((v,j,a)=> v && a.indexOf(v)===j)
@@ -13884,6 +14156,14 @@ VIEWS.settings = function(){
             <input type="number" min="1" max="6" data-set="settings.rookie.windowMaxDeal" value="${+rookieRules().windowMaxDeal||3}"></label>
           <label class="f"><span>Rookie draft ended</span>
             <input type="date" data-norender data-set="settings.rookie.draftEnd" value="${esc(rookieRules().draftEnd||'')}"></label>
+          <label class="f"><span>This season's draft is</span>
+            <select data-set="settings.rookie.draftDone">
+              <option value=""${rookieRules().draftDone==null?' selected':''}>work it out from the date</option>
+              <option value="true"${rookieRules().draftDone===true?' selected':''}>done — next year's picks are the near ones</option>
+              <option value="false"${rookieRules().draftDone===false?' selected':''}>still to come</option>
+            </select></label>
+          <div class="hint">The next draft is <b>${draftBaseYear()}</b>. That is what a franchise tag is priced
+            against: a ${draftBaseYear()} first costs nothing extra, and every draft further out adds a second.</div>
           <label class="f"><span>Signing window after it (days)</span>
             <input type="number" min="0" max="30" data-set="settings.rookie.signWindowDays" value="${+rookieRules().signWindowDays||7}"></label>
         </div>
@@ -13984,7 +14264,19 @@ VIEWS.settings = function(){
               <input type="number" min="0" step="${c.cap.increment}" data-set="settings.comp.minAav" value="${S.settings.comp.minAav}"></label>
           </div>
           <label class="check"><input type="checkbox" data-set="settings.comp.offset" ${S.settings.comp.offset?'checked':''}>
-            <span>A player you sign cancels out a player you lost</span></label>
+            <span>A player you sign counts against a player you lost</span></label>
+          ${!S.settings.comp.offset ? '' : `
+          <label class="f"><span>How it counts</span>
+            <select data-set="settings.comp.offsetMode">
+              <option value="value"${(S.settings.comp.offsetMode||'value')==='value'?' selected':''}>By what they cost</option>
+              <option value="count"${S.settings.comp.offsetMode==='count'?' selected':''}>One for one, whatever the price</option>
+            </select></label>
+          <div class="hint">${(S.settings.comp.offsetMode||'value')==='value'
+            ? 'Your biggest signing answers your biggest loss, and only for what it cost. Lose a man on '+
+              money(50)+' and replace him with one on '+money(10)+' and you are still '+money(40)+' down — the '+
+              'claim survives, but it is worth less and earns a later round. Sign someone dearer than the man '+
+              'you lost and the claim is gone.'
+            : 'Every signing wipes out one loss, however cheap it was.'}</div>`}
           <div class="flabel" style="margin-top:6px">How many comp picks in each round</div>
           <div class="scrollx"><table>
             <thead><tr><th>Round</th><th class="right">At least</th><th class="right">At most</th><th></th></tr></thead>
@@ -14030,6 +14322,12 @@ VIEWS.settings = function(){
                 <input type="number" min="0" step="${c.cap.increment}" placeholder="${money(rookiePrice(i+1,S.teams.length,S.settings.comp.baseSeason))}"
                   data-set="settings.comp.byRound.${i+1}" value="${(S.settings.comp.byRound||{})[i+1]!=null?S.settings.comp.byRound[i+1]:''}"></label>`).join('')}</div>`}
           <div class="grid g2">
+            <label class="f"><span>Round prices to</span>
+              <select data-set="settings.rookie.roundTo">
+                ${[['0.01','the cent'],['0.05','5 cents'],['0.10','10 cents'],
+                   ['0.25','25 cents'],['0.5','50 cents'],['1','the dollar']].map(([v,l])=>
+                  '<option value="'+v+'"'+(Math.abs((+(r.roundTo)||0.1)-(+v))<1e-9?' selected':'')+'>'+l+'</option>').join('')}
+              </select></label>
             <label class="f"><span>Rises each year (%)</span>
               <input type="number" min="0" max="25" step="0.1" data-set="settings.comp.growthPct" value="${S.settings.comp.growthPct}"></label>
             <label class="f"><span>Those numbers are for</span>
@@ -16999,6 +17297,10 @@ function migrate(j){
     out.settings.live.mode = 'sleeper';
     out.settings.live.feedPicked = true;
   }
+  /* The simulator is for trying things out. A league that is wired to Sleeper
+     opens on Sleeper — every time, whatever was left set last. */
+  const sid = out.settings.live.sleeperLeagueId || out.settings.live.lastSleeperId;
+  if(sid && out.settings.live.mode === 'demo') out.settings.live.mode = 'sleeper';
   /* Same for how often it checks: fifteen seconds unless somebody has set their
      own, and once set it is left alone. */
   if(!out.settings.live.pollPicked){
@@ -17103,6 +17405,18 @@ function tickAll(){
      while somebody is looking at a screen that shows them, and less often
      otherwise. */
   if(ui.tmp.syncBusy && Date.now() - (ui.tmp.syncStartedAt||0) > 30000) ui.tmp.syncBusy = false;
+  /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
+  try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
+  /* Kickoff times need no league and no key, so they are fetched whether or not
+     the Sleeper mirror is set up. */
+  if(!ui.tmp.kickBusy && (Date.now() - (S.live.kicksAt||0)) > 3600000 &&
+     !((S.live.kicks||{})[+S.live.week||1])){
+    ui.tmp.kickBusy = true;
+    setTimeout(()=>{ pullKickoffs().then(nn=>{
+      ui.tmp.kickBusy = false;
+      if(nn && (route==='live'||route==='teams')) render();
+    }, ()=>{ ui.tmp.kickBusy = false; }); }, 300);
+  }
   const watching = (route==='live' || route==='teams' || route==='dash');
   const gap = watching ? 45000 : 5*60*1000;
   if(sleeperLeague() && !ui.tmp.syncBusy &&
