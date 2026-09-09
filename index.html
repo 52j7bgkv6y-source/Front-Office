@@ -799,6 +799,14 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 .reporterbub{border-color:var(--chalk)!important;background:rgba(127,178,217,.07);max-width:92%}
 
 .lookonly{opacity:.72;cursor:not-allowed}
+
+/* A player whose game is on the air right now. */
+.onnow{color:var(--brass);font-weight:600}
+.onnow::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--brass);margin-right:5px;vertical-align:middle;animation:onAir 1.6s var(--soft) infinite}
+@keyframes onAir{0%{opacity:1}45%{opacity:.25}100%{opacity:1}}
+tr.liverow{background:rgba(212,160,74,.06)}
+tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
 </style>
 </head>
 <body>
@@ -821,7 +829,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-18g · always sleeper at 15s';
+const APP_BUILD = '2026-08-18l · clear the season back to week 1';
 
 /* ============================================================
    HOME LEAGUE
@@ -958,7 +966,7 @@ const Store = {
 };
 const KEY = 'frontoffice.league.v1';
 const BAKS = 24;              /* the most we will ever keep */
-const BAK_BUDGET = 1600000;   /* about 1.6MB of copies, so the browser has room for everything else */
+const BAK_BUDGET = 3200000;   /* copies are slimmed now, so more of them fit in the same corner */
 const bakKey = (i)=> KEY + '.bak' + i;
 
 /* A rolling set of copies, kept every time the league is loaded and whenever
@@ -999,9 +1007,29 @@ async function trimBackups(room){
     total -= kept[n].size;
   }
 }
+/* A copy needs to hold what cannot be got back: teams, contracts, picks, rules,
+   dues, trades. Projections, the live feed and depth charts all come down again
+   from Sleeper in a minute, and chat pictures are enormous — leaving them out is
+   the difference between keeping two copies and keeping twenty. */
+function slimForBackup(state){
+  const st = deep(state);
+  delete st.proj;            /* re-pulled */
+  delete st.trend;           /* re-pulled */
+  delete st.depth;           /* re-pulled */
+  st.live = { week: (st.live||{}).week || 1, games:[], stats:{}, feed:[], matchups:[],
+              talk:[], lastTick:0, kicks:(st.live||{}).kicks, gstate:(st.live||{}).gstate,
+              lockedTeams:(st.live||{}).lockedTeams };
+  st.notices = (st.notices||[]).slice(0, 30);
+  /* Keep what was said, drop what was attached. */
+  st.chat = (st.chat||[]).slice(-200).map(mm=>{
+    if(!mm || !mm.media) return mm;
+    const c = Object.assign({}, mm); c.media = null; c.mediaGone = true; return c;
+  });
+  return st;
+}
 async function keepBackup(state, why){
   if(!state || !(state.teams||[]).length) return;
-  const entry = {at:Date.now(), why:why||'', rev:state.rev||0, state};
+  const entry = {at:Date.now(), why:why||'', rev:state.rev||0, state:slimForBackup(state)};
   const size = bakSize(entry);
   /* A single league bigger than the whole budget is not worth keeping copies of
      — the live save matters more than the history. */
@@ -1022,11 +1050,12 @@ async function listBackups(){
     try{
       const b = await Store.get(bakKey(i));
       if(b && b.state && (b.state.teams||[]).length){
-        out.push({slot:i, at:b.at, why:b.why||'',
+        out.push({slot:i, at:b.at, why:b.why||'', rev:b.rev||0,
           league:(b.state.league||{}).name || '—',
           teams:(b.state.teams||[]).length,
           players:(b.state.players||[]).filter(p=>p.contract).length,
-          season:(b.state.league||{}).season});
+          season:(b.state.league||{}).season,
+          size:bakSize(b)});
       }
     }catch(e){}
   }
@@ -4107,16 +4136,20 @@ VIEWS.live = function(){
 
   const lineupRows = A.slots.map((s,i)=>{
     const o = B ? B.slots[i] : null;
-    return `<tr>
+    /* Mark the row while either man is actually on the field. */
+    const onAir = (s.p && gameLive(s.p.nfl)) || (o && o.p && gameLive(o.p.nfl));
+    return `<tr class="${onAir?'liverow':''}">
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
         ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
       <td class="right num" style="width:10%">${s.p?s.pts.toFixed(1):'—'}
         ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(1)+'</div>':''}
-        ${s.p&&kickoffLabel(s.p.nfl)?'<div class="tiny dim">'+kickoffLabel(s.p.nfl)+'</div>':''}</td>
+        ${s.p&&gameWhen(s.p.nfl)?'<div class="tiny '+(gameLive(s.p.nfl)?'onnow':'dim')+'">'+
+          esc(gameWhen(s.p.nfl))+'</div>':''}</td>
       <td class="center" style="width:12%"><span class="eyebrow">${esc(s.slot)}</span></td>
       <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(1):'—'}
         ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(1)+'</div>':''}
-        ${o&&o.p&&kickoffLabel(o.p.nfl)?'<div class="tiny dim">'+kickoffLabel(o.p.nfl)+'</div>':''}</td>
+        ${o&&o.p&&gameWhen(o.p.nfl)?'<div class="tiny '+(gameLive(o.p.nfl)?'onnow':'dim')+'">'+
+          esc(gameWhen(o.p.nfl))+'</div>':''}</td>
       <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
     </tr>`;
   }).join('');
@@ -4342,6 +4375,49 @@ ACT.setLiveMode = (d)=>{
   /* Switch it for now if you like — it goes back to Sleeper next time the page
      opens, unless the league has turned that off in Settings. */ S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
 ACT.pollNow = ()=> pollEndpoint();
+/* Put the season back to nothing played. Everything that makes the league —
+   rosters, contracts, picks, rules, dues, trades, adjustments — is untouched;
+   only what was scored is cleared. */
+ACT.wipeSeason = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const wk = +S.live.week||1;
+  modal('Clear the season back to nothing played',
+    '<p class="muted" style="margin:0 0 8px">Every result, record and week of scoring goes, and the season '+
+    'starts again at week 1. It is meant for clearing out a test.</p>'+
+    '<div class="hint"><b>Kept:</b> rosters, contracts, picks, rules, dues, trades, adjustments, dead money, '+
+    'mascots and settings.<br><b>Cleared:</b> won-lost records, points for and against, every player\u2019s '+
+    'scoring, the play feed, and any lineups you set for the weeks played.</div>'+
+    '<div class="hint">A copy of the league is kept first, so this can be undone from Settings \u203a Data.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn danger" data-a="wipeSeasonGo">Clear it back to week 1</button>');
+};
+ACT.wipeSeasonGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  keepBackup(S, 'before clearing the season back to week 1');
+  const y = S.league.season;
+  /* What was scored. */
+  S.season = {year:y, byPlayer:{}};
+  if(S.history) delete S.history[y];
+  S.dvp = {};
+  /* What each team had done. */
+  S.teams.forEach(t=>{
+    t.record = {w:0, l:0, t:0, pf:0, pa:0};
+    t.eff = null;
+    t.streak = null;
+  });
+  /* The week itself. */
+  S.live = {week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0,
+            kicks:S.live.kicks, gstate:S.live.gstate, lockedTeams:{}};
+  S.lineups = {};
+  S.settings.live.running = false;
+  dppCache = null; clearCapCache();
+  logIt('Season cleared back to week 1 — records and scoring wiped, rosters and contracts kept',
+    {type:'admin'});
+  notify('Season reset', 'Records and scoring have been cleared. Rosters and contracts are as they were.','warn');
+  closeModal();
+  save(true); render();
+  toast('Back to week 1, nothing played','good');
+};
 ACT.closeWeek = ()=>{
   /* Work out the loser of each matchup first, so the brawl can lay that mascot
      out on the floor until the next kickoff. */
@@ -5243,7 +5319,7 @@ function lineupForm(teamId, week){
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
             const pj = projFor(p);
-            const ko = kickoffLabel(p.nfl);
+            const ko = gameWhen(p.nfl);
             return '<option value="'+p.id+'"'+(x.p&&x.p.id===p.id?' selected':'')+(disable?' disabled':'')+'>'+
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
@@ -5258,7 +5334,8 @@ function lineupForm(teamId, week){
             ${opts}
           </select>
           <span class="tiny" style="width:96px;text-align:right">
-            ${x.p && kickoffLabel(x.p.nfl) ? '<div class="dim">'+kickoffLabel(x.p.nfl)+'</div>' : ''}
+            ${x.p && gameWhen(x.p.nfl) ? '<div class="'+(gameLive(x.p.nfl)?'onnow':'dim')+'">'+
+              esc(gameWhen(x.p.nfl))+'</div>' : ''}
             <span class="num">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}${
               x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
           </span>
@@ -5868,6 +5945,36 @@ function kickoffLabel(club, week){
   h = h % 12; if(h === 0) h = 12;
   return day+' '+h+':'+mm+ap;
 }
+/* Where a club's game is up to. Falls back to the simulator's own games when
+   nothing has been pulled. */
+function gameState(club, week){
+  const w = week || +S.live.week || 1;
+  const c = String(club||'').toUpperCase();
+  const st = ((S.live.gstate||{})[w]||{})[c];
+  if(st) return st;
+  const g = (S.live.games||[]).find(x=> x.home===c || x.away===c);
+  if(g) return { state: g.status==='final' ? 'post' : g.status==='pre' ? 'pre' : 'in',
+                 q: +g.q||0, clock: g.clock!=null ? fmtClock(g.clock) : '',
+                 done: g.status==='final', short:'' };
+  return null;
+}
+function gameLive(club, week){ const st = gameState(club, week); return !!st && st.state === 'in'; }
+function gameFinal(club, week){ const st = gameState(club, week); return !!st && (st.done || st.state === 'post'); }
+/* "Q2 7:34" while it runs, "Final" once it is over, otherwise the kickoff. */
+function gameWhen(club, week){
+  const st = gameState(club, week);
+  if(st && st.state === 'in'){
+    const q = st.q > 4 ? 'OT' : (st.q ? 'Q'+st.q : '');
+    const c = st.clock || '';
+    return (q + (c ? ' ' + c : '')).trim() || 'live';
+  }
+  if(st && (st.done || st.state === 'post')) return 'Final';
+  return kickoffLabel(club, week);
+}
+function fmtClock(sec){
+  const s2 = Math.max(0, Math.round(+sec||0));
+  return Math.floor(s2/60)+':'+String(s2%60).padStart(2,'0');
+}
 /* Has his game already started, going by the clock rather than a feed? */
 function kickoffPassed(club, week){
   const at = kickoffFor(club, week);
@@ -5878,7 +5985,8 @@ async function pullKickoffs(week){
   const w = week || +S.live.week || 1;
   const season = S.league.season;
   S.live.kicks = S.live.kicks || {};
-  const book = {};
+  S.live.gstate = S.live.gstate || {};
+  const book = {}, states = {};
   let n2 = 0;
   /* ESPN publishes the fixture list with kickoff times and club codes, and does
      not need a key. Sleeper is tried after it in case that ever stops. */
@@ -5888,11 +5996,20 @@ async function pullKickoffs(week){
     (j.events||[]).forEach(ev=>{
       const t2 = ev.date ? Date.parse(ev.date) : NaN;
       if(isNaN(t2)) return;
-      const comps = ((ev.competitions||[])[0]||{}).competitors || [];
-      comps.forEach(c=>{
+      const comp = (ev.competitions||[])[0] || {};
+      /* Where the game is up to: the quarter and the clock while it runs. */
+      const st = comp.status || ev.status || {};
+      const ty = st.type || {};
+      const state = { state: ty.state || '',           /* pre | in | post */
+                      q: +st.period || 0,
+                      clock: st.displayClock || '',
+                      done: !!ty.completed,
+                      short: ty.shortDetail || ty.detail || '' };
+      (comp.competitors||[]).forEach(c=>{
         const ab = c && c.team && (c.team.abbreviation || c.team.shortDisplayName);
         if(!ab) return;
-        book[String(ab).toUpperCase()] = t2; n2++;
+        const key = String(ab).toUpperCase();
+        book[key] = t2; states[key] = state; n2++;
       });
     });
   }catch(e){ /* fall through to Sleeper */ }
@@ -5917,7 +6034,9 @@ async function pullKickoffs(week){
                  ARZ:'ARI', ARI:'ARZ', CLV:'CLE', CLE:'CLV', HST:'HOU', HOU:'HST',
                  BLT:'BAL', BAL:'BLT', SD:'LAC', LAC:'SD', OAK:'LV', LV:'OAK'};
   Object.keys(ALIAS).forEach(k=>{ if(book[k] && !book[ALIAS[k]]) book[ALIAS[k]] = book[k]; });
+  Object.keys(ALIAS).forEach(k=>{ if(states[k] && !states[ALIAS[k]]) states[ALIAS[k]] = states[k]; });
   S.live.kicks[w] = book;
+  S.live.gstate[w] = states;
   S.live.kicksAt = Date.now(); S.live.kicksErr = null;
   save();
   return n2;
@@ -10304,10 +10423,20 @@ function canExtend(p){
    Priced off the going rate at his position, and only for as long as the
    league keeps the window open.
    ============================================================ */
-function aavOf(p){
+/* A player's base salary: what his deal would pay each year if it were spread
+   evenly. This is what the extension ladder ranks and prices on — not this
+   season's cap hit, which a front-loaded deal distorts.
+   Kept exact rather than snapped to the cap increment, because rounding every
+   player before averaging them drags the whole ladder off. Only the quote at
+   the end is rounded. */
+function baseSalary(p){
   const c = p && p.contract;
-  return c ? fixInc(c.total / Math.max(1, c.years)) : 0;
+  if(!c) return 0;
+  const years = Math.max(1, +c.years||1);
+  const total = (+c.total || (Array.isArray(c.byYear) ? sum(c.byYear) : 0));
+  return Math.round((total / years) * 100) / 100;
 }
+function aavOf(p){ return baseSalary(p); }
 function tagCount(pos){
   const n = (S.settings.tag.counts||{})[pos];
   return clamp(+n||0, 1, 40);
@@ -10385,7 +10514,13 @@ function draftDone(){
   if(r.draftDone === true) return true;
   if(r.draftDone === false) return false;
   const end = rookieDraftEnd();
-  return end != null && Date.now() > end;      /* the date it finished has passed */
+  if(end != null) return Date.now() > end;     /* the date it finished has passed */
+  /* No date set, so work it out from the picks. A league that holds no picks at
+     all for this season has plainly had its draft — otherwise everyone would
+     still be sitting on them. */
+  const here = (S.picks||[]).filter(k => (+k.year||0) === S.league.season).length;
+  if(here === 0 && (S.picks||[]).length > 0) return true;
+  return false;
 }
 function draftBaseYear(){ return S.league.season + (draftDone() ? 1 : 0); }
 function yearsOut(pk){ return Math.max(0, (+pk.year||0) - draftBaseYear()); }
@@ -14184,10 +14319,13 @@ VIEWS.settings = function(){
         <div class="row" style="gap:8px;align-items:center">
           <div>Week <b>${S.live.week}</b> of ${seasonWeeks()}</div><div class="spacer"></div>
           <button class="btn" data-a="closeWeek">Close out week ${S.live.week}</button>
-          <button class="btn ghost" data-a="simReset">Clear the week</button>
+          <button class="btn ghost" data-a="simReset">Clear this week</button>
+          <button class="btn ghost danger" data-a="wipeSeason">Clear the whole season</button>
         </div>
         <div class="hint">Closing a week records the scores, rolls everyone on, and brings the beat reporters in.
-          It has been taken off Live scoring so nobody trips over it mid-Sunday.</div>
+          It has been taken off Live scoring so nobody trips over it mid-Sunday.<br>
+          <b>Clear the whole season</b> puts everything back to week 1 with nothing played — for when you have
+          been trying the simulator out and want a clean start. Rosters, contracts and picks are untouched.</div>
       </div></div>`}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The rookie rule</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.rookie.windowOn" ${rookieWindowOn()?'checked':''}>
@@ -16627,13 +16765,16 @@ ACT.openBackups = async ()=>{
       ? '<p class="muted" style="margin-top:0">A copy is kept every half hour while you are working, every time the '+
         'app opens, and before anything drastic. The last '+BAKS+' are kept, newest at the top.</p>'+
         '<div class="scrollx"><table><thead><tr><th>When</th><th>League</th><th class="right">Teams</th>'+
-        '<th class="right">Contracts</th><th></th></tr></thead><tbody>'+
+        '<th class="right">Contracts</th><th class="right">Size</th><th></th></tr></thead><tbody>'+
         list.map(b=>'<tr><td class="tiny">'+dstr(b.at)+'<div class="dim">'+esc(b.why)+'</div></td>'+
           '<td>'+esc(b.league)+'<div class="tiny dim">'+b.season+'</div></td>'+
           '<td class="right num">'+b.teams+'</td><td class="right num">'+b.players+'</td>'+
+          '<td class="right num tiny dim">'+Math.round((b.size||0)/1024)+' KB</td>'+
           '<td class="right"><button class="btn sm" data-a="restoreBackup" data-slot="'+b.slot+'">Restore</button></td></tr>').join('')+
         '</tbody></table></div>'+
-        '<div class="hint">Restoring replaces what is on screen, and a copy of that is kept too, so you can come back.</div>'
+        '<div class="hint">Restoring replaces what is on screen, and a copy of that is kept too, so you can come back. '+
+        'Copies leave out projections, the live feed and chat pictures — all of which come back on their own — '+
+        'so that more of them fit.</div>'
       : '<p>There are no copies yet. One is kept every time the app opens with a league loaded.</p>'+
         '<div class="hint">If your league has gone missing, check you are at the same web address as before — a browser '+
         'keeps its storage per address, so a different one looks empty even though nothing was lost.</div>'),
@@ -17444,8 +17585,11 @@ function tickAll(){
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
   /* Kickoff times need no league and no key, so they are fetched whether or not
      the Sleeper mirror is set up. */
-  if(!ui.tmp.kickBusy && (Date.now() - (S.live.kicksAt||0)) > 3600000 &&
-     !((S.live.kicks||{})[+S.live.week||1])){
+  const anyLive = Object.values(((S.live.gstate||{})[+S.live.week||1]) || {})
+    .some(x=> x && x.state === 'in');
+  const kickGap = anyLive ? 45000 : 3600000;     /* keep the clock honest while games run */
+  if(!ui.tmp.kickBusy && (Date.now() - (S.live.kicksAt||0)) > kickGap &&
+     (anyLive || !((S.live.kicks||{})[+S.live.week||1]))){
     ui.tmp.kickBusy = true;
     setTimeout(()=>{ pullKickoffs().then(nn=>{
       ui.tmp.kickBusy = false;
