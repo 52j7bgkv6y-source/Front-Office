@@ -821,7 +821,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-18d · weekly dues reminders';
+const APP_BUILD = '2026-08-18g · always sleeper at 15s';
 
 /* ============================================================
    HOME LEAGUE
@@ -1244,7 +1244,9 @@ function defaultState(){
       },
       players:{ on:true, firmness:60, showAsk:'range', termBonusPct:6, loyalty:8 },
       tag:{ on:true, counts:{QB:5, RB:10, WR:10, TE:5, K:5, DEF:5, DL:5, LB:5, DB:5},
-            raisePct:0, maxPerTeam:1, windowOpen:false, stealOn:true, matchHours:48, requireFirsts:2 },
+            raisePct:0, maxPerTeam:1, windowOpen:false, stealOn:true, matchHours:48, requireFirsts:2,
+            /* A second from a later draft owes another in its turn. */
+            cascadeSeconds:true },
       value:{
         realWeight:50, spendShare:88, termPremium:3, regress:15,
         posWeights:{QB:1, RB:0.9, WR:1, TE:0.8, K:0.25, DEF:0.3, DL:0.5, LB:0.5, DB:0.5}
@@ -4286,9 +4288,12 @@ VIEWS.live = function(){
               and scored with your settings. Projections come down on their own when the week changes.
               ${S.live.statsAt?'Last updated '+dstr(S.live.statsAt)+'.':'Waiting for the first update…'}</div>
             <label class="f"><span>How often to check (seconds)</span>
-              <input type="number" min="15" max="300" data-set="settings.live.pollSec" value="${+cfg.pollSec||30}"></label>
+              <input type="number" min="15" max="300" data-set="settings.live.pollSec" value="${+cfg.pollSec||FEED_HOME.pollSec}"></label>
             <div class="hint">Players are matched by their Sleeper id, so run a Sleeper import first if you have
-              not already.</div>`:''}
+              not already.</div>
+            <label class="check"><input type="checkbox" data-set="settings.live.lockFeed" ${(cfg.lockFeed!==false)?'checked':''}>
+              <span>Always open on Sleeper (live) at ${FEED_HOME.pollSec} seconds
+                <span class="dim">— nothing a deploy or a sync does can change it</span></span></label>`:''}
           ${cfg.mode==='demo'?`<label class="f"><span>Simulation speed</span>
             <input type="number" min="1" max="30" data-set="settings.live.speed" value="${cfg.speed}"></label>
             <div class="hint">The simulator generates plays from your own player pool and scores them with your scoring settings. It is here so the screen works out of the box — swap it for a real feed on the other two tabs.</div>`:''}
@@ -4334,9 +4339,8 @@ ACT.simReset = ()=>{
   toast('Week '+S.live.week+' kicked off — last week is in the books');
 };
 ACT.setLiveMode = (d)=>{
-  /* Once somebody picks a feed on purpose, that is the league's choice. */
-  S.settings.live.feedPicked = true;
-  S.settings.live.pollPicked = true; S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
+  /* Switch it for now if you like — it goes back to Sleeper next time the page
+     opens, unless the league has turned that off in Settings. */ S.settings.live.mode=d.m; S.settings.live.running=false; save(); render(); };
 ACT.pollNow = ()=> pollEndpoint();
 ACT.closeWeek = ()=>{
   /* Work out the loser of each matchup first, so the brawl can lay that mascot
@@ -10361,6 +10365,21 @@ function makeWaiverContract(teamId){
 /* The next rookie draft that has not happened yet. Once this season's draft is
    done, a pick for next season is the near one and costs nothing extra to use —
    before then, it is a year away. */
+/* The feed this league opens on, every single time. Not a default that a stale
+   saved value can override — it is reapplied on load, after a sync, and after a
+   deploy. Somebody can still switch it while they are sitting there; it goes
+   back to this the next time the page opens. */
+const FEED_HOME = { mode:'sleeper', pollSec:15 };
+function enforceFeedDefaults(st){
+  const o = st || S;
+  if(!o || !o.settings) return o;
+  o.settings.live = o.settings.live || {};
+  /* A league that has deliberately turned this off keeps whatever it set. */
+  if(o.settings.live.lockFeed === false) return o;
+  o.settings.live.mode = FEED_HOME.mode;
+  o.settings.live.pollSec = FEED_HOME.pollSec;
+  return o;
+}
 function draftDone(){
   const r = S.settings.rookie || {};
   if(r.draftDone === true) return true;
@@ -10382,16 +10401,39 @@ function ownedPicksInRound(teamId, round){
   return S.picks.filter(k=> k.ownerTeamId===teamId && k.round===round && k.year>=draftBaseYear())
     .slice().sort(pickRank);
 }
+/* What it costs to take a tagged player.
+
+   Two firsts from the next draft and you owe nothing further. Every pick handed
+   over that is NOT from that draft costs one more second — and that applies to
+   the seconds as well, so a second from a later year pulls in another after it.
+
+   Two 2027 firsts, with 2027 next        → two firsts, nothing else.
+   A 2027 first and a 2028 first          → the 2028 one costs a second.
+     that second from 2027                → one second, and done.
+     that second from 2028                → it costs another: two seconds. */
 function stealCost(teamId){
   const need = clamp(+S.settings.tag.requireFirsts||2, 1, 5);
+  const base = draftBaseYear();
   const firsts = ownedPicksInRound(teamId, 1).slice(0, need);
-  const secondsNeeded = sum(firsts.map(yearsOut));
-  const seconds = ownedPicksInRound(teamId, 2).slice(0, secondsNeeded);
+  const pool = ownedPicksInRound(teamId, 2);
+  const seconds = [];
+  /* Each first from a later draft owes a second. */
+  const cascade = (S.settings.tag||{}).cascadeSeconds !== false;
+  let owed = firsts.filter(k => (+k.year||0) !== base).length;
+  let i = 0, guard = 0;
+  while(seconds.length < owed && guard++ < 30){
+    const k = pool[i++];
+    if(!k) break;                       /* they have run out of seconds */
+    seconds.push(k);
+    /* A second from a later draft owes another in its turn. Switch the cascade
+       off and only the firsts trigger the extra. */
+    if(cascade && (+k.year||0) !== base) owed++;
+  }
   return {
-    firsts, seconds, need, secondsNeeded,
+    firsts, seconds, need, secondsNeeded: owed,
     shortFirsts: Math.max(0, need - firsts.length),
-    shortSeconds: Math.max(0, secondsNeeded - seconds.length),
-    ok: firsts.length===need && seconds.length===secondsNeeded,
+    shortSeconds: Math.max(0, owed - seconds.length),
+    ok: firsts.length===need && seconds.length===owed,
     picks: firsts.concat(seconds)
   };
 }
@@ -10772,10 +10814,11 @@ function flatTailPrice(round, slot, year){
 function rookieRound(v){
   const step = +((S.settings.rookie||{}).roundTo);
   if(!(step > 0)) return roundInc(v);
-  /* Scale to cents before dividing, so an exact half does not fall a hair below
-     the line the way v/0.1 does — but do not round to cents first, or 22.649
-     would be pushed up to 22.65 and then to 22.70. */
-  const cents = (+v||0) * 100;
+  /* Five cents and up rounds the dime up, four and under rounds it down.
+     Getting there needs care with binary fractions: 1.15*100 is 114.99999…,
+     which would round the wrong way. Scaling by 1000 and back to a tenth of a
+     cent clears that dust while still keeping 22.649 below the 22.65 line. */
+  const cents = Math.round((+v||0) * 1000) / 10;
   const stepC = Math.max(1, Math.round(step * 100));
   return (Math.round(cents / stepC) * stepC) / 100;
 }
@@ -16422,15 +16465,19 @@ ACT.stealTag = (d)=>{
   const c = stealCost(me);
   modal('Come for '+p.name, `
     <p>${esc(teamName(p.contract.teamId))} tagged him for ${p.tag.year} at ${money(p.tag.price)}.
-      Taking him costs ${S.settings.tag.requireFirsts} first-round picks, plus a second for every year those firsts
-      sit in the future.</p>
+      Taking him costs ${S.settings.tag.requireFirsts} first-round picks from the ${draftBaseYear()} draft.
+      Any pick you hand over from a later draft costs one more second — and that goes for the seconds too.
+</p>
     <div class="assetbox" style="margin:12px 0">
       <div class="flabel">What that comes to for you</div>
       ${c.firsts.length?`<table style="width:100%"><tbody>
         ${c.firsts.map(k=>`<tr><td>${k.year} first${isComp(k)?' <span class="pill">comp</span>':''}</td>
-          <td class="right tiny dim">${yearsOut(k)===0?'this draft — nothing extra'
-            :yearsOut(k)+' draft'+(yearsOut(k)>1?'s':'')+' away → '+yearsOut(k)+' second'+(yearsOut(k)>1?'s':'')}</td></tr>`).join('')}
-        ${c.seconds.map(k=>`<tr><td>${k.year} second</td><td class="right tiny dim">the price of waiting</td></tr>`).join('')}
+          <td class="right tiny dim">${(+k.year||0)===draftBaseYear()
+            ? 'the '+draftBaseYear()+' draft — nothing extra'
+            : 'a later draft \u2014 one more second'}</td></tr>`).join('')}
+        ${c.seconds.map(k=>`<tr><td>${k.year} second</td><td class="right tiny dim">${(+k.year||0)===draftBaseYear()
+          ? 'the '+draftBaseYear()+' draft \u2014 nothing further'
+          : 'a later draft \u2014 one more second'}</td></tr>`).join('')}
       </tbody></table>`:'<span class="dim tiny">you do not hold enough first-round picks</span>'}
     </div>
     ${c.ok
@@ -16821,6 +16868,8 @@ function adoptRemote(state, rev, force){
   if(seat && byId(S.teams, seat)) S.league.myTeamId = seat;
   else if(keepMe && byId(S.teams, keepMe)) S.league.myTeamId = keepMe;
   else if(typeof Supa==='object' && Supa.user && !seat) S.league.myTeamId = null;
+  /* A copy from the server cannot change which feed this device opens on. */
+  enforceFeedDefaults(S);
   /* Countdowns never go back up, whatever the server thinks. */
   try{ keepClocksRunning({trades:[], auctions:[]}, S); }catch(e){}
   try{
@@ -17290,23 +17339,9 @@ function migrate(j){
     if(!t.mascot) t.mascot = mk[i%mk.length];
   });
   out.live.talk = Array.isArray(out.live.talk) ? out.live.talk : [];
-  /* Leagues saved before Sleeper became the default are still sitting on the
-     simulator. Move them across once — and only once, so anybody who genuinely
-     wants the simulator can pick it and keep it. */
-  if(!out.settings.live.feedPicked){
-    out.settings.live.mode = 'sleeper';
-    out.settings.live.feedPicked = true;
-  }
-  /* The simulator is for trying things out. A league that is wired to Sleeper
-     opens on Sleeper — every time, whatever was left set last. */
-  const sid = out.settings.live.sleeperLeagueId || out.settings.live.lastSleeperId;
-  if(sid && out.settings.live.mode === 'demo') out.settings.live.mode = 'sleeper';
-  /* Same for how often it checks: fifteen seconds unless somebody has set their
-     own, and once set it is left alone. */
-  if(!out.settings.live.pollPicked){
-    out.settings.live.pollSec = 15;
-    out.settings.live.pollPicked = true;
-  }
+  /* Sleeper, every fifteen seconds, on every single load. No stored value gets
+     to override it. */
+  enforceFeedDefaults(out);
   /* A league id, once known, is never dropped by an update. */
   if(!out.settings.live.sleeperLeagueId && out.settings.live.lastSleeperId)
     out.settings.live.sleeperLeagueId = out.settings.live.lastSleeperId;
