@@ -829,7 +829,7 @@ tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-18q · every man, and what you left out';
+const APP_BUILD = '2026-08-18t · faab budget and rolling waivers';
 
 /* ============================================================
    HOME LEAGUE
@@ -1280,7 +1280,14 @@ function defaultState(){
         realWeight:50, spendShare:88, termPremium:3, regress:15,
         posWeights:{QB:1, RB:0.9, WR:1, TE:0.8, K:0.25, DEF:0.3, DL:0.5, LB:0.5, DB:0.5}
       },
-      waivers:{ on:true, deadline:(season)+'-11-15', salary:1, blockExtensions:true, clearAtRollover:true },
+      waivers:{ on:true, deadline:(season)+'-11-15', salary:1, blockExtensions:true, clearAtRollover:true,
+        /* A budget of its own, nothing to do with the salary cap, spent bidding
+           for players off waivers. */
+        faab:{ on:true, budget:100, minBid:0, tieBreak:'standings' },
+        /* Which days run a waiver, and at what time. Anything picked up on a day
+           with no waiver is simply taken — no bid, no wait. */
+        days:{0:false, 1:false, 2:true, 3:false, 4:false, 5:false, 6:false},
+        runAt:'03:00', lastRun:0 },
       taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2,
         /* From this week on, nobody new goes on the taxi squad. 0 means it never
            locks. */
@@ -4393,6 +4400,19 @@ ACT.weekWipeGo = ()=>{
     if(g.hp > g.ap){ rh.w=Math.max(0,rh.w-1); ra.l=Math.max(0,ra.l-1); }
     else if(g.ap > g.hp){ ra.w=Math.max(0,ra.w-1); rh.l=Math.max(0,rh.l-1); }
     else { rh.t=Math.max(0,rh.t-1); ra.t=Math.max(0,ra.t-1); }
+    /* And the head-to-head, which is kept separately. */
+    if(S.h2h){
+      const un = (x,y,won,tie)=>{
+        const r2 = ((S.h2h[x]||{})[y]);
+        if(!r2) return;
+        if(tie) r2.t = Math.max(0, r2.t-1);
+        else if(won) r2.w = Math.max(0, r2.w-1);
+        else r2.l = Math.max(0, r2.l-1);
+      };
+      const tie = g.hp === g.ap;
+      un(g.home, g.away, g.hp > g.ap, tie);
+      un(g.away, g.home, g.ap > g.hp, tie);
+    }
     g.hp = null; g.ap = null;                 /* the fixture stays, the result goes */
   });
   /* And what each player scored that week. */
@@ -4405,6 +4425,27 @@ ACT.weekWipeGo = ()=>{
     line.gp = Math.max(0, (+line.gp||0) - 1);
     delete line.weeks[w];
     if(!line.gp) delete byP[pid];
+  });
+  /* What each manager could have scored that week, and who he started. Without
+     clearing these the schedule page still shows the week as though it had been
+     played. */
+  if(S.effByWeek) delete S.effByWeek[w];
+  if(S.lineups) delete S.lineups[w];
+  if(S.reportSent) delete S.reportSent[w];
+  /* Anything the beat reporters or the weekly report said about it. */
+  S.chat = (S.chat||[]).filter(mm=> !(mm && mm.reporter && +mm.reporterWeek === w));
+  /* And each team's efficiency running total, which is rebuilt from the weeks
+     that remain. */
+  S.teams.forEach(t2=>{ t2.eff = null; });
+  Object.keys(S.effByWeek||{}).forEach(wk=>{
+    Object.keys(S.effByWeek[wk]).forEach(tid2=>{
+      const t2 = byId(S.teams, tid2); if(!t2) return;
+      const x = S.effByWeek[wk][tid2];
+      t2.eff = t2.eff || {weeks:0, got:0, best:0};
+      t2.eff.weeks++;
+      t2.eff.got = Math.round((t2.eff.got + (+x.got||0))*100)/100;
+      t2.eff.best = Math.round((t2.eff.best + (+x.best||0))*100)/100;
+    });
   });
   /* Start the week over, on the same week. */
   buildWeek(w);
@@ -4466,6 +4507,12 @@ ACT.wipeSeasonGo = ()=>{
   S.live = {week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0,
             kicks:S.live.kicks, gstate:S.live.gstate, lockedTeams:{}};
   S.lineups = {};
+  S.effByWeek = {};
+  S.h2h = {};
+  S.reportSent = {};
+  /* Every result off the fixture list, and everything written about them. */
+  (S.schedule||[]).forEach(g=>{ g.hp = null; g.ap = null; });
+  S.chat = (S.chat||[]).filter(mm=> !(mm && mm.reporter));
   S.settings.live.running = false;
   dppCache = null; clearCapCache();
   logIt('Season cleared back to week 1 — records and scoring wiped, rosters and contracts kept',
@@ -4997,6 +5044,8 @@ VIEWS.teams = function(){
         </div></div>` : ''}
 
     ${sub==='fa' ? `<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
+      ${faabOn() ? '<span class="pill" title="your waiver budget for the season">'+
+        money(faabLeft(actingTeam()))+' to bid</span>' : ''}
       <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
         <select data-a="faWeekPick">${Array.from({length:seasonWeeks()},(_,i)=>i+1).map(w=>
           '<option value="'+w+'"'+(w===faWeek()?' selected':'')+'>'+w+(w===(+S.live.week||1)?' · now':'')+'</option>').join('')}</select></label>
@@ -5259,8 +5308,16 @@ function faRows(list){
     <td class="right money">${isOrphan(p) ? money(grossHit(p,S.league.season))
       : wv ? money(S.settings.waivers.salary) : money(marketPrice(p,0))}
       ${isOrphan(p)?'<div class="tiny dim">'+p.contract.years+'yr, fixed</div>':''}</td>
-    <td class="right"><button class="btn sm" data-a="editContract" data-id="${p.id}">${
-      isOrphan(p)?'Take him on' : wv?'Claim':'Sign'}</button></td></tr>`).join('')
+    <td class="right">${(()=>{
+      /* On a league that runs waivers, going for a loose player puts a bid in.
+         With no waiver day set, the old straight signing still applies. */
+      if(!isOrphan(p) && claimNeedsWaiver())
+        return '<button class="btn sm" data-a="claimPlayer" data-id="'+p.id+'">Bid</button>'+
+          ((S.waiverBids||[]).some(b=> b.playerId===p.id && b.teamId===actingTeam() && b.status==='open')
+            ? '<div class="tiny good">bid in</div>' : '');
+      return '<button class="btn sm" data-a="editContract" data-id="'+p.id+'">'+
+        (isOrphan(p)?'Take him on' : wv?'Claim':'Sign')+'</button>';
+    })()}</td></tr>`).join('')
     || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.</td></tr>';
 }
 ACT.sub = (d)=>{
@@ -5270,6 +5327,59 @@ document.addEventListener('change', e=>{
   const s = e.target.closest('[data-a="pickTeamView"]');
   if(s){ ui.tmp.teamView = s.value; render(); }
 });
+/* Go for a free agent. On a league with waiver days this puts in a bid; with
+   none set he is simply taken. */
+ACT.claimPlayer = (d)=>{
+  const p = byId(S.players, d.id); if(!p) return;
+  const tid = actingTeam();
+  if(!claimNeedsWaiver()){
+    /* Nothing to bid against — take him. */
+    p.contract = makeWaiverContract(tid, 1);
+    logIt(teamName(tid)+' picked up '+p.name+' (no waiver day set)',
+      {type:'waiver', teams:[tid], players:[p.id]});
+    save(); render();
+    return toast(p.name+' is yours','good');
+  }
+  ui.tmp.bid = {id:p.id, amount: Math.max(0, +((S.settings.waivers.faab||{}).minBid)||0), years:1};
+  modal('Bid for '+esc(p.name), bidForm(),
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="bidGo">Put the bid in</button>');
+};
+function bidForm(){
+  const b = ui.tmp.bid || {};
+  const tid = actingTeam();
+  const p = byId(S.players, b.id);
+  const rivals = (S.waiverBids||[]).filter(x=> x.playerId===b.id && x.status==='open').length;
+  return `
+  <div class="stack">
+    <p class="muted" style="margin:0">${esc(waiverNote())}</p>
+    ${faabOn() ? `<div class="row" style="gap:16px">
+      <div><div class="eyebrow">Your budget</div><div class="big">${money(faabLeft(tid))}</div></div>
+      <div><div class="eyebrow">Spent so far</div><div class="big dim">${money(faabSpent(tid))}</div></div>
+    </div>` : ''}
+    ${faabOn() ? `<label class="f"><span>Your bid</span>
+      <input type="number" min="0" step="0.5" max="${faabLeft(tid)}" data-k="bidamt"
+        data-oninput="bidField" data-f="amount" value="${b.amount}"></label>` : ''}
+    <label class="f"><span>Sign him for</span>
+      <select data-a="bidField" data-f="years">${Array.from({length:Math.max(1,+S.settings.contracts.maxYears||1)},(_,i)=>i+1)
+        .map(y2=>'<option value="'+y2+'"'+(+b.years===y2?' selected':'')+'>'+y2+' year'+(y2>1?'s':'')+'</option>').join('')}</select></label>
+    <div class="hint">He joins at ${money(+S.settings.waivers.salary||1)} a year against the cap.
+      ${faabOn()? 'What you bid comes out of your season budget, not your cap room.' : ''}
+      ${rivals? '<br><b>'+rivals+' other bid'+(rivals===1?' is':'s are')+' already in.</b>' : ''}</div>
+  </div>`;
+}
+ACT.bidField = (d, el)=>{
+  ui.tmp.bid = ui.tmp.bid || {};
+  ui.tmp.bid[d.f] = d.f==='years' ? +el.value : (+el.value||0);
+  if(d.f==='years') $('#modalBox .mb').innerHTML = bidForm();
+};
+ACT.bidGo = ()=>{
+  const b = ui.tmp.bid || {};
+  const r = placeWaiverBid(b.id, actingTeam(), b.amount, b.years);
+  if(!r.ok) return toast(r.why,'bad');
+  closeModal(); render();
+  toast('Bid in'+(r.at? ' — settled '+dstr(r.at) : ''),'good');
+};
 ACT.faWeekPick = (d, el)=>{ ui.tmp.faWeek = +el.value; render(); };
 ACT.faSearch = (d,el)=>{ ui.tmp.faq = el.value; const b=$('#faBody'); if(b) b.innerHTML = faRows(freeAgents()); };
 ACT.signFree = ()=>{ ui.sub='fa'; render(); };
@@ -6409,6 +6519,51 @@ ACT.rookieClear = (d)=>{
   delete p.rookie;
   logIt(p.name+' is no longer treated as a rookie', {type:'admin', players:[p.id]});
   save(); render();
+};
+/* Put Sleeper's own id on every player we can match, so trending, projections
+   and the live feed all line up without going through names each time.
+   The app's own player ids are left alone — they are written into contracts,
+   lineups, trades and every saved copy, so renumbering them would break the
+   league. This adds a second id alongside. */
+ACT.matchSleeperIds = async (quiet)=>{
+  ui.tmp.idBusy = true; if(!quiet) render();
+  try{
+    const all = await getJSON(SLEEPER+'/players/nfl');
+    /* Name and position first; name alone as a fallback. */
+    const byNamePos = {}, byName = {};
+    Object.keys(all).forEach(id=>{
+      const r = all[id];
+      if(!r) return;
+      const nm = r.full_name || ((r.first_name||'')+' '+(r.last_name||'')).trim();
+      const k = flatName(nm);
+      if(!k) return;
+      const pos = String(r.position||'').toUpperCase();
+      if(pos) byNamePos[k+'|'+pos] = id;
+      /* Where two men share a name, the fallback is not trusted. */
+      byName[k] = byName[k] === undefined ? id : null;
+    });
+    let hit = 0, already = 0, miss = [];
+    S.players.forEach(pl=>{
+      if(pl.sleeperId){ already++; return; }
+      const k = flatName(pl.name||'');
+      if(!k) return;
+      const pos = String(pl.pos||'').toUpperCase();
+      const id = byNamePos[k+'|'+pos] || byName[k] || null;
+      if(id){ pl.sleeperId = String(id); hit++; }
+      else miss.push(pl.name);
+    });
+    ui.tmp.idBusy = false;
+    ui.tmp.idMiss = miss;
+    if(hit) save();
+    render();
+    if(!quiet) toast(hit+' matched to Sleeper'+(already?', '+already+' already had one':'')+
+      (miss.length? ', '+miss.length+' not found':''), hit ? 'good' : 'warn');
+    return {hit, already, miss};
+  }catch(e){
+    ui.tmp.idBusy = false; render();
+    if(!quiet) toast('Could not read the Sleeper player list — '+e.message,'bad');
+    return {hit:0, already:0, miss:[]};
+  }
 };
 ACT.trendPull = async (quiet)=>{
   const t = trendStore();
@@ -9896,7 +10051,9 @@ function scheduleRows(teamId){
       mine   = home ? played.hp : played.ap;
       theirs = home ? played.ap : played.hp;
     }
-    return {week:w, opp, home, mine, theirs, done:!!played};
+    /* A fixture whose result has been cleared is not "played" — it is back to
+       being a game still to come. */
+    return {week:w, opp, home, mine, theirs, done: !!played && mine != null && theirs != null};
   });
 }
 /* Find a player anywhere in the league, whoever holds him. */
@@ -10729,6 +10886,160 @@ function tagTag(p){
 /* ============================================================
    WAIVERS — cheap, flagged, and gone at the turn of the year
    ============================================================ */
+/* ---- FAAB and rolling waivers ---------------------------------------------
+   A budget for the season, spent only on waiver claims. It never touches the
+   salary cap — a team can be up against the cap and still have money to bid, and
+   spending it all does not free a penny of cap room. */
+function faabOn(){ return ((S.settings.waivers||{}).faab||{}).on !== false; }
+function faabBudget(){ return Math.max(0, +(((S.settings.waivers||{}).faab||{}).budget) || 0); }
+function faabSpent(teamId, year){
+  const y = year || S.league.season;
+  const t = byId(S.teams, teamId);
+  return Math.round((((t||{}).faab||{})[y] || 0) * 100) / 100;
+}
+function faabLeft(teamId, year){
+  return Math.round((faabBudget() - faabSpent(teamId, year)) * 100) / 100;
+}
+function faabSpend(teamId, amount, year){
+  const y = year || S.league.season;
+  const t = byId(S.teams, teamId); if(!t) return;
+  t.faab = t.faab || {};
+  t.faab[y] = Math.round(((+t.faab[y]||0) + (+amount||0)) * 100) / 100;
+}
+/* Which days of the week run a waiver. */
+function waiverDays(){ return ((S.settings.waivers||{}).days) || {}; }
+function waiverRunsOn(day){ return waiverDays()[day] === true; }
+function anyWaiverDays(){ return Object.keys(waiverDays()).some(k=> waiverDays()[k]===true); }
+/* The time of day they run, as minutes past midnight. */
+function waiverRunMins(){
+  const raw = String((S.settings.waivers||{}).runAt || '03:00');
+  const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if(!m) return 180;
+  return clamp(+m[1],0,23)*60 + clamp(+m[2],0,59);
+}
+/* Is a player on waivers right now — that is, does taking him need a bid?
+   He is on waivers from the moment he is dropped until the next run clears him,
+   and only if the league runs waivers at all. */
+function onWaiversNow(at){
+  if(!(S.settings.waivers||{}).on || !anyWaiverDays()) return false;
+  const now = at ? new Date(at) : new Date();
+  /* If the next run is still ahead of us, anyone loose is on waivers. */
+  return nextWaiverRun(now) != null;
+}
+/* When the next run falls, from a given moment. Null when no day is set. */
+function nextWaiverRun(from){
+  if(!anyWaiverDays()) return null;
+  const start = from ? new Date(from) : new Date();
+  const mins = waiverRunMins();
+  for(let i=0; i<8; i++){
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i,
+                       Math.floor(mins/60), mins%60, 0, 0);
+    if(d.getTime() <= start.getTime()) continue;
+    if(waiverRunsOn(d.getDay())) return d.getTime();
+  }
+  return null;
+}
+/* Does a pickup right now need to go through waivers, or can he just be taken? */
+function claimNeedsWaiver(){
+  if(!(S.settings.waivers||{}).on) return false;
+  if(!anyWaiverDays()) return false;                  /* no waiver days at all */
+  return true;
+}
+/* A word on what happens if you go for somebody now. */
+function waiverNote(){
+  if(!claimNeedsWaiver())
+    return 'No waiver day is set, so anybody loose can simply be taken \u2014 no bid, no wait.';
+  const at = nextWaiverRun();
+  const when = at ? new Date(at) : null;
+  const day = when ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][when.getDay()] : '';
+  return 'Claims are settled '+(when? 'on '+day+' at '+(S.settings.waivers.runAt||'03:00') : 'at the next run')+
+    '. Highest bid wins'+(faabOn()? ', paid out of your season budget' : '')+'.';
+}
+/* A bid on somebody, to be settled at the next run. */
+function placeWaiverBid(playerId, teamId, bid, years){
+  const p = byId(S.players, playerId); if(!p) return {ok:false, why:'no such player'};
+  if(p.contract && p.contract.teamId) return {ok:false, why:p.name+' is already on a roster'};
+  const amt = Math.max(0, Math.round((+bid||0)*100)/100);
+  if(faabOn()){
+    const min = Math.max(0, +((S.settings.waivers.faab||{}).minBid) || 0);
+    if(amt < min) return {ok:false, why:'the least you can bid is '+money(min)};
+    if(amt > faabLeft(teamId)) return {ok:false, why:'that is more than the '+
+      money(faabLeft(teamId))+' you have left'};
+  }
+  S.waiverBids = S.waiverBids || [];
+  /* One bid per team per player — a new one replaces the old. */
+  S.waiverBids = S.waiverBids.filter(b=> !(b.playerId===playerId && b.teamId===teamId && b.status==='open'));
+  S.waiverBids.unshift({id:uid('wb'), playerId, teamId, bid:amt, years:Math.max(1,+years||1),
+    at:Date.now(), status:'open'});
+  logIt(teamName(teamId)+' bid '+money(amt)+' on '+p.name, {type:'waiver', teams:[teamId], players:[p.id]});
+  save();
+  return {ok:true, at:nextWaiverRun()};
+}
+/* Settle every open bid: highest wins, and the loser keeps his money. */
+function runWaivers(now){
+  const bids = (S.waiverBids||[]).filter(b=> b.status==='open');
+  if(!bids.length) return 0;
+  const byPlayer = {};
+  bids.forEach(b=>{ (byPlayer[b.playerId] = byPlayer[b.playerId] || []).push(b); });
+  let won = 0;
+  Object.keys(byPlayer).forEach(pid=>{
+    const p = byId(S.players, pid);
+    const list = byPlayer[pid].sort((x,y)=>
+      (y.bid - x.bid) ||
+      /* A tie goes to whoever is worse off in the standings, then to whoever
+         bid first. */
+      (waiverOrder(x.teamId) - waiverOrder(y.teamId)) ||
+      (x.at - y.at));
+    if(!p || (p.contract && p.contract.teamId)){
+      list.forEach(b=>{ b.status='void'; b.why='he was already taken'; });
+      return;
+    }
+    const win = list[0];
+    if(faabOn() && win.bid > faabLeft(win.teamId)){
+      win.status='void'; win.why='not enough left in the budget';
+      list.slice(1).forEach(b=>{ b.status='lost'; });
+      return;
+    }
+    /* He joins at the league's waiver salary — the bid is budget, not cap. */
+    p.contract = makeWaiverContract(win.teamId, win.years);
+    if(faabOn() && win.bid > 0) faabSpend(win.teamId, win.bid);
+    win.status='won'; win.wonAt=Date.now();
+    list.slice(1).forEach(b=>{ b.status='lost'; });
+    won++;
+    logIt(teamName(win.teamId)+' won '+p.name+' on waivers for '+money(win.bid)+
+      (faabOn()? ' ('+money(faabLeft(win.teamId))+' left)' : ''),
+      {type:'waiver', teams:[win.teamId], players:[p.id]});
+    notify('Waiver won', teamName(win.teamId)+' picked up '+p.name+' for '+money(win.bid)+'.',
+      'good', [win.teamId]);
+    list.slice(1).forEach(b=> notify('Waiver lost', 'Somebody bid more for '+p.name+
+      '. Your '+money(b.bid)+' was not spent.', 'info', [b.teamId]));
+  });
+  S.settings.waivers.lastRun = Date.now();
+  save();
+  return won;
+}
+/* Worst record first, as the waiver order. */
+function waiverOrder(teamId){
+  const list = S.teams.slice().sort((a,b)=>{
+    const ra = teamRecord(a), rb = teamRecord(b);
+    return (ra.w - rb.w) || (ra.pf - rb.pf);
+  });
+  const i = list.findIndex(t=> t.id===teamId);
+  return i < 0 ? 99 : i;
+}
+/* Fired by the clock: has a run come due? */
+function waiverTick(){
+  if(!claimNeedsWaiver()) return 0;
+  const last = +S.settings.waivers.lastRun || 0;
+  const now = new Date();
+  if(!waiverRunsOn(now.getDay())) return 0;
+  const mins = now.getHours()*60 + now.getMinutes();
+  if(mins < waiverRunMins()) return 0;
+  /* Once per run day. */
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if(last >= today) return 0;
+  return runWaivers(now);
+}
 function waiverDeadlinePassed(){
   const w = S.settings.waivers;
   if(!w || !w.on || !w.deadline) return false;
@@ -13577,6 +13888,20 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
         <p class="muted tiny" style="margin:0">Who the rest of the fantasy world is adding and dropping. Free agents
           trending up are floated to the top of your list. This refreshes on its own every couple of hours.</p>
         <button class="btn" data-a="trendPull">Refresh trending now</button>
+        <button class="btn" data-a="matchSleeperIds" ${ui.tmp.idBusy?'disabled':''}>${
+          ui.tmp.idBusy?'Matching…':'Match players to Sleeper'}</button>
+        ${(()=>{
+          const have = S.players.filter(pl=> pl.sleeperId).length, all = S.players.length;
+          if(!all) return '';
+          const miss = (ui.tmp.idMiss||[]);
+          return '<div class="hint">'+have+' of '+all+' players carry a Sleeper id'+
+            (have===all ? ' — everything lines up.' :
+             '. The rest fall back to matching on name, which usually works but is slower and can miss a '+
+             'player whose name is spelled differently.')+
+            (miss.length ? '<br><span class="dim">Not found: '+miss.slice(0,12).map(esc).join(', ')+
+              (miss.length>12?' and '+(miss.length-12)+' more':'')+'</span>' : '')+
+            '</div>';
+        })()}
         ${(S.trend&&S.trend.at)?`<div class="hint ok">Last checked ${dstr(S.trend.at)} — ${Object.keys(S.trend.up||{}).length} up, ${Object.keys(S.trend.down||{}).length} down.</div>`:''}
         <div class="hr"></div>
         <div class="flabel">Just the depth charts</div>
@@ -14765,6 +15090,40 @@ VIEWS.settings = function(){
             <div class="grid g2">
               <label class="f"><span>Deadline</span><input type="date" data-norender data-set="settings.waivers.deadline" value="${esc(S.settings.waivers.deadline||'')}"></label>
               <label class="f"><span>Waiver salary</span><input type="number" step="${c.cap.increment}" data-set="settings.waivers.salary" value="${S.settings.waivers.salary}"></label>
+            </div>
+            <div class="hr"></div>
+            <div class="flabel">Which days run a waiver</div>
+            <div class="row" style="gap:10px;flex-wrap:wrap">
+              ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
+                '<label class="check" style="margin:0"><input type="checkbox" data-set="settings.waivers.days.'+i+'"'+
+                (waiverRunsOn(i)?' checked':'')+'><span>'+nm+'</span></label>').join('')}
+            </div>
+            <div class="grid g2">
+              <label class="f"><span>Settled at</span>
+                <input type="time" data-norender data-set="settings.waivers.runAt" value="${esc(S.settings.waivers.runAt||'03:00')}"></label>
+            </div>
+            <div class="hint">${anyWaiverDays()
+              ? esc(waiverNote())+' On any other day a loose player is simply taken \u2014 nobody is asked for a bid.'
+              : 'No day is ticked, so there is no waiver wire at all: anybody loose can be picked up straight away.'}</div>
+            <div class="hr"></div>
+            <div class="flabel">Bidding budget</div>
+            <label class="check"><input type="checkbox" data-set="settings.waivers.faab.on" ${faabOn()?'checked':''}>
+              <span>Each team gets a budget for the season to bid with
+                <span class="dim">— separate from the salary cap</span></span></label>
+            ${!faabOn() ? '' : `<div class="grid g2">
+              <label class="f"><span>Budget each</span>
+                <input type="number" min="0" step="1" data-set="settings.waivers.faab.budget" value="${faabBudget()}"></label>
+              <label class="f"><span>Least you may bid</span>
+                <input type="number" min="0" step="1" data-set="settings.waivers.faab.minBid" value="${+((S.settings.waivers.faab||{}).minBid)||0}"></label>
+            </div>
+            <div class="hint">This money has nothing to do with the cap. A team hard against the cap can still
+              bid, and spending the lot frees no cap room. What a player costs against the cap once won is the
+              waiver salary above.</div>
+            <div class="scrollx"><table><thead><tr><th>Team</th><th class="right">Spent</th><th class="right">Left</th></tr></thead>
+              <tbody>${S.teams.map(t2=>'<tr><td>'+esc(t2.name)+'</td>'+
+                '<td class="right num dim">'+money(faabSpent(t2.id))+'</td>'+
+                '<td class="right num">'+money(faabLeft(t2.id))+'</td></tr>').join('')}</tbody></table></div>`}
+            <div class="grid g2">
             </div>
             <label class="check"><input type="checkbox" data-set="settings.waivers.blockExtensions" ${S.settings.waivers.blockExtensions?'checked':''}>
               <span>Waiver players cannot be extended</span></label>
@@ -18130,6 +18489,16 @@ function tickAll(){
   /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
+  try{ if(waiverTick()) needsRender = true; }catch(e){}
+  /* If hardly anybody carries a Sleeper id, go and get them once. Trending,
+     projections and the live feed all lean on it. */
+  if(!ui.tmp.idBusy && !ui.tmp.idTried && (S.players||[]).length){
+    const have = S.players.filter(pl=> pl.sleeperId).length;
+    if(have < S.players.length * 0.5){
+      ui.tmp.idTried = true;
+      setTimeout(()=>{ ACT.matchSleeperIds(true); }, 2000);
+    } else ui.tmp.idTried = true;
+  }
   /* Kickoff times need no league and no key, so they are fetched whether or not
      the Sleeper mirror is set up. */
   const anyLive = Object.values(((S.live.gstate||{})[+S.live.week||1]) || {})
