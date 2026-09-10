@@ -807,6 +807,11 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 @keyframes onAir{0%{opacity:1}45%{opacity:.25}100%{opacity:1}}
 tr.liverow{background:rgba(212,160,74,.06)}
 tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
+
+/* The inbox */
+.dmrow{padding:8px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.dmrow:hover{background:#16232F}
+.dmrow.on{background:#16232F;border-color:var(--brass)}
 </style>
 </head>
 <body>
@@ -829,7 +834,7 @@ tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-18t · faab budget and rolling waivers';
+const APP_BUILD = '2026-08-18y · inbox and pop-up notifications';
 
 /* ============================================================
    HOME LEAGUE
@@ -1360,6 +1365,8 @@ function defaultState(){
       notify:{ contractEdits:false, unsetLineup:false, bigPlays:false, oppTaunts:false, bigPlayPts:20 },
       /* Chat extras: the beat reporters, and a key if you want GIF search. */
       chat:{ reporters:true, gifKey:'', gifProvider:'giphy', weekReport:true },
+      /* The browser's own pop-ups, off until somebody asks for them. */
+      notifyPop:{ on:false },
       /* What commissioners are allowed to do. The head commissioner turns
          these on and off. */
       powers:{ actAs:false, closeWeek:true, feedSource:true, capTools:true,
@@ -2950,7 +2957,29 @@ VIEWS.dash = function(){
     <header>
       <div>
         <div class="eyebrow">${esc(S.league.name)} · Season ${y} · Week ${S.live.week}</div>
-        <h1>${esc(t.name)}</h1>
+        <h1>${esc(t.name)} ${(()=>{
+          const r = teamRecord(t);
+          const played = (+r.w||0) + (+r.l||0) + (+r.t||0);
+          if(!played) return '<span class="dim" style="font-size:.55em;font-weight:400">0-0</span>';
+          return '<span class="dim" style="font-size:.55em;font-weight:400">'+
+            r.w+'-'+r.l+(r.t?'-'+r.t:'')+'</span>';
+        })()}</h1>
+        ${(()=>{
+          /* Who they are playing this week, right where the team name is. */
+          const w = +S.live.week||1;
+          const m = (S.live.matchups||[]).find(x=> x.home===t.id || x.away===t.id);
+          if(!m) return '<div class="tiny dim">No matchup this week</div>';
+          const home = m.home===t.id;
+          const opp = home ? m.away : m.home;
+          const mine = fieldedTotal(t.id), theirs = fieldedTotal(opp);
+          const live = (S.live.games||[]).some(g=> g.status==='live') ||
+            Object.values(((S.live.gstate||{})[w])||{}).some(x=> x && x.state==='in');
+          return '<div class="tiny">Week '+w+' '+(home?'at home to':'away at')+' <b>'+esc(teamName(opp))+'</b>'+
+            (live || mine.got || theirs.got
+              ? ' \u00b7 <span class="'+(mine.got>theirs.got?'good':mine.got<theirs.got?'bad':'')+'">'+
+                mine.got.toFixed(2)+'</span> \u2013 '+theirs.got.toFixed(2)
+              : '')+'</div>';
+        })()}
       </div>
       <div class="spacer"></div>
       <button class="btn" data-a="go" data-r="block">Post to trade block</button>
@@ -3371,6 +3400,10 @@ function gameForPlayer(p){
    locked, so a genuine mistake can still be fixed. */
 /* Has this player's game started? Nothing to do with who is asking. */
 function gameStarted(p){
+  if(!p || !p.nfl) return false;
+  /* The real feed first — it knows whether his game is actually under way. */
+  const st = gameState(p.nfl);
+  if(st) return st.state === 'in' || st.state === 'post' || !!st.done;
   const g = gameForPlayer(p);
   return !!g && g.status !== 'pre';
 }
@@ -4153,13 +4186,13 @@ VIEWS.live = function(){
     return `<tr class="${onAir?'liverow':''}">
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
         ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
-      <td class="right num" style="width:10%">${s.p?s.pts.toFixed(1):'—'}
-        ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(1)+'</div>':''}
+      <td class="right num" style="width:10%">${s.p?s.pts.toFixed(2):'—'}
+        ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(2)+'</div>':''}
         ${s.p&&gameWhen(s.p.nfl)?'<div class="tiny '+(gameLive(s.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(s.p.nfl))+'</div>':''}</td>
       <td class="center" style="width:12%"><span class="eyebrow">${esc(s.slot)}</span></td>
-      <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(1):'—'}
-        ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(1)+'</div>':''}
+      <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(2):'—'}
+        ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(2)+'</div>':''}
         ${o&&o.p&&gameWhen(o.p.nfl)?'<div class="tiny '+(gameLive(o.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(o.p.nfl))+'</div>':''}</td>
       <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
@@ -4212,14 +4245,14 @@ VIEWS.live = function(){
       const side = (id, pts, lead)=>{
         const pr = teamProjected(id);
         return '<div class="scoreside"><div class="scorename'+(lead?' win':'')+'">'+esc(teamName(id))+'</div>'+
-        '<div class="scorepts'+(lead?' win':'')+'">'+pts.toFixed(1)+'</div>'+
-        (pr!=null? '<div class="tiny dim">'+pr.toFixed(1)+' projected</div>' : '')+'</div>';
+        '<div class="scorepts'+(lead?' win':'')+'">'+pts.toFixed(2)+'</div>'+
+        (pr!=null? '<div class="tiny dim">'+pr.toFixed(2)+' projected</div>' : '')+'</div>';
       };
       const head = you ? '<div class="panel scorecard"><div class="pb">'+
           '<div class="scorerow">'+
             side(you.home===meId?you.home:you.away, you.home===meId?you.hp:you.ap,
                  (you.home===meId?you.hp:you.ap) > (you.home===meId?you.ap:you.hp))+
-            '<div class="scorevs">'+(Math.abs(you.hp-you.ap)).toFixed(1)+'<div class="tiny dim">'+
+            '<div class="scorevs">'+(Math.abs(you.hp-you.ap)).toFixed(2)+'<div class="tiny dim">'+
               ((you.home===meId?you.hp:you.ap) >= (you.home===meId?you.ap:you.hp) ? 'ahead' : 'behind')+'</div></div>'+
             side(you.home===meId?you.away:you.home, you.home===meId?you.ap:you.hp,
                  (you.home===meId?you.ap:you.hp) > (you.home===meId?you.hp:you.ap))+
@@ -4234,20 +4267,20 @@ VIEWS.live = function(){
       const strip = rest.length ? '<div class="tickerwrap"><div class="ticker">'+
         rest.map(g=>'<div class="tickgame'+(g.mine?' mine':'')+'" data-a="watchGame" data-id="'+g.home+'" title="Open this matchup">'+
           '<div class="tickrow'+(g.hp>g.ap?' win':'')+'"><span class="tickname">'+esc(teamName(g.home))+'</span>'+
-            '<span class="tickpts">'+g.hp.toFixed(1)+'</span></div>'+
+            '<span class="tickpts">'+g.hp.toFixed(2)+'</span></div>'+
           '<div class="tickrow'+(g.ap>g.hp?' win':'')+'"><span class="tickname">'+esc(teamName(g.away))+'</span>'+
-            '<span class="tickpts">'+g.ap.toFixed(1)+'</span></div>'+
+            '<span class="tickpts">'+g.ap.toFixed(2)+'</span></div>'+
         '</div>').join('')+'</div></div>' : '';
       return banner + head + strip;
     })()}
 
     ${mine ? `<div class="panel" style="margin-bottom:14px">
       <div class="ph"><div style="flex:1"><div class="eyebrow">Your matchup</div>
-        <div style="font:700 19px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(t.name)} <span class="money" style="font-family:var(--mono)">${A.total.toFixed(1)}</span>
-        <span class="dim" style="font-size:14px"> vs </span> ${esc(teamName(oppId))} <span class="num">${B?B.total.toFixed(1):'0.0'}</span></div></div></div>
+        <div style="font:700 19px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(t.name)} <span class="money" style="font-family:var(--mono)">${A.total.toFixed(2)}</span>
+        <span class="dim" style="font-size:14px"> vs </span> ${esc(teamName(oppId))} <span class="num">${B?B.total.toFixed(2):'0.0'}</span></div></div></div>
       <div class="pb tight scrollx"><table><tbody>${lineupRows}</tbody>
-        <tfoot><tr class="tot"><td class="right">Total</td><td class="right money">${A.total.toFixed(1)}</td><td></td>
-          <td class="right num">${B?B.total.toFixed(1):'0.0'}</td><td></td></tr></tfoot></table></div>
+        <tfoot><tr class="tot"><td class="right">Total</td><td class="right money">${A.total.toFixed(2)}</td><td></td>
+          <td class="right num">${B?B.total.toFixed(2):'0.0'}</td><td></td></tr></tfoot></table></div>
     </div>`:''}
 
     ${mine ? brawlPanel(t.id, oppId, A.total, B?B.total:0) : soloMascotPanel(t)}
@@ -4301,16 +4334,27 @@ VIEWS.live = function(){
         <div class="panel"><div class="ph"><h3>League scoreboard</h3></div><div class="pb tight scrollx">
           <table><tbody>${S.live.matchups.map(m=>{
             const x=bestLineup(m.home), y=bestLineup(m.away);
-            return `<tr><td>${esc(teamName(m.away))}</td><td class="right num ${y.total>x.total?'good':''}">${y.total.toFixed(1)}</td>
-              <td class="center dim tiny">at</td><td class="right num ${x.total>y.total?'good':''}">${x.total.toFixed(1)}</td><td>${esc(teamName(m.home))}</td></tr>`;
+            return `<tr><td>${esc(teamName(m.away))}</td><td class="right num ${y.total>x.total?'good':''}">${y.total.toFixed(2)}</td>
+              <td class="center dim tiny">at</td><td class="right num ${x.total>y.total?'good':''}">${x.total.toFixed(2)}</td><td>${esc(teamName(m.home))}</td></tr>`;
           }).join('')||'<tr><td class="dim">No matchups yet.</td></tr>'}</tbody></table></div></div>
 
         <div class="panel"><div class="ph"><h3>Games</h3></div><div class="pb tight scrollx">
           <table><thead><tr><th>Matchup</th><th class="right">Score</th><th class="right">Status</th></tr></thead><tbody>
-          ${S.live.games.map(g=>`<tr><td class="num">${esc(g.away)} @ ${esc(g.home)}</td>
-            <td class="right num">${g.as}–${g.hs}</td>
-            <td class="right tiny ${g.status==='live'?'bad':'dim'}">${g.status==='final'?'Final':g.status==='pre'?'Kickoff pending':'Q'+g.q+' '+Math.floor(Math.max(0,g.clock)/60)+':'+String(Math.floor(Math.max(0,g.clock)%60)).padStart(2,'0')}</td></tr>`).join('')
-            ||'<tr><td class="dim">No games scheduled. Start the feed.</td></tr>'}
+          ${(()=>{
+            /* The real card if we have it, otherwise whatever the simulator built. */
+            const real = ((S.live.nfl||{})[+S.live.week||1]) || null;
+            if(real && real.length) return real.map(g=>`<tr><td class="num">${esc(g.away)} @ ${esc(g.home)}</td>
+              <td class="right num">${(+g.as||0)}\u2013${(+g.hs||0)}</td>
+              <td class="right tiny ${g.status==='live'?'onnow':'dim'}">${
+                g.status==='final' ? 'Final'
+                : g.status==='live' ? (((+g.q||0)>4 ? 'OT' : (+g.q||0) ? 'Q'+(+g.q) : 'live')+
+                                       (g.clockText? ' '+esc(g.clockText) : ''))
+                : kickoffLabel(g.home) || 'Kickoff pending'}</td></tr>`).join('');
+            return (S.live.games||[]).map(g=>`<tr><td class="num">${esc(g.away)} @ ${esc(g.home)}</td>
+              <td class="right num">${g.as}\u2013${g.hs}</td>
+              <td class="right tiny ${g.status==='live'?'bad':'dim'}">${g.status==='final'?'Final':g.status==='pre'?'Kickoff pending':'Q'+g.q+' '+Math.floor(Math.max(0,g.clock)/60)+':'+String(Math.floor(Math.max(0,g.clock)%60)).padStart(2,'0')}</td></tr>`).join('')
+              ||'<tr><td class="dim">No games scheduled yet \u2014 <button class="btn sm ghost" data-a="kickPull">get this week\u2019s card</button></td></tr>';
+          })()}
           </tbody></table></div></div>
       </div>
 
@@ -4476,6 +4520,76 @@ ACT.pollNow = ()=> pollEndpoint();
 /* Put the season back to nothing played. Everything that makes the league —
    rosters, contracts, picks, rules, dues, trades, adjustments — is untouched;
    only what was scored is cleared. */
+ACT.dmOpen = (d)=>{ ui.tmp.dmWith = d.id; ui.tmp.dmDraft=''; ui.sub='inbox'; render(); };
+ACT.dmNew = (d, el)=>{ if(!el.value) return; ui.tmp.dmWith = el.value; ui.tmp.dmDraft=''; ui.sub='inbox'; render(); };
+ACT.dmType = (d, el)=>{ ui.tmp.dmDraft = el.value; };
+ACT.dmSend = ()=>{
+  const me = actingTeam(), to = ui.tmp.dmWith;
+  if(!to) return toast('Nobody to write to','bad');
+  const box = $('#dmText');
+  const text = (box && box.value) || ui.tmp.dmDraft || '';
+  if(!text.trim()) return;
+  dmSend(me, to, text);
+  ui.tmp.dmDraft = '';
+  render();
+};
+/* Write to whoever holds a player, straight from his card or a roster. */
+ACT.messageAbout = (d)=>{
+  const p = byId(S.players, d.id);
+  const to = d.team || (p && p.contract && p.contract.teamId);
+  if(!to) return toast('Nobody holds him','bad');
+  if(to === actingTeam()) return toast('He is yours already','warn');
+  ui.tmp.dmWith = to;
+  ui.tmp.dmDraft = p ? 'About '+p.name+' — ' : '';
+  ui.sub = 'inbox';
+  closeModal();
+  go('chat');
+};
+/* Ask the browser for permission to raise notifications. */
+ACT.popAsk = async ()=>{
+  if(typeof Notification === 'undefined')
+    return toast('This browser cannot show notifications','bad');
+  try{
+    const r = await Notification.requestPermission();
+    S.settings.notify = S.settings.notify || {};
+    S.settings.notify.pop = S.settings.notify.pop || {kinds:{}};
+    if(r === 'granted'){
+      S.settings.notify.pop.on = true;
+      save(); render();
+      popNotify('Front Office', 'Notifications are on. This is what one looks like.', 'league');
+      return toast('Notifications are on','good');
+    }
+    render();
+    toast(r === 'denied'
+      ? 'Your browser is blocking them — turn them back on in the site settings'
+      : 'Not granted', 'bad');
+  }catch(e){ toast('Could not ask — '+e.message,'bad'); }
+};
+ACT.popTest = ()=>{
+  if(!popAllowed()) return toast('Turn notifications on first','bad');
+  const ok2 = popNotify('Front Office', 'A test notification from your league.', 'league');
+  toast(ok2 ? 'Sent — look for it' : 'Nothing raised; check the kinds you have ticked','warn');
+};
+ACT.clearSim = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const weeks = simWeeks();
+  if(!weeks.length) return toast('There is nothing simulated on the books','warn');
+  modal('Clear the test results',
+    '<p class="muted" style="margin:0 0 8px">Week'+(weeks.length===1?' ':'s ')+weeks.join(', ')+
+    ' '+(weeks.length===1?'was':'were')+' played on the simulator. Clearing takes '+
+    (weeks.length===1?'it':'them')+' off the books entirely.</p>'+
+    '<div class="hint">Records, points for and against, every player\u2019s scoring for those weeks, and '+
+    'anything written about them all go. Anything scored from a real feed is left exactly as it is, and so '+
+    'are rosters, contracts and picks.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn danger" data-a="clearSimGo">Clear '+weeks.length+' week'+(weeks.length===1?'':'s')+'</button>');
+};
+ACT.clearSimGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const n2 = clearSimulated();
+  closeModal(); render();
+  toast(n2 ? n2+' simulated week'+(n2===1?'':'s')+' cleared' : 'Nothing to clear', n2?'good':'warn');
+};
 ACT.wipeSeason = ()=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const wk = +S.live.week||1;
@@ -5172,6 +5286,18 @@ VIEWS.teams = function(){
       const nextY = S.league.season+1;
       const P = S.settings.playoffs;
       return `
+      ${hasSimResults() ? `
+      <div class="panel" style="margin-bottom:14px;border-color:#5C3227"><div class="pb">
+        <div class="row" style="gap:10px;align-items:center">
+          <div><b>These standings include simulated weeks.</b>
+            <div class="tiny dim">Week${simWeeks().length===1?' ':'s '}${simWeeks().join(', ')}
+              ${simWeeks().length===1?'was':'were'} played on the simulator, so the records and points below
+              are not real.</div></div>
+          <div class="spacer"></div>
+          ${isCommish()? '<button class="btn danger" data-a="clearSim">Clear the test results</button>'
+            : '<span class="tiny dim">a commissioner can clear them</span>'}
+        </div>
+      </div></div>` : ''}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Standings</h3><div class="spacer"></div>
         <span class="tiny dim">through week ${Math.max(0,(+S.live.week||1)-1)}</span></div>
         <div class="pb tight scrollx"><table>
@@ -5311,7 +5437,7 @@ function faRows(list){
     <td class="right">${(()=>{
       /* On a league that runs waivers, going for a loose player puts a bid in.
          With no waiver day set, the old straight signing still applies. */
-      if(!isOrphan(p) && claimNeedsWaiver())
+      if(!isOrphan(p) && claimNeedsWaiver(p))
         return '<button class="btn sm" data-a="claimPlayer" data-id="'+p.id+'">Bid</button>'+
           ((S.waiverBids||[]).some(b=> b.playerId===p.id && b.teamId===actingTeam() && b.status==='open')
             ? '<div class="tiny good">bid in</div>' : '');
@@ -5332,7 +5458,7 @@ document.addEventListener('change', e=>{
 ACT.claimPlayer = (d)=>{
   const p = byId(S.players, d.id); if(!p) return;
   const tid = actingTeam();
-  if(!claimNeedsWaiver()){
+  if(!claimNeedsWaiver(p)){
     /* Nothing to bid against — take him. */
     p.contract = makeWaiverContract(tid, 1);
     logIt(teamName(tid)+' picked up '+p.name+' (no waiver day set)',
@@ -5352,7 +5478,7 @@ function bidForm(){
   const rivals = (S.waiverBids||[]).filter(x=> x.playerId===b.id && x.status==='open').length;
   return `
   <div class="stack">
-    <p class="muted" style="margin:0">${esc(waiverNote())}</p>
+    <p class="muted" style="margin:0">${esc(claimWhy(p))}</p>
     ${faabOn() ? `<div class="row" style="gap:16px">
       <div><div class="eyebrow">Your budget</div><div class="big">${money(faabLeft(tid))}</div></div>
       <div><div class="eyebrow">Spent so far</div><div class="big dim">${money(faabSpent(tid))}</div></div>
@@ -5931,7 +6057,7 @@ function teamProjected(teamId, week){
   const L = lineupFor(teamId); if(!L || !L.slots) return null;
   let any = false, tot = 0;
   L.slots.forEach(x=>{ if(!x.p) return; const v = projFor(x.p, week); if(v!=null){ any = true; tot += v; } });
-  return any ? Math.round(tot*10)/10 : null;
+  return any ? Math.round(tot*100)/100 : null;
 }
 /* ---- Projections --------------------------------------------------------
    Sleeper publishes a projected stat line per player per week. We score those
@@ -6040,7 +6166,7 @@ ACT.projPull = async ()=>{
     S.players.forEach(p=>{
       const line = p.sleeperId ? byId[String(p.sleeperId)] : null;
       if(!line) return;
-      st.byPlayer[p.id] = Math.round(scoreLine(line, p)*10)/10;
+      st.byPlayer[p.id] = Math.round(scoreLine(line, p)*100)/100;
       n++;
     });
     impProgress('', 100);
@@ -6182,7 +6308,7 @@ async function pullKickoffs(week){
   const season = S.league.season;
   S.live.kicks = S.live.kicks || {};
   S.live.gstate = S.live.gstate || {};
-  const book = {}, states = {};
+  const book = {}, states = {}, fixtures = [];
   let n2 = 0;
   /* ESPN publishes the fixture list with kickoff times and club codes, and does
      not need a key. Sleeper is tried after it in case that ever stops. */
@@ -6201,11 +6327,21 @@ async function pullKickoffs(week){
                       clock: st.displayClock || '',
                       done: !!ty.completed,
                       short: ty.shortDetail || ty.detail || '' };
+      const sides = {home:null, away:null, hs:0, as:0};
       (comp.competitors||[]).forEach(c=>{
         const ab = c && c.team && (c.team.abbreviation || c.team.shortDisplayName);
         if(!ab) return;
         const key = String(ab).toUpperCase();
         book[key] = t2; states[key] = state; n2++;
+        /* Which side he is, and what he has scored. */
+        if(String(c.homeAway||'').toLowerCase()==='away'){ sides.away = key; sides.as = +c.score||0; }
+        else { sides.home = key; sides.hs = +c.score||0; }
+      });
+      if(sides.home && sides.away) fixtures.push({
+        id:'nfl'+(ev.id||fixtures.length), home:sides.home, away:sides.away,
+        hs:sides.hs, as:sides.as, at:t2,
+        q:+st.period||0, clockText:st.displayClock||'',
+        status: ty.state==='in' ? 'live' : (ty.completed || ty.state==='post') ? 'final' : 'pre'
       });
     });
   }catch(e){ /* fall through to Sleeper */ }
@@ -6233,6 +6369,12 @@ async function pullKickoffs(week){
   Object.keys(ALIAS).forEach(k=>{ if(states[k] && !states[ALIAS[k]]) states[ALIAS[k]] = states[k]; });
   S.live.kicks[w] = book;
   S.live.gstate[w] = states;
+  /* The genuine card for the week, with whatever has been scored so far. This
+     replaces the pairings the simulator invents. */
+  if(fixtures.length){
+    S.live.nfl = S.live.nfl || {};
+    S.live.nfl[w] = fixtures.sort((a,b)=> a.at - b.at);
+  }
   S.live.kicksAt = Date.now(); S.live.kicksErr = null;
   save();
   return n2;
@@ -6340,7 +6482,9 @@ ACT.kickPull = async ()=>{
   try{
     const nn = await pullKickoffs();
     ui.tmp.kickBusy = false; render();
-    toast(nn ? 'Kickoff times are in' : 'Could not get the fixture list just now','' + (nn?'good':'bad'));
+    const card = ((S.live.nfl||{})[+S.live.week||1]||[]).length;
+    toast(nn ? (card+' games and their kickoff times are in')
+             : 'Could not get the fixture list just now', nn?'good':'bad');
   }catch(e){ ui.tmp.kickBusy = false; render(); toast('Could not get the fixture list — '+e.message,'bad'); }
 };
 ACT.sleeperSyncNow = async ()=>{
@@ -6655,13 +6799,19 @@ ACT.playerCard = (d)=>{
 
     ${(()=>{
       /* Where he stands under the rookie rule. */
+      /* A line to whoever holds him. */
+      const holder = p.contract && p.contract.teamId;
+      const dmBit = (holder && holder !== actingTeam())
+        ? '<div class="hr"></div><button class="btn sm ghost" data-a="messageAbout" data-id="'+p.id+'">'+
+          'Message '+esc(teamName(holder))+' about him</button>'
+        : '';
       const from = rookieFrom(p);
-      if(from==null) return isCommish()
+      if(from==null) return dmBit + (isCommish()
         ? '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
           '<div class="row" style="gap:6px;align-items:center"><span class="tiny dim">Not held to it.</span>'+
           '<button class="btn sm ghost" data-a="rookieMark" data-id="'+p.id+'" data-y="'+S.league.season+'">'+
           'Mark as a '+S.league.season+' rookie</button></div>'
-        : '';
+        : '');
       const left = rookieWindowLeft(p), max = rookieMaxYears(p);
       const rd = rookieRoundOf(p);
       const roundBit = left==null ? '' :
@@ -6677,7 +6827,7 @@ ACT.playerCard = (d)=>{
             (rd===i+1?' selected':'')+'>round '+(i+1)+'</option>').join('')+
           '</select></label>'
         : '';
-      return '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
+      return dmBit + '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
         '<div class="tiny">Taken in the '+from+' rookie draft. '+
         (rookieFreed(p) ? 'He has been through the free agency draft, so the limit no longer applies.'
          : left==null ? 'His window has run out — normal rules from here.'
@@ -8075,6 +8225,10 @@ document.addEventListener('change', e=>{
 document.addEventListener('change', e=>{
   const of = e.target.closest('[data-a="freeFilter"]');
   if(of && ACT.freeFilter){ ACT.freeFilter(of.dataset, of, e); return; }
+});
+document.addEventListener('change', e=>{
+  const dn = e.target.closest('[data-a="dmNew"]');
+  if(dn && ACT.dmNew){ ACT.dmNew(dn.dataset, dn, e); return; }
 });
 document.addEventListener('change', e=>{
   const rw = e.target.closest('[data-a="repWeek"]');
@@ -10016,13 +10170,81 @@ function gifPanel(){
   '</div>';
 }
 
+/* Every private conversation, and whichever one is open. */
+function inboxView(me){
+  const threads = dmThreads(me);
+  const open = ui.tmp.dmWith && byId(S.teams, ui.tmp.dmWith) ? ui.tmp.dmWith : null;
+  if(open) dmMarkRead(me, open);
+  const un = dmUnread(me);
+  return `
+  <section class="wrap">
+    <div class="head"><h1>Inbox</h1><div class="spacer"></div>
+      <span class="tiny dim">${threads.length} conversation${threads.length===1?'':'s'}</span></div>
+    <div class="tabs">
+      <button data-a="sub" data-s="room">The room</button>
+      <button class="on" data-a="sub" data-s="inbox">Inbox${un?' <span class="badge">'+un+'</span>':''}</button>
+    </div>
+    <div class="grid g2" style="align-items:start">
+      <div class="panel"><div class="ph"><h3>Conversations</h3><div class="spacer"></div>
+        <select data-a="dmNew"><option value="">Start one with…</option>
+          ${S.teams.filter(t2=> t2.id!==me).map(t2=>'<option value="'+t2.id+'">'+esc(t2.name)+'</option>').join('')}
+        </select></div>
+        <div class="pb tight">
+          ${threads.length ? threads.map(th=>`
+            <div class="dmrow ${open===th.other?'on':''}" data-a="dmOpen" data-id="${th.other}">
+              <div class="row" style="gap:8px;align-items:baseline">
+                <b>${esc(teamName(th.other))}</b>
+                ${th.unread?'<span class="badge">'+th.unread+'</span>':''}
+                <div class="spacer"></div>
+                <span class="tiny dim">${dstr(th.last)}</span>
+              </div>
+              <div class="tiny dim" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(th.preview)}</div>
+            </div>`).join('')
+            : '<div class="empty-state"><h3>Nothing yet</h3><p>Pick a manager above to start a conversation, '+
+              'or use the message link on any team or player.</p></div>'}
+        </div></div>
+
+      <div class="panel">${open ? `
+        <div class="ph"><h3>${esc(teamName(open))}</h3><div class="spacer"></div>
+          <button class="btn sm ghost" data-a="go" data-r="teams" data-t="${open}">Their roster</button></div>
+        <div class="pb tight" style="max-height:52vh;overflow:auto">
+          ${dmWith(me, open).map(mm=>`
+            <div class="chatrow ${mm.from===me?'me':''}">
+              <div class="chatbub">
+                <div class="chathead"><b>${esc(teamName(mm.from))}</b>
+                  <span class="dim tiny">${dstr(mm.at)}</span></div>
+                <div class="chattext">${esc(mm.text)}</div>
+              </div></div>`).join('')
+            || '<div class="hint">No messages yet. Say something.</div>'}
+        </div>
+        <div class="pb">
+          <div class="row" style="gap:6px">
+            <input type="text" id="dmText" data-k="dmtext" placeholder="Write to ${esc(teamName(open))}…"
+              style="flex:1" data-oninput="dmType" value="${esc(ui.tmp.dmDraft||'')}">
+            <button class="btn pri" data-a="dmSend">Send</button>
+          </div>
+        </div>`
+        : '<div class="pb"><div class="empty-state"><h3>No conversation open</h3>'+
+          '<p>Choose one on the left.</p></div></div>'}
+      </div>
+    </div>
+  </section>`;
+}
 VIEWS.chat = function(){
   S.chat = S.chat || [];
+  const me = actingTeam();
   const msgs = S.chat.slice().reverse();
+  /* The inbox lives alongside the room. */
+  if(ui.sub === 'inbox') return inboxView(me);
+  const un = dmUnread(me);
   return `
   <section class="wrap">
     <div class="head"><h1>League Chat</h1><div class="spacer"></div>
       <span class="tiny dim">${S.chat.length} message${S.chat.length===1?'':'s'}</span></div>
+    <div class="tabs">
+      <button class="on" data-a="sub" data-s="room">The room</button>
+      <button data-a="sub" data-s="inbox">Inbox${un?' <span class="badge">'+un+'</span>':''}</button>
+    </div>
 
     <div class="panel chatpanel">
       <div class="pb">
@@ -10886,6 +11108,91 @@ function tagTag(p){
 /* ============================================================
    WAIVERS — cheap, flagged, and gone at the turn of the year
    ============================================================ */
+/* ---- Direct messages -------------------------------------------------------
+   A private line between two managers, kept alongside the league room. */
+function dmStore(){ S.dms = Array.isArray(S.dms) ? S.dms : []; return S.dms; }
+function dmKey(a, b){ return [a, b].sort().join('|'); }
+/* Every conversation this team is part of, newest first. */
+function dmThreads(teamId){
+  const seen = {};
+  dmStore().forEach(mm=>{
+    if(mm.from !== teamId && mm.to !== teamId) return;
+    const other = mm.from === teamId ? mm.to : mm.from;
+    const k = dmKey(teamId, other);
+    const t = seen[k] || (seen[k] = {other, last:0, unread:0, preview:''});
+    if(mm.at > t.last){ t.last = mm.at; t.preview = mm.text || '(a picture)'; }
+    if(mm.to === teamId && !mm.read) t.unread++;
+  });
+  return Object.values(seen).sort((a,b)=> b.last - a.last);
+}
+function dmWith(teamId, other){
+  return dmStore().filter(mm=>
+    (mm.from===teamId && mm.to===other) || (mm.from===other && mm.to===teamId)
+  ).sort((a,b)=> a.at - b.at);
+}
+function dmUnread(teamId){
+  return dmStore().filter(mm=> mm.to===teamId && !mm.read).length;
+}
+function dmSend(from, to, text){
+  const body = String(text||'').trim();
+  if(!body) return null;
+  const mm = {id:uid('dm'), from, to, text:body.slice(0, 4000), at:Date.now(), read:false};
+  dmStore().unshift(mm);
+  if(S.dms.length > 2000) S.dms.length = 2000;
+  notify('Message from '+teamName(from), body.slice(0,120), 'info', [to]);
+  popNotify('Message from '+teamName(from), body.slice(0,120), 'dm');
+  save();
+  return mm;
+}
+function dmMarkRead(teamId, other){
+  let n2 = 0;
+  dmStore().forEach(mm=>{ if(mm.to===teamId && mm.from===other && !mm.read){ mm.read = true; n2++; } });
+  if(n2) save();
+  return n2;
+}
+/* ---- Pop-up notifications --------------------------------------------------
+   The browser's own notifications, so a message or a trade offer surfaces even
+   when the app is in another tab. */
+const NOTIFY_KINDS = [
+  ['dm',      'Direct messages'],
+  ['trade',   'Trade offers and counters'],
+  ['waiver',  'Waivers won and lost'],
+  ['lineup',  'Lineup reminders'],
+  ['dues',    'Dues reminders'],
+  ['chat',    'League chat when you are mentioned'],
+  ['league',  'League news — signings, drops, the week in figures']
+];
+function popOn(){
+  S.settings.notify = S.settings.notify || {};
+  S.settings.notify.pop = S.settings.notify.pop || {on:false, kinds:{}};
+  return S.settings.notify.pop.on === true;
+}
+function popWants(kind){
+  const p = (S.settings.notify||{}).pop || {};
+  if(!p.on) return false;
+  return (p.kinds||{})[kind] !== false;
+}
+function popAllowed(){
+  return typeof Notification !== 'undefined' && Notification.permission === 'granted';
+}
+function popState(){
+  if(typeof Notification === 'undefined') return 'unsupported';
+  return Notification.permission;            /* granted | denied | default */
+}
+/* Raise one, if the league member asked for that kind. */
+function popNotify(title, body, kind){
+  try{
+    if(!popWants(kind || 'league')) return false;
+    if(!popAllowed()) return false;
+    const n2 = new Notification(String(title||'Front Office'), {
+      body: String(body||''),
+      tag: 'fo-'+(kind||'league'),
+      icon: undefined
+    });
+    n2.onclick = ()=>{ try{ window.focus(); }catch(e){} try{ n2.close(); }catch(e){} };
+    return true;
+  }catch(e){ return false; }
+}
 /* ---- FAAB and rolling waivers ---------------------------------------------
    A budget for the season, spent only on waiver claims. It never touches the
    salary cap — a team can be up against the cap and still have money to bid, and
@@ -10939,11 +11246,41 @@ function nextWaiverRun(from){
   }
   return null;
 }
-/* Does a pickup right now need to go through waivers, or can he just be taken? */
-function claimNeedsWaiver(){
+/* Once a man's game has kicked off he is locked away until the next waiver run
+   after the week finishes — nobody grabs a player mid-game, whatever day it is.
+   He clears at the first run once every game of the week is done. */
+function lockedByKickoff(p){
+  if(!p || !p.nfl) return false;
+  if(!gameStarted(p)) return false;          /* not played yet — free as usual */
+  /* Still locked while any game of the week is unfinished. */
+  const card = ((S.live.nfl||{})[+S.live.week||1]) || [];
+  if(card.length && card.some(g=> g.status !== 'final')) return true;
+  /* Every game is done: he clears at the next run. */
+  const last = +((S.settings.waivers||{}).lastRun) || 0;
+  const done = weekAllDoneAt();
+  return !(last && done && last > done);
+}
+/* When the last game of the week finished, as best we can tell. */
+function weekAllDoneAt(){
+  const card = ((S.live.nfl||{})[+S.live.week||1]) || [];
+  if(!card.length) return null;
+  if(card.some(g=> g.status !== 'final')) return null;
+  return Math.max.apply(null, card.map(g=> +g.at || 0)) || null;
+}
+/* Does a pickup right now need to go through waivers, or can he just be taken?
+   Pass a player to have his own game taken into account. */
+function claimNeedsWaiver(p){
   if(!(S.settings.waivers||{}).on) return false;
+  /* A man whose game has started is behind waivers no matter what day it is. */
+  if(p && lockedByKickoff(p)) return true;
   if(!anyWaiverDays()) return false;                  /* no waiver days at all */
   return true;
+}
+/* Why he cannot simply be taken, in a few words. */
+function claimWhy(p){
+  if(p && lockedByKickoff(p))
+    return p.name+"'s game has started, so he is behind waivers until the next run after this week finishes.";
+  return waiverNote();
 }
 /* A word on what happens if you go for somebody now. */
 function waiverNote(){
@@ -12159,6 +12496,74 @@ function weekScores(week){
   });
   return out.sort((a,b)=> b.pts - a.pts);
 }
+/* Which weeks were played on the simulator rather than a real feed. */
+function simWeeks(){
+  const out = {};
+  (S.schedule||[]).forEach(g=>{ if(g.hp!=null && g.sim) out[g.week] = true; });
+  return Object.keys(out).map(Number).sort((a,b)=> a-b);
+}
+function hasSimResults(){ return simWeeks().length > 0; }
+/* Take every simulated week off the books, leaving anything real alone. */
+function clearSimulated(){
+  const weeks = simWeeks();
+  if(!weeks.length) return 0;
+  keepBackup(S, 'before clearing simulated weeks');
+  weeks.forEach(w=>{
+    (S.schedule||[]).filter(g=> g.week===w && g.hp!=null && g.sim).forEach(g=>{
+      const th = byId(S.teams,g.home), ta = byId(S.teams,g.away);
+      if(th && ta){
+        const rh = teamRecord(th), ra = teamRecord(ta);
+        rh.pf = Math.round((rh.pf - (+g.hp||0))*100)/100; rh.pa = Math.round((rh.pa - (+g.ap||0))*100)/100;
+        ra.pf = Math.round((ra.pf - (+g.ap||0))*100)/100; ra.pa = Math.round((ra.pa - (+g.hp||0))*100)/100;
+        if(g.hp > g.ap){ rh.w=Math.max(0,rh.w-1); ra.l=Math.max(0,ra.l-1); }
+        else if(g.ap > g.hp){ ra.w=Math.max(0,ra.w-1); rh.l=Math.max(0,rh.l-1); }
+        else { rh.t=Math.max(0,rh.t-1); ra.t=Math.max(0,ra.t-1); }
+        if(S.h2h){
+          const un = (x,y,won,tie)=>{
+            const r2 = ((S.h2h[x]||{})[y]); if(!r2) return;
+            if(tie) r2.t = Math.max(0,r2.t-1); else if(won) r2.w = Math.max(0,r2.w-1); else r2.l = Math.max(0,r2.l-1);
+          };
+          const tie = g.hp === g.ap;
+          un(g.home, g.away, g.hp > g.ap, tie);
+          un(g.away, g.home, g.ap > g.hp, tie);
+        }
+      }
+      g.hp = null; g.ap = null; delete g.sim;
+    });
+    /* And everything else that week produced. */
+    const byP = (S.season||{}).byPlayer || {};
+    Object.keys(byP).forEach(pid=>{
+      const line = byP[pid];
+      const rec = line && line.weeks && line.weeks[w];
+      if(!rec) return;
+      line.fpts = Math.round(((+line.fpts||0) - (+rec.fpts||0))*100)/100;
+      line.gp = Math.max(0, (+line.gp||0) - 1);
+      delete line.weeks[w];
+      if(!line.gp) delete byP[pid];
+    });
+    if(S.effByWeek) delete S.effByWeek[w];
+    if(S.lineups) delete S.lineups[w];
+    if(S.reportSent) delete S.reportSent[w];
+    S.chat = (S.chat||[]).filter(mm=> !(mm && mm.reporter && +mm.reporterWeek === w));
+  });
+  /* Rebuild each team's running efficiency from what is left. */
+  S.teams.forEach(t2=>{ t2.eff = null; });
+  Object.keys(S.effByWeek||{}).forEach(wk=>{
+    Object.keys(S.effByWeek[wk]).forEach(tid2=>{
+      const t2 = byId(S.teams, tid2); if(!t2) return;
+      const x = S.effByWeek[wk][tid2];
+      t2.eff = t2.eff || {weeks:0, got:0, best:0};
+      t2.eff.weeks++;
+      t2.eff.got = Math.round((t2.eff.got + (+x.got||0))*100)/100;
+      t2.eff.best = Math.round((t2.eff.best + (+x.best||0))*100)/100;
+    });
+  });
+  dppCache = null; clearCapCache();
+  logIt('Cleared '+weeks.length+' simulated week'+(weeks.length===1?'':'s')+
+    ' — real results untouched', {type:'admin'});
+  save(true);
+  return weeks.length;
+}
 /* Every man on a team for a week: what he scored, whether he was started, and
    whether leaving him out cost anything. */
 function weekRoster(teamId, week){
@@ -12227,7 +12632,10 @@ function recordWeek(){
     ra.pf = Math.round((ra.pf + a)*100)/100; ra.pa = Math.round((ra.pa + h)*100)/100;
     if(h > a){ rh.w++; ra.l++; } else if(a > h){ ra.w++; rh.l++; } else { rh.t++; ra.t++; }
     h2hAdd(m.home, m.away, h, a);
-    S.schedule.push({week:S.live.week, home:m.home, away:m.away, hp:h, ap:a});
+    S.schedule.push({week:S.live.week, home:m.home, away:m.away, hp:h, ap:a,
+      /* Where these numbers came from, so a test run can be cleared out later
+         without touching a real week. */
+      sim: (S.settings.live||{}).mode === 'demo'});
     [[th,H],[ta,A]].forEach(([t,x])=>{
       /* Keep this week's own figures, so a report can be run on it later. */
       S.effByWeek = S.effByWeek || {};
@@ -15767,6 +16175,34 @@ VIEWS.settings = function(){
     </div>`:''}
 
     ${sub==='notify'?`<div class="grid g2">
+      <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Pop-up notifications</h3></div>
+        <div class="pb stack">
+        ${(()=>{
+          const st = popState();
+          if(st === 'unsupported')
+            return '<div class="hint bad">This browser cannot show notifications.</div>';
+          if(st === 'denied')
+            return '<div class="hint bad">Your browser is blocking notifications for this site. '+
+              'Turn them back on in the padlock menu beside the address, then come back here.</div>';
+          if(st !== 'granted')
+            return '<p class="muted" style="margin:0">Get told about things without watching the tab.</p>'+
+              '<div class="row"><button class="btn pri" data-a="popAsk">Turn on notifications</button></div>';
+          return '<div class="row" style="gap:8px;align-items:center">'+
+            '<span class="pill ok">on</span>'+
+            '<button class="btn sm ghost" data-a="popTest">Send me a test one</button></div>';
+        })()}
+        ${popState()!=='granted' ? '' : `
+        <label class="check"><input type="checkbox" data-set="settings.notify.pop.on" ${popOn()?'checked':''}>
+          <span>Raise a notification for the things ticked below</span></label>
+        ${!popOn() ? '' : `<div class="grid g2">
+          ${NOTIFY_KINDS.map(([k,label])=>
+            '<label class="check"><input type="checkbox" data-set="settings.notify.pop.kinds.'+k+'" '+
+            (popWants(k)?'checked':'')+'><span>'+esc(label)+'</span></label>').join('')}
+        </div>`}`}
+        <div class="hint">These come from the app itself, so they arrive whenever it is open in a tab —
+          including on a phone with it added to the home screen. There is no separate server sending them,
+          so a notification will not reach you with the app fully closed.</div>
+      </div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>League chat</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.chat.weekReport" ${(S.settings.chat||{}).weekReport!==false?'checked':''}>
           <span>Post the week in figures on a Tuesday morning
@@ -18503,9 +18939,13 @@ function tickAll(){
      the Sleeper mirror is set up. */
   const anyLive = Object.values(((S.live.gstate||{})[+S.live.week||1]) || {})
     .some(x=> x && x.state === 'in');
-  const kickGap = anyLive ? 45000 : 3600000;     /* keep the clock honest while games run */
+  /* While anything is on, keep the card and the clock honest. On the live page,
+     check every couple of minutes even when nothing has kicked off, so a card
+     that has not been fetched yet arrives. */
+  const haveCard = !!((S.live.nfl||{})[+S.live.week||1]);
+  const kickGap = anyLive ? 45000 : (route==='live' ? 120000 : 3600000);
   if(!ui.tmp.kickBusy && (Date.now() - (S.live.kicksAt||0)) > kickGap &&
-     (anyLive || !((S.live.kicks||{})[+S.live.week||1]))){
+     (anyLive || !haveCard || route==='live')){
     ui.tmp.kickBusy = true;
     setTimeout(()=>{ pullKickoffs().then(nn=>{
       ui.tmp.kickBusy = false;
