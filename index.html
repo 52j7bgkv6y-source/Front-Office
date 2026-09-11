@@ -842,7 +842,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-19u · free agents cost a dollar';
+const APP_BUILD = '2026-08-19v · a deploy leaves the week alone';
 
 /* ============================================================
    HOME LEAGUE
@@ -4902,6 +4902,66 @@ ACT.clearSimGo = ()=>{
   closeModal(); render();
   toast(n2 ? n2+' simulated week'+(n2===1?'':'s')+' cleared' : 'Nothing to clear', n2?'good':'warn');
 };
+/* ---- Putting a week back ----------------------------------------------------
+   Undo a close: the week reopens exactly where it was, its result comes off the
+   books, and the scoring that was folded into the season is unfolded again. */
+function lastClosedWeek(){
+  const done = (S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week);
+  return done.length ? Math.max.apply(null, done) : 0;
+}
+ACT.reopenWeek = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const w = lastClosedWeek();
+  if(!w) return toast('No week has been closed out','warn');
+  modal('Put week '+w+' back',
+    '<p class="muted" style="margin:0 0 8px">Week '+w+' reopens where it was. Its result comes off the '+
+    'books, the records go back to what they were, and everybody\u2019s scoring for that week is unfolded '+
+    'from their season totals.</p>'+
+    '<div class="hint">The live scores themselves come back down from Sleeper on the next sync, so give it '+
+    'a minute after this. Nothing else is touched \u2014 rosters, contracts, picks and every earlier week '+
+    'stay exactly as they are.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="reopenWeekGo" data-w="'+w+'">Put week '+w+' back</button>');
+};
+ACT.reopenWeekGo = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const w = +d.w || lastClosedWeek();
+  if(!w) return;
+  keepBackup(S, 'before putting week '+w+' back');
+  /* The result off the fixture list. */
+  (S.schedule||[]).filter(g=> g.week===w && g.hp!=null).forEach(g=>{
+    g.hp = null; g.ap = null; delete g.sim;
+  });
+  /* And out of everybody's season totals. */
+  const byP = (S.season||{}).byPlayer || {};
+  Object.keys(byP).forEach(pid=>{
+    const line = byP[pid];
+    const rec = line && line.weeks && line.weeks[w];
+    if(!rec) return;
+    line.fpts = Math.round(((+line.fpts||0) - (+rec.fpts||0))*100)/100;
+    line.gp = Math.max(0, (+line.gp||0) - 1);
+    delete line.weeks[w];
+    if(!line.gp) delete byP[pid];
+  });
+  if(S.effByWeek) delete S.effByWeek[w];
+  if(S.reportSent) delete S.reportSent[w];
+  S.chat = (S.chat||[]).filter(mm=> !(mm && mm.reporter && +mm.reporterWeek === w));
+  /* Back to that week, with the fixtures rebuilt and the clock stopped so the
+     next sync fills the scores in again. */
+  S.live.week = w;
+  S.live.stats = {}; S.live.feed = [];
+  S.live.koLosers = {}; S.live.koWeek = null;
+  buildWeek(w);
+  rebuildRecords();
+  /* And do not let the automatic close pounce on it again. */
+  S.settings.live.lastAutoClose = Date.now();
+  dppCache = null; clearCapCache();
+  logIt('Week '+w+' put back — its result is off the books and the scoring unfolded', {type:'admin'});
+  notify('Week '+w+' is open again', 'The result has come off the books. Scores come back on the next sync.',
+    'warn');
+  closeModal(); save(true); render();
+  toast('Week '+w+' is back — the scores return on the next Sleeper sync','good');
+};
 ACT.wipeSeason = ()=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const wk = +S.live.week||1;
@@ -4993,6 +5053,14 @@ function autoCloseTick(){
   if(due == null) return 0;
   if(now.getTime() - due > 5*24*3600000) return 0;   /* too long ago to be this week's */
   const last = +((S.settings.live||{}).lastAutoClose) || 0;
+  /* The first time this ever runs — a fresh deploy, a league just loaded — it
+     only starts the clock. It must never reach back and close a week it has
+     never seen open, which is exactly what a deploy on a Friday would do. */
+  if(!last){
+    S.settings.live.lastAutoClose = Date.now();
+    save();
+    return 0;
+  }
   if(last >= due) return 0;                     /* already done for that moment */
   /* Nothing to close if nobody has scored a point. */
   const anyPoints = (S.live.matchups||[]).some(mm=>
@@ -16936,6 +17004,8 @@ VIEWS.settings = function(){
           <button class="btn" data-a="closeWeek">Close out week ${S.live.week}</button>
           <button class="btn ghost" data-a="weekWipe">Clear this week</button>
           <button class="btn ghost" data-a="simReset">Start the next week</button>
+          ${lastClosedWeek() ? '<button class="btn ghost" data-a="reopenWeek">Put week '+
+            lastClosedWeek()+' back</button>' : ''}
           <button class="btn ghost danger" data-a="wipeSeason">Clear the whole season</button>
         </div>
         <div class="hr"></div>
@@ -16962,6 +17032,8 @@ VIEWS.settings = function(){
         <div class="hr"></div>
         <div class="hint">Closing a week records the scores, rolls everyone on, and brings the beat reporters in.
           It has been taken off Live scoring so nobody trips over it mid-Sunday.<br>
+          <b>Put week N back</b> undoes a close — the week reopens, its result comes off the books and
+          the scoring is unfolded. Use it if a week was closed out before you meant it to be.
           <b>Clear this week</b> wipes what has been scored and leaves you on the same week.
           <b>Start the next week</b> records this one and moves everybody on.
           <b>Clear the whole season</b> puts everything back to week 1 with nothing played — for when you have
