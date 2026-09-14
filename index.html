@@ -4,6 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0F1A24">
+<!-- Installed to a phone's home screen it opens like any other app: its own icon,
+     no address bar, its own place in the app switcher. Everything needed is held
+     here in the page, so it is still one file to deploy. -->
+<link rel="manifest" href="data:application/manifest+json;base64,eyJuYW1lIjoiRnJvbnQgT2ZmaWNlIiwic2hvcnRfbmFtZSI6IkZyb250IE9mZmljZSIsImRlc2NyaXB0aW9uIjoiRHluYXN0eSBsZWFndWUgZnJvbnQgb2ZmaWNlIFx1MjAxNCBjYXAsIGNvbnRyYWN0cywgdHJhZGVzIGFuZCBsaXZlIHNjb3JpbmcuIiwic3RhcnRfdXJsIjoiLiIsInNjb3BlIjoiLiIsImRpc3BsYXkiOiJzdGFuZGFsb25lIiwib3JpZW50YXRpb24iOiJwb3J0cmFpdC1wcmltYXJ5IiwiYmFja2dyb3VuZF9jb2xvciI6IiMwRjFBMjQiLCJ0aGVtZV9jb2xvciI6IiMwRjFBMjQiLCJpY29ucyI6W3sic3JjIjoiZGF0YTppbWFnZS9zdmcreG1sO2Jhc2U2NCxQSE4yWnlCNGJXeHVjejBpYUhSMGNEb3ZMM2QzZHk1M015NXZjbWN2TWpBd01DOXpkbWNpSUhacFpYZENiM2c5SWpBZ01DQTFNVElnTlRFeUlqNEtQSEpsWTNRZ2QybGtkR2c5SWpVeE1pSWdhR1ZwWjJoMFBTSTFNVElpSUhKNFBTSTVOaUlnWm1sc2JEMGlJekJHTVVFeU5DSXZQZ284Y0dGMGFDQmtQU0pOTWpVMklEZzBiREUxTUNBMU9IWXhNRFJqTUNBNU5pMDJNaUF4TlRZdE1UVXdJREU0TWkwNE9DMHlOaTB4TlRBdE9EWXRNVFV3TFRFNE1sWXhOREo2SWdvZ0lHWnBiR3c5SW01dmJtVWlJSE4wY205clpUMGlJMFUxUVRFelF5SWdjM1J5YjJ0bExYZHBaSFJvUFNJeU1DSXZQZ284Wld4c2FYQnpaU0JqZUQwaU1qVTJJaUJqZVQwaU1qWTRJaUJ5ZUQwaU9EWWlJSEo1UFNJMU5DSWdabWxzYkQwaUkwVTFRVEV6UXlJdlBnbzhjR0YwYUNCa1BTSk5NalUySURJeE5IWXhNRGhOTWpJeUlESTJPR2cyT0UweU16SWdNalEyZGpRMFRUSTRNQ0F5TkRaMk5EUWlJSE4wY205clpUMGlJekJHTVVFeU5DSWdjM1J5YjJ0bExYZHBaSFJvUFNJeE1pSUtJQ0J6ZEhKdmEyVXRiR2x1WldOaGNEMGljbTkxYm1RaUx6NEtQQzl6ZG1jKyIsInNpemVzIjoiYW55IiwidHlwZSI6ImltYWdlL3N2Zyt4bWwiLCJwdXJwb3NlIjoiYW55IG1hc2thYmxlIn1dfQ==">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Front Office">
+<meta name="application-name" content="Front Office">
+<link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj4KPHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHJ4PSI5NiIgZmlsbD0iIzBGMUEyNCIvPgo8cGF0aCBkPSJNMjU2IDg0bDE1MCA1OHYxMDRjMCA5Ni02MiAxNTYtMTUwIDE4Mi04OC0yNi0xNTAtODYtMTUwLTE4MlYxNDJ6IgogIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0U1QTEzQyIgc3Ryb2tlLXdpZHRoPSIyMCIvPgo8ZWxsaXBzZSBjeD0iMjU2IiBjeT0iMjY4IiByeD0iODYiIHJ5PSI1NCIgZmlsbD0iI0U1QTEzQyIvPgo8cGF0aCBkPSJNMjU2IDIxNHYxMDhNMjIyIDI2OGg2OE0yMzIgMjQ2djQ0TTI4MCAyNDZ2NDQiIHN0cm9rZT0iIzBGMUEyNCIgc3Ryb2tlLXdpZHRoPSIxMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+">
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj4KPHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHJ4PSI5NiIgZmlsbD0iIzBGMUEyNCIvPgo8cGF0aCBkPSJNMjU2IDg0bDE1MCA1OHYxMDRjMCA5Ni02MiAxNTYtMTUwIDE4Mi04OC0yNi0xNTAtODYtMTUwLTE4MlYxNDJ6IgogIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0U1QTEzQyIgc3Ryb2tlLXdpZHRoPSIyMCIvPgo8ZWxsaXBzZSBjeD0iMjU2IiBjeT0iMjY4IiByeD0iODYiIHJ5PSI1NCIgZmlsbD0iI0U1QTEzQyIvPgo8cGF0aCBkPSJNMjU2IDIxNHYxMDhNMjIyIDI2OGg2OE0yMzIgMjQ2djQ0TTI4MCAyNDZ2NDQiIHN0cm9rZT0iIzBGMUEyNCIgc3Ryb2tlLXdpZHRoPSIxMiIKICBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+">
 <title>Front Office — Dynasty Cap Manager</title>
 <!-- build 2026-08-14-mascots-nfl -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -820,6 +831,18 @@ tr.liverow td:first-child{box-shadow:inset 2px 0 0 var(--brass)}
 @keyframes rzPulse{0%{opacity:1}50%{opacity:.45}100%{opacity:1}}
 tr.rzrow{background:rgba(228,88,111,.10)}
 tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
+
+/* Who is hurt. */
+.injmark{display:inline-block;margin-left:5px;padding:0 4px;border-radius:4px;font-size:9px;
+  font-weight:700;letter-spacing:.4px;vertical-align:middle;line-height:14px}
+.injmark.out{background:#5C2230;color:#FFB9C6}
+.injmark.doubtful{background:#5C3A22;color:#FFD2A8}
+.injmark.questionable{background:#4A4526;color:#F0E3A8}
+.injmark.other{background:#2A3542;color:#9FB2C4}
+
+/* A score you can open up. */
+.scorelink{color:inherit;text-decoration:none;border-bottom:1px dotted var(--dim)}
+.scorelink:hover{color:var(--brass);border-bottom-color:var(--brass)}
 </style>
 </head>
 <body>
@@ -842,7 +865,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-19v · a deploy leaves the week alone';
+const APP_BUILD = '2026-08-20b · installs on a phone';
 
 /* ============================================================
    HOME LEAGUE
@@ -1160,9 +1183,10 @@ function defaultScoring(){
     rec_0_4:0, rec_5_9:0, rec_10_19:0, rec_20_29:0, rec_30_39:0, rec_40p:0, rec_td_40p:0,
     bonus_rec_rb:0, bonus_rec_wr:0, bonus_rec_te:0,
     /* kicking */
-    fgm:0, fgm_0_19:3, fgm_20_29:3, fgm_30_39:3, fgm_40_49:4, fgm_50p:5,
+    fgm:0, fgm_0_19:3, fgm_20_29:3, fgm_30_39:3, fgm_40_49:4, fgm_50_59:5, fgm_50p:5, fgm_60p:0,
     fgm_yds:0, fgm_yds_over_30:0, xpm:1,
-    fgmiss:0, fgmiss_0_19:-1, fgmiss_20_29:-1, fgmiss_30_39:-1, fgmiss_40_49:0, fgmiss_50p:0, xpmiss:-1,
+    fgmiss:0, fgmiss_0_19:-1, fgmiss_20_29:-1, fgmiss_30_39:-1, fgmiss_40_49:0,
+    fgmiss_50_59:0, fgmiss_50p:0, fgmiss_60p:0, xpmiss:-1,
     /* team defense */
     def_td:6, def_2pt:2,
     pts_allow_0:10, pts_allow_1_6:7, pts_allow_7_13:4, pts_allow_14_20:1,
@@ -1186,7 +1210,23 @@ function defaultScoring(){
     /* individual defenders */
     idp_def_td:6, idp_sack:2, idp_qb_hit:0, idp_tkl:1, idp_tkl_solo:1, idp_tkl_ast:0.5,
     idp_tkl_loss:0, idp_int:3, idp_int_ret_yd:0, idp_fum_rec:2, idp_fum_ret_yd:0,
-    idp_ff:2, idp_safe:2, idp_blk_kick:2, idp_pass_def:1
+    idp_ff:2, idp_safe:2, idp_blk_kick:2, idp_pass_def:1,
+    /* the rest of what Sleeper offers, so nothing has to be approximated */
+    pass_int_td_50p:0, pass_td_50p:0, pass_cmp_50p:0, pass_sack_yd:0, pass_rush_yd:0,
+    rush_50p:0, rush_td_50p:0, rec_50p:0, rec_td_50p:0,
+    rush_rec_yd:0, anytime_tds:0,
+    td:0, two_pt:0,
+    /* defensive and special-team odds and ends */
+    def_forced_punts:0, def_3_and_out:0, def_4_and_stop:0, def_kr_td:0, def_pr_td:0,
+    st_fum_lost:0, def_st_fum_lost:0, def_fr_yd:0, int_td:0, fum_rec_yd:0,
+    /* individual defenders, the long tail */
+    idp_tkl_sol:0, idp_int_td:0, idp_fum_rec_td:0, idp_blk_kick_ret_yd:0,
+    idp_pass_def_3p:0, idp_sack_yd:0, idp_qb_hit_2p:0, idp_tkl_2p:0, idp_tkl_3p:0,
+    idp_tkl_4p:0, idp_tkl_ast_2p:0, idp_tkl_loss_2p:0, idp_tkl_loss_3p:0,
+    idp_def_st_td:0, idp_def_st_ff:0, idp_def_st_fum_rec:0, idp_def_st_tkl_solo:0,
+    idp_safety:0, idp_forced_punt:0,
+    /* kicking, the long tail */
+    fgm_pct:0, xpm_pct:0, fga:0, xpa:0
   };
 }
 /* Presets people actually ask for by name. */
@@ -3230,6 +3270,12 @@ VIEWS.dash = function(){
           return '<span class="dim" style="font-size:.55em;font-weight:400">'+
             r.w+'-'+r.l+(r.t?'-'+r.t:'')+'</span>';
         })()}</h1>
+        ${(onPhone() && !alreadyInstalled() && !installHidden()) ? `
+          <div class="tiny" style="margin-top:4px">
+            <a href="#" data-a="installApp" style="color:var(--brass)">Put this on your home screen</a>
+            <span class="dim"> — it opens like an app.</span>
+            <a href="#" data-a="installHide" class="dim" style="margin-left:6px">no thanks</a>
+          </div>` : ''}
         ${(()=>{
           const run = pickRun(t.id, draftBaseYear());
           if(run.ok || !run.picks.length) return '';
@@ -3615,6 +3661,66 @@ function fpts(pid){
 }
 /* Score any stat line with this league's own settings — the live feed, a past
    week, or a projection. */
+/* The same arithmetic as scoreLine, but showing its working: every category
+   that earned or cost a point, what the stat was, the rate, and the total. */
+function scoreBreakdown(s, p){
+  const rows = [];
+  if(!s) return rows;
+  const c = S.settings.scoring;
+  const label = (k)=>{
+    for(const [g, list] of SCORING_GROUPS){
+      const hit = list.find(x=> x[0]===k);
+      if(hit) return hit[1];
+    }
+    return k.replace(/_/g,' ');
+  };
+  const add = (k, n, rate, note)=>{
+    const pts = Math.round(n*rate*100)/100;
+    if(!pts) return;
+    rows.push({key:k, label:label(k), count:n, rate, pts, note});
+  };
+  for(const k in c){
+    if(BAND_KEYS[k]) continue;
+    const rate = +c[k]||0; if(!rate) continue;
+    const n = +s[k]||0; if(n) add(k, n, rate);
+  }
+  const has = (k)=> s[k]!=null;
+  if(p && p.pos==='DEF'){
+    if(has('pts_allow')){
+      const k = ptsAllowKey(+s.pts_allow||0);
+      if(+c[k]) rows.push({key:k, label:label(k), count:+s.pts_allow||0, rate:+c[k],
+        pts:+c[k], note:'points allowed'});
+    }
+    if(has('yds_allow')){
+      const k = ydsAllowKey(+s.yds_allow||0);
+      if(+c[k]) rows.push({key:k, label:label(k), count:+s.yds_allow||0, rate:+c[k],
+        pts:+c[k], note:'yards allowed'});
+    }
+  }
+  const bonus = (k, on, note)=>{
+    if(!on) return;
+    const v = +c[k]||0; if(!v) return;
+    rows.push({key:k, label:label(k), count:1, rate:v, pts:v, note});
+  };
+  const py=+s.pass_yd||0, ry=+s.rush_yd||0, rey=+s.rec_yd||0;
+  if(py>=400) bonus('bonus_pass_yd_400', true, py+' passing yards');
+  else if(py>=300) bonus('bonus_pass_yd_300', true, py+' passing yards');
+  if(ry>=200) bonus('bonus_rush_yd_200', true, ry+' rushing yards');
+  else if(ry>=100) bonus('bonus_rush_yd_100', true, ry+' rushing yards');
+  if(rey>=200) bonus('bonus_rec_yd_200', true, rey+' receiving yards');
+  else if(rey>=100) bonus('bonus_rec_yd_100', true, rey+' receiving yards');
+  if(ry+rey>=200) bonus('bonus_rush_rec_yd_200', true, (ry+rey)+' from scrimmage');
+  else if(ry+rey>=100) bonus('bonus_rush_rec_yd_100', true, (ry+rey)+' from scrimmage');
+  bonus('bonus_pass_cmp_25', (+s.pass_cmp||0)>=25, (+s.pass_cmp||0)+' completions');
+  bonus('bonus_rush_att_20', (+s.rush_att||0)>=20, (+s.rush_att||0)+' carries');
+  const recs = +s.rec||0;
+  if(recs && p){
+    if(p.pos==='RB') add('bonus_rec_rb', recs, +c.bonus_rec_rb||0);
+    else if(p.pos==='WR') add('bonus_rec_wr', recs, +c.bonus_rec_wr||0);
+    else if(p.pos==='TE') add('bonus_rec_te', recs, +c.bonus_rec_te||0);
+  }
+  return rows.sort((a,b)=> Math.abs(b.pts) - Math.abs(a.pts));
+}
 function scoreLine(s, p){
   if(!s) return 0;
   const c = S.settings.scoring;
@@ -4461,13 +4567,21 @@ VIEWS.live = function(){
     return `<tr class="${rz?'rzrow':onAir?'liverow':''}">
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
         ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
-      <td class="right num" style="width:10%">${s.p?s.pts.toFixed(2):'—'}
+      <td class="right num" style="width:10%">${s.p
+        ? '<a href="#" data-a="scoreCard" data-id="'+s.p.id+'" data-w="'+(+S.live.week||1)+
+          '" class="scorelink" title="how he scored it">'+s.pts.toFixed(2)+'</a>'
+        : '—'}
         ${s.p&&projFor(s.p)!=null?'<div class="tiny dim" title="projected">'+projFor(s.p).toFixed(2)+'</div>':''}
+        ${s.p? injMark(s.p) : ''}
         ${s.p&&gameWhen(s.p.nfl)?'<div class="tiny '+(gameLive(s.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(s.p.nfl))+' '+ballTag(s.p)+'</div>':''}</td>
       <td class="center" style="width:12%"><span class="eyebrow">${esc(s.slot)}</span></td>
-      <td class="right num" style="width:10%">${o&&o.p?o.pts.toFixed(2):'—'}
+      <td class="right num" style="width:10%">${o&&o.p
+        ? '<a href="#" data-a="scoreCard" data-id="'+o.p.id+'" data-w="'+(+S.live.week||1)+
+          '" class="scorelink" title="how he scored it">'+o.pts.toFixed(2)+'</a>'
+        : '—'}
         ${o&&o.p&&projFor(o.p)!=null?'<div class="tiny dim" title="projected">'+projFor(o.p).toFixed(2)+'</div>':''}
+        ${o&&o.p? injMark(o.p) : ''}
         ${o&&o.p&&gameWhen(o.p.nfl)?'<div class="tiny '+(gameLive(o.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(o.p.nfl))+' '+ballTag(o.p)+'</div>':''}</td>
       <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
@@ -4909,6 +5023,37 @@ function lastClosedWeek(){
   const done = (S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week);
   return done.length ? Math.max.apply(null, done) : 0;
 }
+ACT.subSet = (d, el)=>{
+  const tid = d.team, w = +d.w || +S.live.week || 1;
+  if(!mustManage(tid)) return;
+  const starter = byId(S.players, d.p);
+  const sub = el.value ? byId(S.players, el.value) : null;
+  if(sub){
+    const g = subAllowed(starter, sub, tid, w);
+    if(!g.ok){ el.value = ''; return toast(sub.name+' cannot cover him — '+g.why,'bad'); }
+  }
+  const r = setSub(tid, d.p, sub? sub.id : null, w);
+  if(!r.ok){ el.value = ''; return toast(r.why,'bad'); }
+  logIt(teamName(tid)+(sub? ': '+sub.name+' named to cover '+starter.name
+                          : ': nobody covering '+starter.name),
+    {type:'admin', teams:[tid]});
+  render();
+  toast(sub? sub.name+' will come on if '+starter.name+' does not play'
+           : 'No substitute for '+starter.name, 'good');
+};
+ACT.autoFillToggle = (d)=>{
+  const tid = d.team || actingTeam();
+  if(!mustManage(tid)) return;
+  if(!autoFillLeagueOn()) return toast('The commissioner has turned this off for the league','bad');
+  const t = byId(S.teams, tid); if(!t) return;
+  t.autoFill = !t.autoFill;
+  logIt(teamName(tid)+(t.autoFill? ' turned on' : ' turned off')+' filling in for a man who is out',
+    {type:'admin', teams:[tid]});
+  save(); render();
+  toast(t.autoFill
+    ? 'Anybody ruled out will be replaced by your best available man'
+    : 'Your lineup will be left exactly as you set it','good');
+};
 ACT.reopenWeek = ()=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const w = lastClosedWeek();
@@ -5140,6 +5285,12 @@ VIEWS.teams = function(){
       <div class="spacer"></div>
       ${rosterLocked(tid) ? '<span class="pill bad" title="nothing can be done until this is put right">'+
         overRoster(tid)+' over the limit</span>' : ''}
+      ${autoFillLeagueOn() && canManage(tid) ? '<button class="btn sm '+(autoFillOn(tid)?'pri':'ghost')+
+        '" data-a="autoFillToggle" data-team="'+tid+'" title="'+
+        (autoFillOn(tid)
+          ? 'anybody ruled out is replaced by your best available man'
+          : 'your lineup is left exactly as you set it')+
+        '">Fill in for the ruled out: '+(autoFillOn(tid)?'on':'off')+'</button>' : ''}
       ${canSetLineup(tid, +S.live.week||1) ? '<button class="btn" data-a="editLineup" data-team="'+tid+'" data-w="'+(+S.live.week||1)+'">Set lineup</button>' : ''}
       <select data-a="pickTeamView" data-k="teamsel" style="max-width:230px">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===tid?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select>
     </header>
@@ -5209,6 +5360,28 @@ VIEWS.teams = function(){
             ? '<button class="btn sm" data-a="askAbsorb" data-id="'+x.p.id+'">Fold onto his salary</button>'
             : '')+
         '</div>'; }).join('')+
+      '</div></div>';
+    })()}
+    ${(()=>{
+      const hurt = hurtStarters(tid, +S.live.week||1);
+      if(!hurt.length) return '';
+      const out = hurt.filter(isOut), iffy = hurt.filter(isIffy);
+      return '<div class="panel" style="margin-bottom:14px;border-color:'+(out.length?'#5C3227':'#5C4526')+
+        '"><div class="pb"><b'+(out.length?' class="bad"':'')+'>'+
+        (out.length? out.length+' in your lineup '+(out.length===1?'is':'are')+' out' : '')+
+        (out.length&&iffy.length? ', ' : '')+
+        (iffy.length? iffy.length+' doubtful or questionable' : '')+'.</b>'+
+        '<div class="tiny dim" style="margin-top:4px">'+
+        hurt.map(p2=> esc(p2.name)+' '+injMark(p2)+
+          ((p2.injury||{}).body? ' <span class="dim">'+esc(p2.injury.body)+'</span>' : '')).join(' &middot; ')+
+        '</div>'+
+        (out.length && canManage(tid) && autoFillLeagueOn()
+          ? '<div class="hint">'+(autoFillOn(tid)
+              ? 'Your best available man will take the place of anyone ruled out, as long as his game has '+
+                'not kicked off.'
+              : '<button class="btn sm" data-a="autoFillToggle" data-team="'+tid+
+                '">Fill in for them automatically</button>')+'</div>'
+          : '')+
       '</div></div>';
     })()}
     ${pastLateCut() ? `<div class="panel" style="margin-bottom:14px;border-color:#5C3227"><div class="pb">
@@ -6347,7 +6520,9 @@ function lineupForm(teamId, week){
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
             const pj = projFor(p);
-            const ko = gameWhen(p.nfl);
+            const st2 = injStatus(p);
+            const ko = (st2==='out' ? 'OUT · ' : st2==='doubtful' ? 'D · ' : st2==='questionable' ? 'Q · ' : '')
+              + gameWhen(p.nfl);
             return '<option value="'+p.id+'"'+(x.p&&x.p.id===p.id?' selected':'')+(disable?' disabled':'')+'>'+
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
@@ -6362,6 +6537,7 @@ function lineupForm(teamId, week){
             ${opts}
           </select>
           <span class="tiny" style="width:96px;text-align:right">
+            ${x.p? injMark(x.p) : ''}
             ${x.p && gameWhen(x.p.nfl) ? '<div class="'+(gameLive(x.p.nfl)?'onnow':'dim')+'">'+
               esc(gameWhen(x.p.nfl))+' '+ballTag(x.p)+'</div>' : ''}
             <span class="num">${heldLocked?'<span class="dim">🔒 </span>':''}${x.pts.toFixed(1)}${
@@ -6369,11 +6545,39 @@ function lineupForm(teamId, week){
           </span>
           </div>
           ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+'</div>':''}
+          ${x.p ? (()=>{
+            /* Name somebody to come on if he does not play. */
+            const cur = subFor(teamId, x.p.id, week);
+            const opts2 = subChoices(x.p, teamId, week);
+            if(!opts2.length) return '';
+            if(!subMax()) return '';
+            /* With the allowance spent, only the ones already named stay open. */
+            const spent = !cur && subsLeft(teamId, week) <= 0;
+            return '<div class="row" style="margin:3px 0 0 64px;gap:6px;align-items:center">'+
+              '<span class="tiny dim" style="width:52px">sub</span>'+
+              '<select data-oninput="subSet" data-team="'+teamId+'" data-w="'+week+'" data-p="'+x.p.id+'" '+
+              (heldLocked||spent?'disabled':'')+' style="flex:1;min-width:150px;font-size:11px">'+
+                '<option value="">— nobody —</option>'+
+                opts2.map(o=> '<option value="'+o.p.id+'"'+(cur&&cur.id===o.p.id?' selected':'')+
+                  (o.g.ok?'':' disabled')+'>'+esc(o.p.name)+' · '+esc(o.p.pos)+
+                  (projFor(o.p, week)!=null? ' · '+projFor(o.p, week).toFixed(1) : '')+
+                  (o.g.ok ? '' : ' — kicks off first')+'</option>').join('')+
+              '</select>'+
+              (cur ? '<span class="tiny dim" style="white-space:nowrap">'+esc(gameWhen(cur.nfl))+'</span>'
+                   : spent ? '<span class="tiny dim" style="white-space:nowrap">none left</span>' : '')+
+            '</div>';
+          })() : ''}
         </div>`;
       }).join('')}
     </div>
     <div class="row"><span class="tiny dim">${L.saved?'Set by hand':'Nothing saved — this is the best lineup'}</span>
       <div class="spacer"></div><b>${L.total.toFixed(1)}</b></div>
+    ${!subMax() ? '<div class="hint">Substitutes are switched off in this league.</div>' : `
+    <div class="hint"><b>Substitutes:</b> <b>${subsNamed(teamId, week)} of ${subMax()}</b> named${
+      subsLeft(teamId, week)? '' : ' — that is your lot for the week'}.
+      Name somebody under a starter and he comes on by himself if that starter does not play, so there is no
+      need to be watching at kickoff. A man whose game starts before the one he is covering cannot be named,
+      since you would already know his score.</div>`}
     <div class="hint">Anything you leave empty scores nothing. Clear the lot and it goes back to picking
       the best lineup for you — locked players stay put.${isCommish()?' As commissioner you are not locked, so you can still fix a genuine mistake.':''}</div>`;
 }
@@ -7529,6 +7733,138 @@ ACT.matchSleeperIds = async (quiet)=>{
     return {hit:0, already:0, miss:[]};
   }
 };
+/* ---- Copying the scoring straight from Sleeper ------------------------------
+   Rather than anybody typing eighty numbers and hoping, this reads the league's
+   own settings and writes them in exactly. Every key Sleeper sends is taken as
+   it comes; anything it does not send is set to zero, because a category Sleeper
+   is not scoring should not be scoring here either. */
+/* Every point a man has scored, and where it came from. */
+/* ---- Putting it on a phone --------------------------------------------------
+   On a phone this can be added to the home screen and then opens like any other
+   app — its own icon, no address bar. Android offers to do it; on an iPhone it
+   is two taps in the Share menu, which nobody finds unless told. */
+function onPhone(){
+  return /iphone|ipad|ipod|android/i.test((navigator.userAgent||''));
+}
+function onApple(){ return /iphone|ipad|ipod/i.test((navigator.userAgent||'')); }
+function alreadyInstalled(){
+  try{
+    return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+           navigator.standalone === true;
+  }catch(e){ return false; }
+}
+ACT.installApp = ()=>{
+  /* Android hands us a prompt we can fire. Apple does not, so we explain. */
+  const ev = window.__foInstall;
+  if(ev && ev.prompt){
+    ev.prompt();
+    ev.userChoice && ev.userChoice.then(()=>{ window.__foInstall = null; render(); });
+    return;
+  }
+  modal('Put Front Office on your phone',
+    (onApple()
+      ? '<ol class="tidy"><li>Tap the <b>Share</b> button at the bottom of Safari — the square with an '+
+        'arrow coming out of it.</li>'+
+        '<li>Scroll down and tap <b>Add to Home Screen</b>.</li>'+
+        '<li>Tap <b>Add</b>.</li></ol>'+
+        '<div class="hint">It has to be Safari — Chrome on an iPhone cannot do it.</div>'
+      : '<ol class="tidy"><li>Tap the <b>three dots</b> at the top right of Chrome.</li>'+
+        '<li>Tap <b>Add to Home screen</b>, or <b>Install app</b> if it is offered.</li>'+
+        '<li>Tap <b>Install</b>.</li></ol>')+
+    '<div class="hint">It then opens with its own icon and no address bar, like any other app. '+
+    'It is the same league — whatever you do on the phone shows up on the computer.</div>',
+    '<button class="btn pri" data-a="closeModal">Right you are</button>');
+};
+ACT.installHide = ()=>{
+  try{ localStorage.setItem('fo-install-hidden','1'); }catch(e){}
+  render();
+};
+function installHidden(){
+  try{ return localStorage.getItem('fo-install-hidden')==='1'; }catch(e){ return false; }
+}
+ACT.scoreCard = (d)=>{
+  const p = byId(S.players, d.id); if(!p) return;
+  const w = +d.w || +S.live.week || 1;
+  /* This week from the live feed; an earlier week from what was recorded. */
+  const liveLine = (w === (+S.live.week||1)) ? (S.live.stats||{})[p.id] : null;
+  const wk = (((S.season||{}).byPlayer||{})[p.id]||{}).weeks || {};
+  const line = liveLine || (wk[w] && wk[w].stats) || null;
+  const total = line ? scoreLine(line, p) : ((wk[w]||{}).fpts != null ? +wk[w].fpts : 0);
+  const rows = line ? scoreBreakdown(line, p) : [];
+  const sum2 = Math.round(sum(rows.map(r=> r.pts))*100)/100;
+  modal(esc(p.name)+' · week '+w,
+    '<div class="row" style="gap:14px;align-items:baseline;margin-bottom:8px">'+
+      '<div><div class="eyebrow">Scored</div><div class="big">'+(+total||0).toFixed(2)+'</div></div>'+
+      '<div><div class="eyebrow">'+esc(p.pos||'')+' · '+esc(p.nfl||'')+'</div>'+
+        '<div class="tiny dim">'+esc(gameWhen(p.nfl, w) || '')+'</div></div>'+
+    '</div>'+
+    (rows.length
+      ? '<div class="scrollx"><table><thead><tr><th>For</th><th class="right">Count</th>'+
+        '<th class="right">Each</th><th class="right">Points</th></tr></thead><tbody>'+
+        rows.map(r=>'<tr><td>'+esc(r.label)+
+          (r.note? '<div class="tiny dim">'+esc(r.note)+'</div>' : '')+'</td>'+
+          '<td class="right num dim">'+(Math.round(r.count*100)/100)+'</td>'+
+          '<td class="right num dim">'+r.rate+'</td>'+
+          '<td class="right num '+(r.pts<0?'bad':'')+'">'+(r.pts>0?'+':'')+r.pts.toFixed(2)+'</td></tr>').join('')+
+        '</tbody><tfoot><tr class="tot"><td colspan="3" class="right">Total</td>'+
+        '<td class="right num">'+sum2.toFixed(2)+'</td></tr></tfoot></table></div>'+
+        (Math.abs(sum2 - (+total||0)) > 0.005
+          ? '<div class="hint">The feed has him on '+(+total||0).toFixed(2)+
+            ', which does not match the parts above. That usually means a stat arrived that this '+
+            'league does not score.</div>'
+          : '')
+      : '<div class="empty-state"><h3>Nothing yet</h3><p>'+
+        (line ? 'He has done nothing that scores.' :
+         'No stat line for week '+w+' — either his game has not started, or that week was not kept.')+
+        '</p></div>')+
+    (line ? '<div class="hr"></div><div class="flabel">The raw line</div>'+
+      '<div class="tiny dim" style="word-break:break-word">'+
+      Object.keys(line).filter(k=> +line[k]).sort()
+        .map(k=> esc(k)+' '+(Math.round((+line[k])*100)/100)).join(' &middot; ')+'</div>' : ''),
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn" data-a="playerCard" data-id="'+p.id+'">His card</button>');
+};
+ACT.pullScoring = async (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const id = String((d && d.id) || ui.tmp.scoreLeague || sleeperLeague() || '').trim();
+  if(!id) return toast('Put the Sleeper league id in first','bad');
+  ui.tmp.scoreBusy = true; render();
+  try{
+    const lg = await getJSON(SLEEPER+'/league/'+encodeURIComponent(id));
+    const sc = lg && lg.scoring_settings;
+    if(!sc || !Object.keys(sc).length) throw new Error('that league sent no scoring settings');
+    const mine = S.settings.scoring || {};
+    const before = Object.assign({}, mine);
+    const changed = [], added = [], zeroed = [];
+    /* Everything Sleeper scores. */
+    Object.keys(sc).forEach(k=>{
+      const v = Math.round((+sc[k]||0) * 10000) / 10000;
+      if(!(k in mine)) added.push(k);
+      else if (Math.abs((+mine[k]||0) - v) > 0.00005) changed.push({k, was:+mine[k]||0, now:v});
+      mine[k] = v;
+    });
+    /* And everything it does not — off, so the two agree. */
+    Object.keys(mine).forEach(k=>{
+      if(k in sc) return;
+      if(Math.abs(+mine[k]||0) > 0.00005){ zeroed.push({k, was:+mine[k]||0}); mine[k] = 0; }
+    });
+    S.settings.scoring = mine;
+    ui.tmp.scoreBusy = false;
+    ui.tmp.scoreReport = {
+      at: Date.now(), league: lg.name || id, id,
+      keys: Object.keys(sc).length, changed, added, zeroed
+    };
+    clearCapCache(); save(); render();
+    logIt('Scoring copied from Sleeper league '+(lg.name||id)+' — '+Object.keys(sc).length+
+      ' settings, '+changed.length+' changed, '+zeroed.length+' switched off', {type:'admin'});
+    notify('Scoring updated', 'Every setting now matches '+(lg.name||id)+' on Sleeper.', 'good');
+    toast(Object.keys(sc).length+' settings copied — '+changed.length+' changed','good');
+  }catch(e){
+    ui.tmp.scoreBusy = false; render();
+    toast('Could not read that league — '+e.message,'bad');
+  }
+};
+ACT.scoreLeagueId = (d, el)=>{ ui.tmp.scoreLeague = el.value.trim(); };
 ACT.trendPull = async (quiet)=>{
   const t = trendStore();
   t.why = null;
@@ -9194,6 +9530,12 @@ document.addEventListener('change', e=>{
 document.addEventListener('change', e=>{
   const of = e.target.closest('[data-a="freeFilter"]');
   if(of && ACT.freeFilter){ ACT.freeFilter(of.dataset, of, e); return; }
+});
+window.addEventListener('beforeinstallprompt', (e)=>{
+  /* Hold on to it so the button can fire it at the moment somebody asks. */
+  e.preventDefault();
+  window.__foInstall = e;
+  try{ render(); }catch(err){}
 });
 document.addEventListener('change', e=>{
   const dn = e.target.closest('[data-a="dmNew"]');
@@ -11323,7 +11665,8 @@ function weekReportHTML(w){
       <tbody>${wr.rows.map(r=>`<tr class="${r.missed?'liverow':''}">
         <td>${esc(r.p.name)}${r.slot!=='active'?' <span class="tiny dim">'+esc(r.slot)+'</span>':''}</td>
         <td>${posTag(r.p.pos)}</td>
-        <td class="right num"><b>${r.pts.toFixed(1)}</b></td>
+        <td class="right num"><a href="#" data-a="scoreCard" data-id="${r.p.id}" data-w="${w}"
+          class="scorelink" title="how he scored it"><b>${r.pts.toFixed(2)}</b></a></td>
         <td>${r.started?'<span class="pill ok">started</span>':'<span class="dim tiny">bench</span>'}</td>
         <td class="tiny ${r.missed?'bad':r.wasted?'dim':''}">${
           r.missed ? 'should have started' : r.wasted ? 'someone better was sat down' : ''}</td>
@@ -12446,6 +12789,23 @@ function makeWaiverContract(teamId){
    deploy. Somebody can still switch it while they are sitting there; it goes
    back to this the next time the page opens. */
 const FEED_HOME = { mode:'sleeper', pollSec:15 };
+/* Never let a team's dead cap or adjustments come back empty when we had them. */
+function keepTeamLedgers(oldState, newState){
+  if(!oldState || !newState) return newState;
+  const was = {};
+  (oldState.teams||[]).forEach(t=>{ was[t.id] = t; was[(t.name||'').toLowerCase()] = t; });
+  (newState.teams||[]).forEach(t=>{
+    const old = was[t.id] || was[(t.name||'').toLowerCase()];
+    if(!old) return;
+    if((!t.dead || !t.dead.length) && (old.dead||[]).length){
+      t.dead = old.dead.slice();
+      console.warn('[front office] kept '+t.dead.length+' dead-cap rows for '+t.name);
+    }
+    if((!t.adj || !t.adj.length) && (old.adj||[]).length) t.adj = old.adj.slice();
+    if(!t.faab && old.faab) t.faab = old.faab;
+  });
+  return newState;
+}
 function enforceFeedDefaults(st){
   const o = st || S;
   if(!o || !o.settings) return o;
@@ -14361,10 +14721,228 @@ ACT.readNews = (d)=>{
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
     (hits.length===1?'<button class="btn pri" data-a="playerCard" data-id="'+hits[0].id+'">Open '+esc(hits[0].name.split(' ').pop())+'</button>':''));
 };
+/* ---- Who is hurt, and what to do about it -----------------------------------
+   Sleeper marks a man questionable, doubtful or out. The first two are a worry;
+   the last means he will not play at all. */
+function injStatus(p){
+  const st = String(((p||{}).injury||{}).status || '').toUpperCase();
+  if(!st) return '';
+  if(/^(OUT|IR|PUP|SUSP|DNP|NA)/.test(st)) return 'out';
+  if(/^D/.test(st)) return 'doubtful';
+  if(/^Q/.test(st)) return 'questionable';
+  return 'other';
+}
+function isOut(p){ return injStatus(p) === 'out'; }
+function isIffy(p){ const s2 = injStatus(p); return s2==='questionable' || s2==='doubtful'; }
+/* A short mark for the lineup screens. */
+function injMark(p){
+  const st = injStatus(p);
+  if(!st) return '';
+  const body = ((p.injury||{}).body) ? ' — '+(p.injury.body) : '';
+  const label = st==='out' ? 'OUT' : st==='doubtful' ? 'D' : st==='questionable' ? 'Q' :
+    String(p.injury.status).slice(0,4).toUpperCase();
+  return '<span class="injmark '+st+'" title="'+esc(String(p.injury.status)+body)+'">'+label+'</span>';
+}
+/* Everybody hurt in a team's starting lineup this week. */
+function hurtStarters(teamId, week){
+  const w = +week || +S.live.week || 1;
+  const saved = ((S.lineups||{})[w]||{})[teamId];
+  const ids = (saved && saved.length) ? saved.filter(Boolean)
+    : bestLineup(teamId).starters.filter(x=>x.p).map(x=>x.p.id);
+  return ids.map(id=> byId(S.players,id)).filter(p=> p && injStatus(p));
+}
+/* Tell a manager once per player per week that somebody in his lineup is hurt. */
+function injuryWatch(){
+  const w = +S.live.week || 1;
+  S.injTold = S.injTold || {};
+  let told = 0;
+  S.teams.forEach(t=>{
+    hurtStarters(t.id, w).forEach(p=>{
+      const key = w+'|'+t.id+'|'+p.id+'|'+injStatus(p);
+      if(S.injTold[key]) return;
+      S.injTold[key] = Date.now();
+      const st = injStatus(p);
+      const word = st==='out' ? 'is out' : st==='doubtful' ? 'is doubtful' : 'is questionable';
+      notify(p.name+' '+word,
+        'He is in your week '+w+' lineup'+((p.injury||{}).body? ' — '+p.injury.body : '')+'.',
+        st==='out' ? 'bad' : 'warn', [t.id]);
+      popNotify(p.name+' '+word, 'In your week '+w+' lineup.', 'lineup');
+      told++;
+    });
+  });
+  if(told) save();
+  return told;
+}
+/* ---- Substitutes ------------------------------------------------------------
+   Name a man to come on for a starter before the weekend, and if that starter
+   does not play, he goes in on his own. Set it once on Friday and forget it.
+
+   The one rule that matters: a substitute's game must not kick off before the
+   man he is covering. Otherwise you would already know what the sub had scored
+   before finding out whether you needed him, which is not a substitution — it
+   is picking with hindsight. */
+function subBook(week){
+  const w = +week || +S.live.week || 1;
+  S.subs = S.subs || {};
+  S.subs[w] = S.subs[w] || {};
+  return S.subs[w];
+}
+/* How many a team may name in a week. Zero switches substitutes off. */
+function subMax(){
+  const v = (S.settings.roster||{}).subMax;
+  return v == null ? 3 : Math.max(0, +v||0);
+}
+function subsNamed(teamId, week){
+  const book = (subBook(week)[teamId]) || {};
+  return Object.keys(book).filter(k=> book[k]).length;
+}
+function subsLeft(teamId, week){ return Math.max(0, subMax() - subsNamed(teamId, week)); }
+function subFor(teamId, starterId, week){
+  const id = (subBook(week)[teamId]||{})[starterId];
+  return id ? byId(S.players, id) : null;
+}
+function setSub(teamId, starterId, subId, week){
+  const book = subBook(week);
+  book[teamId] = book[teamId] || {};
+  /* Naming a new one when the allowance is spent is refused. Swapping one you
+     have already named, or taking one off, always goes through. */
+  if(subId && !book[teamId][starterId] && subsLeft(teamId, week) <= 0)
+    return {ok:false, why:'you have named your '+subMax()+' for the week'};
+  if(subId) book[teamId][starterId] = subId;
+  else delete book[teamId][starterId];
+  save();
+  return {ok:true};
+}
+/* Can this man cover that one? */
+function subAllowed(starter, sub, teamId, week){
+  const w = +week || +S.live.week || 1;
+  if(!starter || !sub || starter.id===sub.id) return {ok:false, why:''};
+  if(sub.contract && sub.contract.teamId !== teamId) return {ok:false, why:'not on your roster'};
+  if(playerSlot(sub) !== 'active') return {ok:false, why:'not on your active roster'};
+  /* He has to be able to fill the same place in the lineup. */
+  const slot = (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(starter.pos)>=0);
+  if(slot && slot.eligible.indexOf(sub.pos) < 0) return {ok:false, why:'cannot play there'};
+  /* And his game must not start before the man he is covering. */
+  const a = kickoffAt(starter.nfl, w), b = kickoffAt(sub.nfl, w);
+  if(a != null && b != null && b < a)
+    return {ok:false, why:'his game kicks off first — you would know his score before you needed him'};
+  return {ok:true};
+}
+/* When a club kicks off this week, in milliseconds. */
+function kickoffAt(club, week){
+  const w = +week || +S.live.week || 1;
+  const book = (S.live.kicks||{})[w] || {};
+  const v = book[String(club||'').toUpperCase()];
+  return v != null ? +v : null;
+}
+/* Everybody on the bench who could cover this starter. */
+function subChoices(starter, teamId, week){
+  const w = +week || +S.live.week || 1;
+  const saved = ((S.lineups||{})[w]||{})[teamId] || [];
+  const started = {}; saved.forEach(id=>{ if(id) started[id]=1; });
+  return teamPlayers(teamId)
+    .filter(x=> x.id!==starter.id && !started[x.id])
+    .map(x=> ({p:x, g:subAllowed(starter, x, teamId, w)}))
+    .filter(x=> x.g.ok || x.g.why==='his game kicks off first — you would know his score before you needed him')
+    .sort((a,b)=> (a.g.ok===b.g.ok ? 0 : a.g.ok ? -1 : 1) ||
+      ((projFor(b.p, w)||0) - (projFor(a.p, w)||0)));
+}
+/* Has this man plainly not played? Ruled out, or his game is over and he never
+   took the field. */
+function didNotPlay(p, week){
+  const w = +week || +S.live.week || 1;
+  if(isOut(p)) return true;
+  if(!gameFinal(p.nfl, w) && !gameLive(p.nfl, w)) return false;
+  /* His game has started or finished. If it is done and he has nothing, he did
+     not play. While it is still running, give him the benefit of the doubt. */
+  if(!gameFinal(p.nfl, w)) return false;
+  const line = S.live.stats && S.live.stats[p.id];
+  return !line || !Object.keys(line).length;
+}
+/* Put the substitutes on where they are needed. */
+function subsRun(){
+  const w = +S.live.week || 1;
+  let on = 0;
+  S.teams.forEach(t=>{
+    const saved = ((S.lineups||{})[w]||{})[t.id];
+    if(!saved || !saved.length) return;
+    saved.forEach((pid, i)=>{
+      const p = byId(S.players, pid);
+      if(!p) return;
+      const sub = subFor(t.id, p.id, w);
+      if(!sub) return;
+      if(!didNotPlay(p, w)) return;
+      /* The sub is no use if his own game has gone without him too. */
+      if(gameStarted(sub) && !gameLive(sub.nfl, w) && gameFinal(sub.nfl, w)) return;
+      if(saved.indexOf(sub.id) >= 0) return;          /* already in */
+      const g = subAllowed(p, sub, t.id, w);
+      if(!g.ok) return;
+      saved[i] = sub.id;
+      on++;
+      logIt(teamName(t.id)+': '+sub.name+' came on for '+p.name+', who did not play',
+        {type:'admin', teams:[t.id], players:[p.id, sub.id]});
+      notify(sub.name+' came on for '+p.name,
+        p.name+' did not play, so the man you named took his place.', 'warn', [t.id]);
+      popNotify(sub.name+' came on for '+p.name, 'He did not play.', 'lineup');
+    });
+  });
+  if(on){ clearCapCache(); save(); }
+  return on;
+}
+/* ---- Filling in for a man who is out ----------------------------------------
+   A manager can ask the app to put his best available man in the place of
+   anybody ruled out. Off unless he turns it on, and a commissioner can shut it
+   off for the whole league. */
+function autoFillLeagueOn(){ return ((S.settings.roster||{}).autoFill) !== false; }
+function autoFillOn(teamId){
+  if(!autoFillLeagueOn()) return false;
+  const t = byId(S.teams, teamId);
+  return !!(t && t.autoFill);
+}
+/* Who could take his place: same slot, on the bench, fit, and projected best. */
+function standInFor(p, teamId, week){
+  const w = +week || +S.live.week || 1;
+  const saved = ((S.lineups||{})[w]||{})[teamId] || [];
+  const started = {}; saved.forEach(id=>{ if(id) started[id]=1; });
+  const slot = (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(p.pos) >= 0);
+  const fits = (x)=> slot ? slot.eligible.indexOf(x.pos) >= 0 : x.pos === p.pos;
+  return teamPlayers(teamId)
+    .filter(x=> x.id!==p.id && playerSlot(x)==='active' && !started[x.id] && fits(x) && !isOut(x))
+    .filter(x=> !gameStarted(x))          /* his game must not have kicked off */
+    .map(x=> ({p:x, proj: projFor(x, w) != null ? projFor(x, w) : (projFromPosition(x)||0)}))
+    .sort((a,b)=> b.proj - a.proj)[0] || null;
+}
+/* Swap out anybody ruled out, for whoever is projected highest. */
+function autoFillRun(){
+  const w = +S.live.week || 1;
+  let swaps = 0;
+  S.teams.forEach(t=>{
+    if(!autoFillOn(t.id)) return;
+    const saved = ((S.lineups||{})[w]||{})[t.id];
+    if(!saved || !saved.length) return;          /* nothing set, nothing to mend */
+    saved.forEach((pid, i)=>{
+      const p = byId(S.players, pid);
+      if(!p || !isOut(p)) return;
+      if(gameStarted(p)) return;                 /* too late, his game has gone */
+      const sub = standInFor(p, t.id, w);
+      if(!sub) return;
+      saved[i] = sub.p.id;
+      swaps++;
+      logIt(teamName(t.id)+': '+sub.p.name+' in for '+p.name+', who is out',
+        {type:'admin', teams:[t.id], players:[p.id, sub.p.id]});
+      notify(sub.p.name+' is in for '+p.name,
+        p.name+' was ruled out, so your best available man took his place — '+
+        sub.p.name+' on '+sub.proj.toFixed(1)+' projected.', 'warn', [t.id]);
+      popNotify(sub.p.name+' is in for '+p.name, 'He was ruled out.', 'lineup');
+    });
+  });
+  if(swaps){ clearCapCache(); save(); }
+  return swaps;
+}
 function injuryTag(p){
   const inj = p && p.injury;
   if(!inj || !inj.status) return '';
-  const bad = /out|ir|doubtful|pup|susp/i.test(inj.status);
+  const bad = isOut(p) || injStatus(p)==='doubtful';
   return '<span class="pill '+(bad?'live':'warn')+'" title="'+esc(inj.status+(inj.body?' — '+inj.body:''))+'">'+
     esc(String(inj.status).slice(0,12))+'</span>';
 }
@@ -16464,12 +17042,18 @@ const SCORING_GROUPS = [
     ['bonus_rec_rb','Extra per catch — RB'],['bonus_rec_wr','Extra per catch — WR'],['bonus_rec_te','Extra per catch — TE']
   ]],
   ['Kicking', [
-    ['fgm','Field goal made, any distance'],['fgm_0_19','FG made 0 to 19'],['fgm_20_29','FG made 20 to 29'],
-    ['fgm_30_39','FG made 30 to 39'],['fgm_40_49','FG made 40 to 49'],['fgm_50p','FG made 50+'],
-    ['fgm_yds','Points per FG yard'],['fgm_yds_over_30','Points per FG yard past 30'],['xpm','Extra point made'],
+    ['fgm','FG made, any distance'],['fgm_0_19','FG made 0 to 19'],['fgm_20_29','FG made 20 to 29'],
+    ['fgm_30_39','FG made 30 to 39'],['fgm_40_49','FG made 40 to 49'],['fgm_50_59','FG made 50 to 59'],
+    ['fgm_50p','FG made 50+'],['fgm_60p','FG made 60+'],
+    ['fgm_yds','Points per FG yard'],['fgm_yds_over_30','Points per FG yard past 30'],
+    ['xpm','Extra point made'],
     ['fgmiss','FG missed, any distance'],['fgmiss_0_19','FG missed 0 to 19'],['fgmiss_20_29','FG missed 20 to 29'],
-    ['fgmiss_30_39','FG missed 30 to 39'],['fgmiss_40_49','FG missed 40 to 49'],['fgmiss_50p','FG missed 50+'],
-    ['xpmiss','Extra point missed']
+    ['fgmiss_30_39','FG missed 30 to 39'],['fgmiss_40_49','FG missed 40 to 49'],
+    ['fgmiss_50_59','FG missed 50 to 59'],['fgmiss_50p','FG missed 50+'],['fgmiss_60p','FG missed 60+'],
+    ['xpmiss','Extra point missed'],
+    ['fga','Field goal attempted'],['xpa','Extra point attempted'],
+    ['fgm_pct','Points per FG percentage'],['xpm_pct','Points per PAT percentage'],
+    ['fgm_ret_yd','Points per FG return yard']
   ]],
   ['Team defense', [
     ['def_td','Defensive TD'],['def_2pt','Two-point return'],
@@ -16512,6 +17096,50 @@ const SCORING_GROUPS = [
     ['idp_int','Interception'],['idp_int_ret_yd','Per INT return yard'],['idp_fum_rec','Fumble recovery'],
     ['idp_fum_ret_yd','Per fumble return yard'],['idp_ff','Forced fumble'],['idp_safe','Safety'],
     ['idp_blk_kick','Blocked kick'],['idp_pass_def','Pass defended']
+  ]],
+  ['Everything else', [
+    ['anytime_tds','anytime tds'],
+    ['def_3_and_out','def 3 and out'],
+    ['def_4_and_stop','def 4 and stop'],
+    ['def_forced_punts','def forced punts'],
+    ['def_fr_yd','def fr yd'],
+    ['def_kr_td','def kr td'],
+    ['def_pr_td','def pr td'],
+    ['def_st_fum_lost','def st fum lost'],
+    ['fum_rec_yd','fum rec yd'],
+    ['idp_blk_kick_ret_yd','idp blk kick ret yd'],
+    ['idp_def_st_ff','idp def st ff'],
+    ['idp_def_st_fum_rec','idp def st fum rec'],
+    ['idp_def_st_td','idp def st td'],
+    ['idp_def_st_tkl_solo','idp def st tkl solo'],
+    ['idp_forced_punt','idp forced punt'],
+    ['idp_fum_rec_td','idp fum rec td'],
+    ['idp_int_td','idp int td'],
+    ['idp_pass_def_3p','idp pass def 3p'],
+    ['idp_qb_hit_2p','idp qb hit 2p'],
+    ['idp_sack_yd','idp sack yd'],
+    ['idp_safety','idp safety'],
+    ['idp_tkl_2p','idp tkl 2p'],
+    ['idp_tkl_3p','idp tkl 3p'],
+    ['idp_tkl_4p','idp tkl 4p'],
+    ['idp_tkl_ast_2p','idp tkl ast 2p'],
+    ['idp_tkl_loss_2p','idp tkl loss 2p'],
+    ['idp_tkl_loss_3p','idp tkl loss 3p'],
+    ['idp_tkl_sol','idp tkl sol'],
+    ['int_td','int td'],
+    ['pass_cmp_50p','pass cmp 50p'],
+    ['pass_int_td_50p','pass int td 50p'],
+    ['pass_rush_yd','pass rush yd'],
+    ['pass_sack_yd','pass sack yd'],
+    ['pass_td_50p','pass td 50p'],
+    ['rec_50p','rec 50p'],
+    ['rec_td_50p','rec td 50p'],
+    ['rush_50p','rush 50p'],
+    ['rush_rec_yd','rush rec yd'],
+    ['rush_td_50p','rush td 50p'],
+    ['st_fum_lost','st fum lost'],
+    ['td','td'],
+    ['two_pt','two pt']
   ]]
 ];
 VIEWS.settings = function(){
@@ -16599,6 +17227,44 @@ VIEWS.settings = function(){
         : SCORING_GROUPS.filter(([g])=> g===grp);
       const active = (k)=> (+c.scoring[k]||0)!==0;
       return `
+      ${!isCommish() ? '' : `<div class="panel" style="margin-bottom:14px"><div class="ph">
+        <h3>Copy the scoring from Sleeper</h3></div><div class="pb">
+        <p class="muted" style="margin:0 0 8px">Rather than typing eighty numbers and hoping, read the
+          settings straight off a Sleeper league. Everything it scores is copied exactly, and anything it
+          does not score is switched off here, so the two agree in both directions.</p>
+        <div class="row" style="gap:6px">
+          <input type="text" data-oninput="scoreLeagueId" placeholder="Sleeper league id"
+            value="${esc(ui.tmp.scoreLeague != null ? ui.tmp.scoreLeague : (sleeperLeague()||''))}"
+            style="flex:1;min-width:220px">
+          <button class="btn pri" data-a="pullScoring" ${ui.tmp.scoreBusy?'disabled':''}>${
+            ui.tmp.scoreBusy ? 'Reading…' : 'Copy the scoring across'}</button>
+        </div>
+        ${(()=>{
+          const r = ui.tmp.scoreReport;
+          if(!r) return '';
+          return '<div class="hr"></div>'+
+            '<div class="flabel">Copied from '+esc(r.league)+'</div>'+
+            '<div class="tiny">'+r.keys+' settings read'+
+              (r.changed.length? ', <b>'+r.changed.length+'</b> changed' : ', nothing needed changing')+
+              (r.zeroed.length? ', '+r.zeroed.length+' switched off' : '')+
+              (r.added.length? ', '+r.added.length+' new to this app' : '')+'.</div>'+
+            (r.changed.length
+              ? '<div class="scrollx" style="margin-top:6px"><table><thead><tr><th>Setting</th>'+
+                '<th class="right">Was</th><th class="right">Now</th></tr></thead><tbody>'+
+                r.changed.slice(0,40).map(c2=>'<tr><td class="num tiny">'+esc(c2.k)+'</td>'+
+                  '<td class="right num dim">'+c2.was+'</td>'+
+                  '<td class="right num">'+c2.now+'</td></tr>').join('')+
+                (r.changed.length>40? '<tr><td colspan="3" class="dim tiny">and '+(r.changed.length-40)+
+                  ' more</td></tr>':'')+
+                '</tbody></table></div>'
+              : '')+
+            (r.zeroed.length
+              ? '<div class="hint">Switched off because Sleeper does not score them: '+
+                r.zeroed.slice(0,20).map(z=> esc(z.k)).join(', ')+
+                (r.zeroed.length>20? ' and '+(r.zeroed.length-20)+' more' : '')+'</div>'
+              : '');
+        })()}
+      </div></div>`}
       <div class="panel" style="margin-bottom:14px"><div class="pb">
         <div class="row">
           <input type="text" placeholder="Find a category" data-k="scq" data-oninput="scSearch" value="${esc(ui.tmp.scq||'')}" style="max-width:230px">
@@ -16646,6 +17312,16 @@ VIEWS.settings = function(){
           <label class="f"><span>Practice squad</span><input type="number" min="0" data-set="settings.roster.practice" value="${c.roster.practice||0}"></label>
           <label class="f"><span>Free practice-squad cut limit <span class="dim">— 0 for no limit</span></span><input type="number" min="0" step="${S.settings.cap.increment}" data-set="settings.roster.practiceCutMax" value="${c.roster.practiceCutMax||0}"></label>
           <label class="f"><span>Most players allowed</span><input type="number" min="0" data-set="settings.roster.maxRoster" value="${c.roster.maxRoster}"></label>
+            <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.roster.autoFill" ${autoFillLeagueOn()?'checked':''}>
+              <span>Let managers have a man who is out replaced automatically
+                <span class="dim">— each turns it on for himself; unticking this shuts it off for everybody</span></span></label>
+            <label class="f"><span>Substitutes a team may name</span>
+              <input type="number" min="0" max="12" data-set="settings.roster.subMax" value="${subMax()}"></label>
+            <div class="hint" style="grid-column:1/-1">A substitute comes on by himself if the starter he is
+              named under does not play. Set this to 0 to switch substitutes off altogether.</div>
+            ${!autoFillLeagueOn() ? '' : `<div class="hint" style="grid-column:1/-1">${
+              S.teams.filter(t2=> t2.autoFill).length} of ${S.teams.length} have it on:
+              ${S.teams.filter(t2=> t2.autoFill).map(t2=> esc(t2.name)).join(', ') || 'nobody yet'}</div>`}
           <label class="f"><span>Weeks in the season</span><input type="number" min="1" max="25" data-set="settings.roster.seasonWeeks" value="${c.roster.seasonWeeks||17}"></label>
           <div style="grid-column:1/-1"><div class="hr"></div>
             <div class="flabel">Keeping in step with Sleeper</div>
@@ -19727,6 +20403,7 @@ function keepClocksRunning(before, after){
   });
 }
 function adoptRemote(state, rev, force){
+  const before = S;                       /* what this device had a moment ago */
   /* A server copy that would wipe the contracts is never taken quietly, however
      it arrived — a pull, the live feed, or a clash while saving. */
   if(!force && adoptWouldLose(state)){
@@ -19774,6 +20451,10 @@ function adoptRemote(state, rev, force){
   else if(typeof Supa==='object' && Supa.user && !seat) S.league.myTeamId = null;
   /* A copy from the server cannot change which feed this device opens on. */
   enforceFeedDefaults(S);
+  /* Dead cap and manual adjustments are hard-won and easy to lose — an import
+     that rebuilt a team, a copy that came back thin. If the incoming state has
+     none for a team and the one on this device does, the local one wins. */
+  keepTeamLedgers(before, S);
   /* Countdowns never go back up, whatever the server thinks. */
   try{ keepClocksRunning({trades:[], auctions:[]}, S); }catch(e){}
   try{
@@ -20347,6 +21028,9 @@ function tickAll(){
   /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
+  try{ if(injuryWatch()) needsRender = true; }catch(e){}
+  try{ if(subsRun()) needsRender = true; }catch(e){}
+  try{ if(autoFillRun()) needsRender = true; }catch(e){}
   try{ if(waiverTick()) needsRender = true; }catch(e){}
   try{ if(autoCloseTick()) needsRender = true; }catch(e){}
   try{ if(payoutPost()) needsRender = true; }catch(e){}
