@@ -865,7 +865,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-20b · installs on a phone';
+const APP_BUILD = '2026-08-20d · a sync waits for your hands';
 
 /* ============================================================
    HOME LEAGUE
@@ -2166,6 +2166,8 @@ function maybeNotify(key, title, body, kind, whoTeamId){
 }
 let saveT=null;
 function save(now){
+  /* Whatever was being protected has now gone up. */
+  clearSettingsHold();
   S.meta.savedAt = Date.now();
   if(S.meta.demo) delete S.meta.demo;      // the moment you change it, it is yours
   if(typeof clearCapCache==='function'){ clearCapCache(); dppCache = null; }
@@ -2562,6 +2564,35 @@ document.addEventListener('pointerup', pressEnd, true);
 document.addEventListener('pointercancel', pressEnd, true);
 document.addEventListener('touchstart', pressStart, true);
 document.addEventListener('touchend', pressEnd, true);
+/* ---- Not redrawing under somebody's hands -----------------------------------
+   A copy arriving from the server used to redraw the page immediately. If you
+   were part-way through ticking boxes on Settings, everything you had just done
+   was replaced by whatever the server had. The rule now: a sync never redraws
+   while somebody is working. It waits until they stop. */
+let handsOnAt = 0, quietQueued = false, quietTimer = null;
+/* Set when a sync arrived while the settings were being edited, so the page can
+   say plainly that what is on screen is yours and not the server's. */
+let settingsHeld = false;
+function handsOn(){
+  /* Typing or picking in a form counts, and so does anything in the last few
+     seconds — a run of tick boxes has gaps between them. */
+  const ae = document.activeElement;
+  if(ae && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName||'')) return true;
+  return (Date.now() - handsOnAt) < 8000;
+}
+function noteHandsOn(){ handsOnAt = Date.now(); }
+/* What a sync calls instead of render(). */
+function clearSettingsHold(){ settingsHeld = false; }
+function renderQuiet(){
+  if(!handsOn()){ render(); return; }
+  quietQueued = true;
+  if(quietTimer) return;
+  quietTimer = setInterval(()=>{
+    if(handsOn()) return;
+    clearInterval(quietTimer); quietTimer = null;
+    if(quietQueued){ quietQueued = false; render(); }
+  }, 1500);
+}
 function render(){
   /* Mid-press: queue it and redraw the moment they let go. */
   if(pressing){ renderQueued = true; return; }
@@ -4905,16 +4936,27 @@ ACT.messageAbout = (d)=>{
   go('chat');
 };
 /* Ask the browser for permission to raise notifications. */
+ACT.popToggle = (d, el)=>{
+  const p = popPrefs();
+  p.on = el ? !!el.checked : !p.on;
+  savePopPrefs(p);
+  render();
+};
+ACT.popKind = (d, el)=>{
+  const p = popPrefs();
+  p.kinds = p.kinds || {};
+  p.kinds[d.k] = el ? !!el.checked : !popWants(d.k);
+  savePopPrefs(p);
+  render();
+};
 ACT.popAsk = async ()=>{
   if(typeof Notification === 'undefined')
     return toast('This browser cannot show notifications','bad');
   try{
     const r = await Notification.requestPermission();
-    S.settings.notify = S.settings.notify || {};
-    S.settings.notify.pop = S.settings.notify.pop || {kinds:{}};
     if(r === 'granted'){
-      S.settings.notify.pop.on = true;
-      save(); render();
+      const p2 = popPrefs(); p2.on = true; savePopPrefs(p2);
+      render();
       popNotify('Front Office', 'Notifications are on. This is what one looks like.', 'league');
       return toast('Notifications are on','good');
     }
@@ -9541,6 +9583,12 @@ document.addEventListener('change', e=>{
   const dn = e.target.closest('[data-a="dmNew"]');
   if(dn && ACT.dmNew){ ACT.dmNew(dn.dataset, dn, e); return; }
 });
+['input','change','keydown','pointerdown'].forEach(ev=>{
+  document.addEventListener(ev, (e)=>{
+    const t2 = e.target;
+    if(t2 && /^(INPUT|SELECT|TEXTAREA)$/.test(t2.tagName||'')) noteHandsOn();
+  }, true);
+});
 document.addEventListener('change', e=>{
   const rw = e.target.closest('[data-a="repWeek"]');
   if(rw && ACT.repWeek){ ACT.repWeek(rw.dataset, rw, e); return; }
@@ -12478,13 +12526,29 @@ const NOTIFY_KINDS = [
   ['chat',    'League chat when you are mentioned'],
   ['league',  'League news — signings, drops, the week in figures']
 ];
-function popOn(){
-  S.settings.notify = S.settings.notify || {};
-  S.settings.notify.pop = S.settings.notify.pop || {on:false, kinds:{}};
-  return S.settings.notify.pop.on === true;
+/* Which notifications a person wants is that person's business, on that
+   person's phone. It is deliberately kept off the league state — otherwise a
+   copy arriving from the server, or another manager's settings, would reach
+   across and change what you had chosen. Nothing here ever syncs. */
+function popPrefs(){
+  try{
+    const raw = localStorage.getItem('fo-notify');
+    const o = raw ? JSON.parse(raw) : null;
+    if(o && typeof o === 'object') return {on: o.on === true, kinds: o.kinds || {}};
+  }catch(e){}
+  /* First time on this device: take whatever the league copy had, so nobody
+     loses a choice they already made, then keep it here from now on. */
+  const old = ((S.settings||{}).notify||{}).pop;
+  const seed = old ? {on: old.on === true, kinds: old.kinds || {}} : {on:false, kinds:{}};
+  savePopPrefs(seed);
+  return seed;
 }
+function savePopPrefs(o){
+  try{ localStorage.setItem('fo-notify', JSON.stringify({on:!!o.on, kinds:o.kinds||{}})); }catch(e){}
+}
+function popOn(){ return popPrefs().on === true; }
 function popWants(kind){
-  const p = (S.settings.notify||{}).pop || {};
+  const p = popPrefs();
   if(!p.on) return false;
   return (p.kinds||{})[kind] !== false;
 }
@@ -17219,6 +17283,10 @@ VIEWS.settings = function(){
         </tbody></table></div></div>
     </div>`:''}
 
+    ${settingsHeld ? '<div class="panel" style="margin-bottom:14px;border-color:#5C4526"><div class="pb">'+
+      '<b>A copy arrived from the server while you were working.</b>'+
+      '<div class="tiny dim">What is on screen is yours — it was not overwritten. Save when you are '+
+      'finished and it goes up as it stands.</div></div></div>' : ''}
     ${sub==='scoring'?(()=>{
       const q = (ui.tmp.scq||'').toLowerCase().trim();
       const grp = ui.tmp.scg || SCORING_GROUPS[0][0];
@@ -18290,14 +18358,16 @@ VIEWS.settings = function(){
             '<button class="btn sm ghost" data-a="popTest">Send me a test one</button></div>';
         })()}
         ${popState()!=='granted' ? '' : `
-        <label class="check"><input type="checkbox" data-set="settings.notify.pop.on" ${popOn()?'checked':''}>
+        <label class="check"><input type="checkbox" data-a="popToggle" ${popOn()?'checked':''}>
           <span>Raise a notification for the things ticked below</span></label>
         ${!popOn() ? '' : `<div class="grid g2">
           ${NOTIFY_KINDS.map(([k,label])=>
-            '<label class="check"><input type="checkbox" data-set="settings.notify.pop.kinds.'+k+'" '+
+            '<label class="check"><input type="checkbox" data-a="popKind" data-k="'+k+'" '+
             (popWants(k)?'checked':'')+'><span>'+esc(label)+'</span></label>').join('')}
         </div>`}`}
-        <div class="hint">These come from the app itself, so they arrive whenever it is open in a tab —
+        <div class="hint">These are yours and this phone's — they are not part of the league, so a
+          deploy, a sync, or anybody else's settings can never change them.
+          These come from the app itself, so they arrive whenever it is open in a tab —
           including on a phone with it added to the home screen. There is no separate server sending them,
           so a notification will not reach you with the app fully closed.</div>
       </div></div>
@@ -20268,7 +20338,7 @@ const Sync = {
       if(j && j.state && (+j.rev||0) > (+S.rev||0)){
         adoptRemote(j.state, +j.rev||0);
         this.set('ok','Pulled revision '+j.rev);
-        render(); toast('League updated from the server','good');
+        renderQuiet();   /* and not while somebody is mid-tick */
       } else {
         this.set('ok', j && j.state ? 'Up to date' : 'No league on the server yet');
         if(loud) toast(j && j.state ? 'Already up to date' : 'Nothing on the server yet — push to create it');
@@ -20455,6 +20525,13 @@ function adoptRemote(state, rev, force){
      that rebuilt a team, a copy that came back thin. If the incoming state has
      none for a team and the one on this device does, the local one wins. */
   keepTeamLedgers(before, S);
+  /* And if somebody is part-way through the settings page, the settings they are
+     working on are theirs until they are done. Taking the server's copy out from
+     under them is how a page full of tick boxes gets undone. */
+  if(before && before.settings && handsOn() && route === 'settings'){
+    S.settings = before.settings;
+    settingsHeld = true;
+  }
   /* Countdowns never go back up, whatever the server thinks. */
   try{ keepClocksRunning({trades:[], auctions:[]}, S); }catch(e){}
   try{
@@ -20760,8 +20837,9 @@ const Supa = {
         adoptRemote(data.state, +data.rev||0);
         if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
         this.set('ok','Up to date at revision '+data.rev);
-        render();
-        if(loud) toast('League updated','good');
+        renderQuiet();
+        /* A sync is housekeeping, not news. It happens constantly and nobody
+           needs telling; the screen simply shows the new figures. */
       } else {
         this.set('ok','Up to date');
         if(loud) toast('Already up to date');
@@ -20829,8 +20907,8 @@ const Supa = {
           adoptRemote(row.state, +row.rev||0);
           if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
           this.set('ok','Updated live to revision '+row.rev);
-          render();
-          toast('League updated','good');
+          renderQuiet();
+          /* Quiet — see above. */
         })
       .subscribe();
   }
@@ -21105,8 +21183,11 @@ setInterval(()=>{
     if(lastBakRev===null){ lastBakRev = rev; lastBakSaved = saved; lastBakAt = Date.now(); return; }
     const changed = rev !== lastBakRev || saved !== lastBakSaved;
     if(!changed) return;
-    if(Date.now() - lastBakAt < 30*60*1000) return;
-    keepBackup(deep(S), 'half-hourly copy');
+    /* Copies are small now that they are slimmed, so one every ten minutes is
+       affordable and means far less is ever at risk. Silent — nobody needs a
+       message every ten minutes. */
+    if(Date.now() - lastBakAt < 10*60*1000) return;
+    keepBackup(deep(S), 'automatic copy');
     lastBakAt = Date.now(); lastBakRev = rev; lastBakSaved = saved;
   }catch(e){}
 }, 60000);
