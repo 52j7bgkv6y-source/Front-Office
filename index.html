@@ -865,7 +865,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-20d · a sync waits for your hands';
+const APP_BUILD = '2026-08-20q · reminders name only debtors';
 
 /* ============================================================
    HOME LEAGUE
@@ -1207,6 +1207,9 @@ function defaultScoring(){
     bonus_pass_yd_300:0, bonus_pass_yd_400:0, bonus_rush_yd_100:0, bonus_rush_yd_200:0,
     bonus_rec_yd_100:0, bonus_rec_yd_200:0, bonus_rush_rec_yd_100:0, bonus_rush_rec_yd_200:0,
     bonus_pass_cmp_25:0, bonus_rush_att_20:0,
+    /* A first down is worth what the league says it is, and that can differ by
+       who moved the chains. */
+    bonus_fd_qb:0, bonus_fd_rb:0, bonus_fd_wr:0, bonus_fd_te:0,
     /* individual defenders */
     idp_def_td:6, idp_sack:2, idp_qb_hit:0, idp_tkl:1, idp_tkl_solo:1, idp_tkl_ast:0.5,
     idp_tkl_loss:0, idp_int:3, idp_int_ret_yd:0, idp_fum_rec:2, idp_fum_ret_yd:0,
@@ -1515,6 +1518,23 @@ function makeContract(teamId,total,years,structId,startYear){
    designation gives back. */
 function playerSlot(p){ return (p && p.slot) || 'active'; }
 function onTaxi(p){ return playerSlot(p)==='taxi'; }
+/* ---- Individual defenders ----------------------------------------------------
+   A league that does not start defenders has no use for eight hundred of them
+   cluttering free agency. They are left out of the lists and out of an import
+   unless the league says it wants them. */
+const IDP_POS = ['DL','LB','DB','DE','DT','NT','EDGE','CB','S','SS','FS','OLB','ILB','MLB'];
+function idpOn(){ return ((S.settings.roster||{}).idp) === true; }
+function isIDP(p){
+  const pos = String((p&&p.pos)||'').toUpperCase();
+  return IDP_POS.indexOf(pos) >= 0;
+}
+/* Hide them where they would otherwise be in the way — never a man somebody has
+   actually got on his roster, who stays visible whatever the setting says. */
+function hideIDP(p){ return !idpOn() && isIDP(p) && !(p && p.contract && p.contract.teamId); }
+/* How many are sitting in free agency doing nothing. */
+function idpFreeCount(){
+  return S.players.filter(p=> isIDP(p) && !(p.contract && p.contract.teamId)).length;
+}
 /* ---- The redshirt -----------------------------------------------------------
    One rookie a year may be redshirted. He sits on the taxi squad where nobody
    can claim him and where he cannot be promoted for the rest of the season —
@@ -1865,7 +1885,19 @@ function teamCommitted(teamId, year){
 }
 /* Unused cap can be carried forward, within whatever limit the league voted. */
 let capCache = {}, dppCache = null;
-function clearCapCache(){ capCache = {}; }
+/* ---- Remembering the answer -------------------------------------------------
+   A page is drawn by asking the same expensive questions over and over — the
+   draft order for each of twelve teams, inside a sort comparator, is the same
+   answer a hundred times. These are held until something actually changes, and
+   clearCapCache() is already called whenever it does. */
+let memoBook = {};
+function memo(key, fn){
+  if(key in memoBook) return memoBook[key];
+  const v = fn();
+  memoBook[key] = v;
+  return v;
+}
+function clearCapCache(){ capCache = {}; memoBook = {}; }
 function rolloverInto(teamId, year){
   const c = S.settings.cap || {};
   const r = c.rollover;
@@ -2347,6 +2379,33 @@ function rookieDraftEnd(){
 }
 /* Is this the week after the draft, when anyone signed counts as a rookie and
    comes in at the minimum? */
+/* ---- Signing out of free agency ---------------------------------------------
+   Anybody picked up off the wire comes in at the league minimum for one year.
+   The only exception is a man cut loose still carrying a deal — that deal
+   travels with him and is not rewritten.
+
+   Contracts signed this way can be adjusted during the window after the rookie
+   and free agent drafts, and not afterwards. Once that week is up, what you
+   signed is what you have. */
+function faDraftEnd(){
+  const r = S.settings.rookie || {};
+  const fa = r.faDraftEnd ? Date.parse(r.faDraftEnd) : null;
+  const rk = rookieDraftEnd();
+  /* Whichever of the two drafts finished later. */
+  const both = [fa, rk].filter(v=> v != null && !isNaN(v));
+  return both.length ? Math.max.apply(null, both) : null;
+}
+function faWindowDays(){ return +((S.settings.rookie||{}).signWindowDays) || 7; }
+/* Is the window still open? */
+function inFAWindow(at){
+  const end = faDraftEnd();
+  if(end == null) return true;        /* no drafts recorded — nothing to close */
+  const when = at == null ? Date.now() : at;
+  return when <= end + faWindowDays()*86400000;
+}
+/* A contract that came out of free agency, and whether it may still be changed. */
+function fromFreeAgency(p){ return !!(p && p.contract && p.contract.faSigned); }
+function faLocked(p){ return fromFreeAgency(p) && !inFAWindow(); }
 function inRookieSignWindow(at){
   const end = rookieDraftEnd(); if(end==null) return false;
   const days = +rookieRules().signWindowDays || 7;
@@ -2445,7 +2504,7 @@ function pickLabel(pk){ return pk.year+' R'+pk.round + (pk.originTeamId!==pk.own
 function badgeCounts(){
   const t = S.trades.filter(x=> x.status==='review' || tradeAwaits(x, S.league.myTeamId)).length;
   const b = S.auctions.filter(x=> x.status==='open' || x.status==='running').length;
-  return {trades:t, block:b, dues:S.teams.filter(x=>!x.dues.paid).length};
+  return {trades:t, block:b, dues:duesOwing().length};
 }
 function go(r){
   route = r; ui.sub = null; closeSheet();
@@ -2593,9 +2652,25 @@ function renderQuiet(){
     if(quietQueued){ quietQueued = false; render(); }
   }, 1500);
 }
+/* Where the reader had the chat, so a redraw does not move it under him. */
+function grabChatScroll(){
+  const sc = document.querySelector('#chatScroll');
+  if(!sc) return null;
+  const atBottom = (sc.scrollHeight - sc.scrollTop - sc.clientHeight) < 40;
+  return {top: sc.scrollTop, atBottom};
+}
+function putChatScroll(was){
+  if(!was) return;
+  const sc = document.querySelector('#chatScroll');
+  if(!sc) return;
+  /* Somebody reading further up stays where he was. Somebody already at the
+     newest message is kept there, so a new one does not leave him stranded. */
+  sc.scrollTop = was.atBottom ? sc.scrollHeight : was.top;
+}
 function render(){
   /* Mid-press: queue it and redraw the moment they let go. */
   if(pressing){ renderQueued = true; return; }
+  const chatWas = grabChatScroll();
   clearCapCache(); dppCache = null;
   const ae = document.activeElement;
   const k = ae && ae.dataset ? (ae.dataset.k || ae.dataset.set || null) : null;
@@ -2641,6 +2716,8 @@ function render(){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
   }
+  /* And put the chat back exactly where it was being read. */
+  putChatScroll(chatWas);
 }
 /* Where somebody sits between making an account and being given a team. */
 function seatView(){
@@ -3286,7 +3363,7 @@ VIEWS.dash = function(){
   const open = S.auctions.filter(a=> a.status==='open'||a.status==='running');
   const pend = S.trades.filter(x=> x.status==='review');
   const mine = S.trades.filter(x=> tradeAwaits(x, t.id));
-  const unpaid = S.teams.filter(x=> !x.dues.paid);
+  const unpaid = duesOwing();
   const space = capSpace(t.id,y);
 
   return `
@@ -3744,6 +3821,12 @@ function scoreBreakdown(s, p){
   else if(ry+rey>=100) bonus('bonus_rush_rec_yd_100', true, (ry+rey)+' from scrimmage');
   bonus('bonus_pass_cmp_25', (+s.pass_cmp||0)>=25, (+s.pass_cmp||0)+' completions');
   bonus('bonus_rush_att_20', (+s.rush_att||0)>=20, (+s.rush_att||0)+' carries');
+  const fds2 = (+s.pass_fd||0) + (+s.rush_fd||0) + (+s.rec_fd||0);
+  if(fds2 && p){
+    const key = p.pos==='QB' ? 'bonus_fd_qb' : p.pos==='RB' ? 'bonus_fd_rb'
+              : p.pos==='WR' ? 'bonus_fd_wr' : p.pos==='TE' ? 'bonus_fd_te' : null;
+    if(key) add(key, fds2, +c[key]||0, fds2+' first down'+(fds2===1?'':'s'));
+  }
   const recs = +s.rec||0;
   if(recs && p){
     if(p.pos==='RB') add('bonus_rec_rb', recs, +c.bonus_rec_rb||0);
@@ -3774,6 +3857,13 @@ function scoreLine(s, p){
   if(ry+rey>=200) t += +c.bonus_rush_rec_yd_200||0; else if(ry+rey>=100) t += +c.bonus_rush_rec_yd_100||0;
   if((+s.pass_cmp||0)>=25) t += +c.bonus_pass_cmp_25||0;
   if((+s.rush_att||0)>=20) t += +c.bonus_rush_att_20||0;
+  /* A first down counts once, whoever got it, at that man's position rate. */
+  const fds = (+s.pass_fd||0) + (+s.rush_fd||0) + (+s.rec_fd||0);
+  if(fds && p){
+    const key = p.pos==='QB' ? 'bonus_fd_qb' : p.pos==='RB' ? 'bonus_fd_rb'
+              : p.pos==='WR' ? 'bonus_fd_wr' : p.pos==='TE' ? 'bonus_fd_te' : null;
+    if(key) t += fds * (+c[key]||0);
+  }
   const recs = +s.rec||0;
   if(recs && p){
     if(p.pos==='RB') t += recs*(+c.bonus_rec_rb||0);
@@ -3891,7 +3981,7 @@ function matchupTag(p){
   if(!p) return '';
   const o = thisWeekOpponent(p.nfl);
   if(!o) return 'bye';
-  const face = (o.home?'@ ':'vs ')+o.code;
+  const face = (o.atHome ? 'vs ' : '@ ')+o.code;
   if(p.pos==='DEF'){
     const ds = defStreamDifficulty(o.code);
     return ds ? face+' · '+ds.band.label : face;
@@ -3906,7 +3996,7 @@ function matchupLine(p){
     // no game this week — a bye, or an unmapped team
     return '<span class="tiny dim">on a bye — nothing this week</span>';
   }
-  const face = (o.home?'@ ':'vs ')+esc(o.code);
+  const face = (o.atHome ? 'vs ' : '@ ')+esc(o.code);
   const started = o.game.status!=='pre';
   const when = o.game.status==='final' ? 'final' : o.game.status!=='pre' ? 'playing now' : '';
 
@@ -3974,6 +4064,113 @@ function statsUrl(){
    on a timer. Projections come down the same way and refresh when the week
    changes, so nobody has to press anything. */
 let lastSleeperStats = 0, lastProjWeek = null, sleeperBusy = false;
+/* ---- Stat corrections -------------------------------------------------------
+   The NFL revises stats for days after a game — a catch reassigned, a fumble
+   taken back. Sleeper carries the revision, so a week that has been closed out
+   can be wrong days later. This goes back over the recent closed weeks, asks
+   Sleeper what it says now, and puts right anything that has moved: the man's
+   score, the team totals, the result, and the records. */
+let fixBusy = false, lastFixAt = 0;
+function correctionWeeks(){
+  /* The three most recent weeks that have been closed out. Older than that and
+     the NFL has long since finished revising. */
+  const done = [...new Set((S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week))]
+    .sort((a,b)=> b-a);
+  return done.slice(0, 3);
+}
+async function pullCorrections(quiet){
+  if(fixBusy) return 0;
+  const weeks = correctionWeeks();
+  if(!weeks.length) return 0;
+  fixBusy = true;
+  let fixed = 0, moved = [];
+  try{
+    for(const w of weeks){
+      const j = await getJSON(SLEEPER+'/stats/nfl/regular/'+S.league.season+'/'+w);
+      if(!j || typeof j!=='object') continue;
+      /* An empty answer is Sleeper having a bad moment, not every player in the
+         league scoring nothing. Taking it at its word would wipe the week. */
+      if(!Object.keys(j).length) continue;
+      const byP = (S.season||{}).byPlayer || {};
+      /* Work out what it would do before doing any of it. A revision moves a
+         handful of scores; anything that would rewrite most of the week is a bad
+         feed, and is left alone. */
+      const held = S.players.filter(pl=> pl.sleeperId &&
+        ((byP[pl.id]||{}).weeks||{})[w] != null);
+      const wouldMove = held.filter(pl=>{
+        const line = j[String(pl.sleeperId)];
+        const rec = byP[pl.id].weeks[w];
+        const now = line ? Math.round(scoreLine(line, pl)*100)/100 : 0;
+        return Math.abs(now - Math.round((+rec.fpts||0)*100)/100) >= 0.005;
+      }).length;
+      if(held.length >= 10 && wouldMove > held.length * 0.5){
+        console.warn('[front office] ignored a stat answer for week '+w+
+          ' that would have changed '+wouldMove+' of '+held.length+' scores');
+        continue;
+      }
+      S.players.forEach(p=>{
+        if(!p.sleeperId) return;
+        const line = j[String(p.sleeperId)];
+        const rec = (byP[p.id]||{}).weeks && byP[p.id].weeks[w];
+        const now = line ? Math.round(scoreLine(line, p)*100)/100 : 0;
+        const was = rec ? Math.round((+rec.fpts||0)*100)/100 : null;
+        if(was == null && !now) return;                 /* nothing either way */
+        if(was != null && Math.abs(now - was) < 0.005) return;   /* unchanged */
+        /* Something has moved. Put his week right. */
+        byP[p.id] = byP[p.id] || {fpts:0, gp:0, weeks:{}};
+        const line2 = byP[p.id];
+        line2.weeks = line2.weeks || {};
+        if(rec){
+          line2.fpts = Math.round(((+line2.fpts||0) - (+rec.fpts||0) + now)*100)/100;
+        } else {
+          line2.fpts = Math.round(((+line2.fpts||0) + now)*100)/100;
+          line2.gp = (+line2.gp||0) + 1;
+        }
+        line2.weeks[w] = {fpts:now, stats: line ? Object.assign({}, line) : {}};
+        fixed++;
+        if(moved.length < 8) moved.push({name:p.name, week:w, was, now});
+      });
+      /* Then the fixtures for that week, from the corrected figures. */
+      (S.schedule||[]).filter(g=> g.week===w && g.hp!=null).forEach(g=>{
+        const side = (teamId)=>{
+          const saved = ((S.lineups||{})[w]||{})[teamId];
+          const ids = (saved && saved.length) ? saved.filter(Boolean) : null;
+          if(!ids) return null;                          /* no lineup kept — leave it */
+          return Math.round(sum(ids.map(id=>{
+            const l = ((byP[id]||{}).weeks||{})[w];
+            return l ? (+l.fpts||0) : 0;
+          }))*100)/100;
+        };
+        const h = side(g.home), a = side(g.away);
+        if(h != null && Math.abs(h - (+g.hp||0)) > 0.005) g.hp = h;
+        if(a != null && Math.abs(a - (+g.ap||0)) > 0.005) g.ap = a;
+      });
+    }
+    if(fixed){
+      /* Records and head-to-head worked out again from the corrected results. */
+      rebuildRecords();
+      clearCapCache();
+      S.live.fixAt = Date.now();
+      const lines = moved.map(x=> x.name+' week '+x.week+': '+
+        (x.was==null? '—' : x.was.toFixed(2))+' → '+x.now.toFixed(2));
+      logIt(fixed+' stat correction'+(fixed===1?'':'s')+' from Sleeper — '+lines.slice(0,4).join('; '),
+        {type:'admin'});
+      notify('Stat corrections', fixed+' score'+(fixed===1?'':'s')+
+        ' changed after the NFL revised its figures. Records and results are up to date.', 'warn');
+      popNotify('Stat corrections', fixed+' score'+(fixed===1?'':'s')+' were revised.', 'league');
+      save();
+    }
+    lastFixAt = Date.now();
+    fixBusy = false;
+    if(!quiet) toast(fixed ? fixed+' score'+(fixed===1?'':'s')+' put right' : 'Nothing has changed',
+      fixed ? 'good' : '');
+    return fixed;
+  }catch(e){
+    fixBusy = false;
+    if(!quiet) toast('Could not check with Sleeper — '+e.message,'bad');
+    return 0;
+  }
+}
 async function pollSleeperStats(){
   if(sleeperBusy) return;
   const season = S.league.season, week = S.live.week || 1;
@@ -4722,7 +4919,7 @@ VIEWS.live = function(){
           const r = m.byPos, run = dvpRank(m.opp.code,null,'rush'), pass = dvpRank(m.opp.code,null,'pass');
           const strong = primaryKind(p.pos);
           return `<tr><td>${esc(p.name)}</td><td>${posTag(p.pos)}</td>
-            <td class="num">${m.opp.home?'@':'vs'} ${esc(m.opp.code)}</td>
+            <td class="num">${m.opp.atHome?'vs':'@'} ${esc(m.opp.code)}</td>
             <td class="right num">${r? r.rank+' <span class="dim">of '+r.of+'</span>' : '<span class="dim">—</span>'}</td>
             <td class="right num hide-xs ${strong==='rush'?'':'dim'}">${run? run.rank : '—'}</td>
             <td class="right num hide-xs ${strong==='pass'?'':'dim'}">${pass? pass.rank : '—'}</td>
@@ -5252,7 +5449,10 @@ function autoCloseTick(){
   /* Nothing to close if nobody has scored a point. */
   const anyPoints = (S.live.matchups||[]).some(mm=>
     fieldedTotal(mm.home).got > 0 || fieldedTotal(mm.away).got > 0);
-  if(!anyPoints){ S.settings.live.lastAutoClose = due; save(); return 0; }
+  /* Do NOT stamp the clock here. Stamping meant that if the scores had not
+     come down from Sleeper by two in the morning, the week was written off and
+     never closed at all — which is how a week ends up being closed by hand. */
+  if(!anyPoints) return 0;
   S.settings.live.lastAutoClose = due;
   const closed = w;
   doCloseWeek(true);
@@ -5295,7 +5495,18 @@ ACT.applyPaste = ()=>{
 function currentTeamId(){ return viewAsTeam() || ui.tmp.teamView || S.league.myTeamId || (S.teams[0]||{}).id; }
 /* May the current user act on this team's roster — their own team, or a
    commissioner acting for anyone. */
-function canManage(teamId){ return isCommish() || teamId === S.league.myTeamId; }
+function canManage(teamId){
+  if(isCommish()) return true;
+  /* Somebody signed in as the league's owner runs everything, whatever the
+     league state happens to say about which team is whose. */
+  if(typeof Supa === 'object' && Supa.boss && Supa.boss()) return true;
+  /* Which team is mine depends on who is signed in, not on the league state —
+     myTeamId is shared, so whoever saved last would otherwise decide it for
+     everybody and lock every other manager out of his own roster. */
+  if(typeof Supa === 'object' && Supa.seated && Supa.seated() && Supa.member && Supa.member.team_id)
+    return teamId === Supa.member.team_id;
+  return teamId === S.league.myTeamId;
+}
 /* Refuse outright, not just hide the button. Anybody can reach a handler. */
 function mustManage(teamId){
   if(canManage(teamId)) return true;
@@ -5478,7 +5689,7 @@ VIEWS.teams = function(){
               '<button class="btn sm ghost'+(canExtend(p).ok?'':' danger')+'" data-a="extend" data-id="'+p.id+'" title="'+
               (canExtend(p).ok?'':esc(canExtend(p).why||''))+'">Extend</button>'}
             ${(S.settings.tag.on && !isWaiver(p))?'<button class="btn sm ghost" data-a="tagPlayer" data-id="'+p.id+'">'+(isTagged(p)?'Tagged':'Tag')+'</button>':''}
-            <button class="btn sm ghost" data-a="editContract" data-id="${p.id}">Edit</button>
+            ${isCommish()?'<button class="btn sm ghost" data-a="editContract" data-id="'+p.id+'">Edit</button>':''}
             <button class="btn sm ghost" data-a="blockPlayer" data-id="${p.id}">Block</button>
             <button class="btn sm danger" data-a="release" data-id="${p.id}" title="${
               pastLateCut() ? esc('week '+(+S.live.week||1)+' — cutting him saves nothing, his '+
@@ -6391,7 +6602,10 @@ ACT.claimPlayer = (d)=>{
     /* Nothing to bid against — take him. A man cut loose keeps the deal that
        travels with him; anybody else comes in at the minimum. */
     if(isOrphan(p)) p.contract = Object.assign({}, p.contract, {teamId:tid});
-    else p.contract = makeWaiverContract(tid, 1);
+    else {
+      p.contract = makeWaiverContract(tid, 1);      /* the minimum, one year */
+      p.contract.faSigned = Date.now();
+    }
     delete p.droppedAt;
     logIt(teamName(tid)+' picked up '+p.name+' (no waiver day set)',
       {type:'waiver', teams:[tid], players:[p.id]});
@@ -6421,10 +6635,14 @@ function bidForm(){
     ${isOrphan(p)
       ? '<div class="hint">He was cut loose still on his deal — '+money(grossHit(p,S.league.season))+
         ' for '+(p.contract.years||1)+' year'+((p.contract.years||1)===1?'':'s')+
-        ', which comes with him.</div>'
-      : '<div class="hint">He comes in at '+money(faPrice(p))+
-        ', like any free agent who was not cut loose on a contract.</div>'}
-    ${isOrphan(p) ? '' : `<label class="f"><span>Sign him for</span>
+        ', which comes with him. You take it as it stands.</div>'
+      : '<div class="hint">He comes in at <b>'+money(faPrice(p))+' for one year</b>. That is what a free '+
+        'agent costs — there is nothing to negotiate.'+
+        (inFAWindow()
+          ? ' You can still adjust it until '+dstr(faDraftEnd() ? faDraftEnd()+faWindowDays()*86400000 : 0)+'.'
+          : ' The window after the drafts has closed, so it cannot be changed afterwards.')+
+        '</div>'}
+    ${true ? '' : `<label class="f"><span>Sign him for</span>
       <select data-a="bidField" data-f="years">${Array.from({length:Math.max(1,+S.settings.contracts.maxYears||1)},(_,i)=>i+1)
         .map(y2=>'<option value="'+y2+'"'+(+b.years===y2?' selected':'')+'>'+y2+' year'+(y2>1?'s':'')+'</option>').join('')}</select></label>`}
     <div class="hint">He joins at ${money(+S.settings.waivers.salary||1)} a year against the cap.
@@ -6534,7 +6752,9 @@ function onSomeRoster(p){
   return !!(p && p.contract && p.contract.teamId && byId(S.teams, p.contract.teamId));
 }
 /* Anyone not on a roster and not retired is a free agent. */
-function freeAgents(){ return S.players.filter(p=> !onSomeRoster(p) && !isRetired(p)); }
+function freeAgents(){
+  return S.players.filter(p=> !onSomeRoster(p) && !isRetired(p) && !hideIDP(p));
+}
 /* The lineup editor. Slot by slot, only players who can actually play there,
    and nobody in two places at once. */
 function lineupForm(teamId, week){
@@ -7866,6 +8086,99 @@ ACT.scoreCard = (d)=>{
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
     '<button class="btn" data-a="playerCard" data-id="'+p.id+'">His card</button>');
 };
+/* Clear out the defenders nobody can start. Only ones nobody holds. */
+/* And a way to ask right now. */
+ACT.beatCatchUp = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const n2 = reportersCatchUp();
+  render();
+  toast(n2 ? 'The writers have filed for '+n2+' week'+(n2===1?'':'s')
+           : 'They have already written about every closed week', n2?'good':'');
+};
+ACT.checkCorrections = async ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  ui.tmp.fixBusy = true; render();
+  await pullCorrections(false);
+  ui.tmp.fixBusy = false; render();
+};
+/* ---- Talking back to the press ----------------------------------------------
+   A reporter who files a piece and then says nothing when a manager answers is
+   just a notice board. These write back, in the voice they filed in. */
+ACT.repTalkType = (d, el)=>{
+  ui.tmp.repTalk = ui.tmp.repTalk || {};
+  ui.tmp.repTalk[d.id] = el.value;
+};
+ACT.repTalk = (d)=>{
+  const tid = actingTeam();
+  if(!mustManage(tid)) return;
+  const box = $('[data-k="rep'+d.id+'"]');
+  const text = ((box && box.value) || (ui.tmp.repTalk||{})[d.id] || '').trim();
+  if(!text) return;
+  const piece = (S.chat||[]).find(m=> m.id === d.id);
+  if(!piece) return;
+  /* The manager's answer, hung off the piece so it reads as a conversation. */
+  S.chat.push({id:uid('c'), at:Date.now(), teamId:tid, text, media:null, notify:'none',
+    replyTo:piece.id, replyToName:piece.reporter});
+  /* And the reporter's comeback. */
+  const back = reporterComeback(piece, tid, text);
+  if(back) S.chat.push({id:uid('c'), at:Date.now()+1, teamId:null,
+    reporter:piece.reporter, outlet:piece.outlet, reporterWeek:piece.reporterWeek,
+    /* Not a beat piece — a reply, so it never counts as the week's filing. */
+    text:back, media:null, notify:'none', replyTo:piece.id});
+  if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
+  (ui.tmp.repTalk||{})[d.id] = '';
+  save(); render();
+};
+/* What a reporter says when somebody answers him. Kept to his own manner. */
+function reporterComeback(piece, teamId, said){
+  const who = teamName(teamId);
+  const rec = teamRecord(byId(S.teams, teamId) || {});
+  const w = (+rec.w||0), l = (+rec.l||0);
+  const hot = /rubbish|nonsense|wrong|rigged|joke|idiot|shut|hate|stupid/i.test(said);
+  const proud = /told you|called it|easy|best|obviously|as I said/i.test(said);
+  const lines = hot ? [
+    'Noted. I will put you down as unhappy and check back at '+(w+l+1)+' weeks.',
+    who+' disputes the record. The record is not in dispute.',
+    'Strong words from a '+w+'-'+l+' side. The table is downstairs if you want another look.',
+    'I only write what the scoreboard tells me. Take it up with the scoreboard.'
+  ] : proud ? [
+    'He did call it, in fairness. Filed under things '+who+' will mention again.',
+    'One week does not make a dynasty, but it is a start.',
+    'Credit where it is due — '+who+' backed himself and it came off.'
+  ] : [
+    who+' has responded. We will see how it looks on Sunday.',
+    'Fair enough. On the record, then.',
+    'Noted, and we will hold him to it.',
+    'A reasonable answer from a '+w+'-'+l+' side.'
+  ];
+  /* Stable-ish variety without a random that changes on every redraw. */
+  const i = (said.length + w*3 + l*5) % lines.length;
+  return lines[i];
+}
+ACT.dropIDP = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const n2 = idpFreeCount();
+  if(!n2) return toast('There are none sitting in free agency','warn');
+  modal('Remove '+n2+' individual defenders',
+    '<p class="muted" style="margin:0 0 8px">Your lineup has no place for a defender, so these '+n2+
+    ' are sitting in free agency where nobody can use them. Removing them tidies the lists and makes '+
+    'everything quicker.</p>'+
+    '<div class="hint">Anybody on a roster is left alone. If you ever switch defenders on, a Sleeper '+
+    'import brings them back.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave them</button>'+
+    '<button class="btn danger" data-a="dropIDPGo">Remove '+n2+'</button>');
+};
+ACT.dropIDPGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  keepBackup(S, 'before removing individual defenders');
+  const before = S.players.length;
+  S.players = S.players.filter(p=> !(isIDP(p) && !(p.contract && p.contract.teamId)));
+  const gone = before - S.players.length;
+  clearCapCache();
+  logIt('Removed '+gone+' individual defenders from free agency', {type:'admin'});
+  closeModal(); save(true); render();
+  toast(gone+' removed','good');
+};
 ACT.pullScoring = async (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const id = String((d && d.id) || ui.tmp.scoreLeague || sleeperLeague() || '').trim();
@@ -8398,6 +8711,23 @@ ACT.taxiSettleNow = (d)=>{ const c=byId(S.taxiClaims,d.id); c.clock.remain=0; se
 /* contract editor ---------------------------------------------------------- */
 ACT.editContract = (d)=>{
   const p = byId(S.players,d.id), c = p.contract;
+  /* Writing a contract is a commissioner's job. Picking a loose player up is
+     not, so an orphan is still handled below for anybody. */
+  if(c && c.teamId && !isCommish())
+    return toast('Only a commissioner can change a contract','bad');
+  /* A free agency signing can be adjusted during the window after the drafts,
+     and not once it has shut. */
+  if(faLocked(p) && !d.force)
+    return modal('That window has closed',
+      '<p class="muted" style="margin:0 0 8px">'+esc(p.name)+' was signed out of free agency, and the '+
+      faWindowDays()+' days after the drafts are up. A deal signed that way is '+
+      money(+S.settings.waivers.salary||1)+' for one year and stays that way.</p>'+
+      '<div class="hint">If something genuinely needs putting right, a commissioner can force it through '+
+      'below — but it is meant to be shut.</div>',
+      '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+      (isCommish()
+        ? '<button class="btn danger" data-a="editContract" data-id="'+p.id+'" data-force="1">Change it anyway</button>'
+        : ''));
   if(isOrphan(p)){
     const tid = currentTeamId(), y = S.league.season;
     const hit = grossHit(p, y);
@@ -8443,6 +8773,7 @@ ACT.editContract = (d)=>{
   if(!d.keep) ui.tmp.cd = { pid:p.id, teamId: c? c.teamId : currentTeamId(), total: c? c.total : Math.max(1, p.value||1),
                 years: c? c.years : 1, structId: c? c.structId : S.settings.contracts.defaultStruct,
                 startYear: c? c.startYear : S.league.season,
+                waiver: !!(c && c.waiver),
                 byYear: (c && c.byYear) ? c.salaries.slice() : null };
   const cc = S.settings.contracts;
   modal((c?'Edit contract — ':'Sign — ')+p.name, `
@@ -8464,6 +8795,16 @@ ACT.editContract = (d)=>{
       <button class="btn sm ${ui.tmp.cd.byYear?'on':''}" data-a="cdMode" data-m="exact">Type each year</button>
       <span class="tiny dim">${ui.tmp.cd.byYear?'the total follows what you type':'the total is split by the structure'}</span>
     </div>
+    ${isCommish() ? `
+    <div class="hr"></div>
+    <div class="flabel">Waiver wire</div>
+    <label class="check"><input type="checkbox" data-a="cdWaiver" ${ui.tmp.cd.waiver?'checked':''}>
+      <span>Mark this as a waiver wire pickup
+        <span class="dim">— he carries the W tag, and while he is on ${money(+S.settings.waivers.salary||1)}
+        a year he cannot be extended. He clears at the turn of the season.</span></span></label>
+    ${ui.tmp.cd.waiver ? `<div class="hint">A man on more than ${money(+S.settings.waivers.salary||1)}
+      a year keeps his extension rights even with the tag — the bar is only for somebody who came in at
+      the wire price.</div>` : ''}` : ''}
     <div class="hr"></div>
     <div id="cdPreview">${contractPreview()}</div>
     ${(()=>{
@@ -8473,6 +8814,12 @@ ACT.editContract = (d)=>{
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
     (c?'<button class="btn danger" data-a="voidContract" data-id="'+p.id+'">Void deal</button>':'')+
     '<button class="btn pri" data-a="saveContract">Save contract</button>');
+};
+ACT.cdWaiver = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  ui.tmp.cd = ui.tmp.cd || {};
+  ui.tmp.cd.waiver = el ? !!el.checked : !ui.tmp.cd.waiver;
+  ACT.editContract({id:ui.tmp.cd.pid, keep:1});
 };
 ACT.cdField = (d, el)=>{
   const cd = ui.tmp.cd, f = d.f;
@@ -8743,6 +9090,9 @@ ACT.saveContract = ()=>{
     c.total = fixInc(sum(c.salaries));
     c.byYear = true;
   }
+  /* The waiver tag, which only a commissioner can set or clear. */
+  if(isCommish() && cd.waiver) c.waiver = true;
+  else if(!isCommish() && p.contract && p.contract.waiver) c.waiver = true;
   const before = p.contract; p.contract = c;
   if(S.settings.trades.capMustBeLegal){
     const bad = projYears().find(y=> capSpace(cd.teamId,y) < 0);
@@ -11279,15 +11629,32 @@ function reporterLines(week){
   return out.slice(0, 3);
 }
 /* Drop them into the league chat. Never notifies anyone — it is colour, not news. */
+/* A week can be closed without the writers filing — that is what happened when
+   the week-in-figures post was blocking them. This goes back and files for any
+   closed week that never got its pieces. */
+function reportersCatchUp(){
+  const done = [...new Set((S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week))]
+    .sort((a,b)=> a-b);
+  let filed = 0;
+  done.forEach(w=>{
+    if((S.chat||[]).some(m=> +m.reporterWeek === w && m.beat)) return;
+    filed += postReporters(w) ? 1 : 0;
+  });
+  if(filed) save();
+  return filed;
+}
 function postReporters(week){
   if((S.settings.chat||{}).reporters === false) return 0;
   if(!week) return 0;
   S.chat = S.chat || [];
-  if(S.chat.some(m=> m.reporterWeek === week)) return 0;   /* only once a week */
+  /* Only once a week, judged on a beat piece alone. The week-in-figures post and
+     the payout notice both carry a byline and a week, and either of them was
+     enough to stop the reporters writing at all. */
+  if(S.chat.some(m=> +m.reporterWeek === +week && m.beat)) return 0;
   const lines = reporterLines(week);
   lines.forEach(l=>{
     S.chat.push({id:uid('c'), at:Date.now(), teamId:null, reporter:l.rep.name, outlet:l.rep.outlet,
-      reporterWeek:week, text:l.text, media:null, notify:'none'});
+      reporterWeek:week, beat:true, text:l.text, media:null, notify:'none'});
   });
   if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
   return lines.length;
@@ -11453,11 +11820,19 @@ function chatBubble(mm){
           '<span class="dim tiny">'+esc(mm.outlet||'')+' \u00b7 week '+(mm.reporterWeek||'')+'</span></div>'+
         '<div class="chattext">'+esc(mm.text||'')+'</div>'+
         reactRow(mm)+
+        (canManage(actingTeam())
+          ? '<div class="row" style="gap:6px;margin-top:6px">'+
+            '<input type="text" data-k="rep'+mm.id+'" data-oninput="repTalkType" data-id="'+mm.id+'" '+
+            'placeholder="Say something back\u2026" style="flex:1;font-size:12px" '+
+            'value="'+esc((ui.tmp.repTalk||{})[mm.id]||'')+'">'+
+            '<button class="btn sm" data-a="repTalk" data-id="'+mm.id+'">Reply</button></div>'
+          : '')+
       '</div></div>';
   }
   return '<div class="chatrow'+(mine?' me':'')+'">'+
     '<div class="chatbub" style="border-color:'+teamColor(mm.teamId)+'44">'+
       '<div class="chathead"><b style="color:'+teamColor(mm.teamId)+'">'+esc(teamName(mm.teamId))+'</b>'+
+        (mm.replyToName? '<span class="dim tiny">to '+esc(mm.replyToName)+'</span>' : '')+
         '<span class="dim tiny">'+dstr(mm.at)+'</span></div>'+
       (mm.text? '<div class="chattext">'+esc(mm.text)+'</div>':'')+
       chatMediaHTML(mm)+
@@ -12053,10 +12428,24 @@ function difficultyOf(r){
 }
 /* Backs live on the ground, everyone else through the air. */
 function primaryKind(pos){ return pos==='RB' ? 'rush' : 'pass'; }
-function thisWeekOpponent(nfl){
-  const g = (S.live.games||[]).find(x=> x.home===nfl || x.away===nfl);
+function thisWeekOpponent(nfl, week){
+  const w = +week || +S.live.week || 1;
+  const code = String(nfl||'').toUpperCase();
+  if(!code) return null;
+  /* The real card first — the simulator's pairings are invented and were giving
+     the wrong opponent. */
+  const real = ((S.live.nfl||{})[w]) || [];
+  let g = real.find(x=> String(x.home).toUpperCase()===code || String(x.away).toUpperCase()===code);
+  if(!g) g = (S.live.games||[]).find(x=> x.home===code || x.away===code);
   if(!g) return null;
-  return { code: g.home===nfl ? g.away : g.home, home: g.home===nfl, game:g };
+  const atHome = String(g.home).toUpperCase() === code;
+  return {
+    code: atHome ? g.away : g.home,
+    /* Whether HE is at home. A club at home is "vs", away is "@". */
+    atHome,
+    home: !atHome,          /* kept for anything still reading the old name */
+    game: g
+  };
 }
 function matchupFor(p){
   const opp = thisWeekOpponent(p.nfl);
@@ -12070,7 +12459,8 @@ function matchupFor(p){
 function matchupChip(p, opts){
   const m = matchupFor(p);
   if(!m) return '';
-  const face = (m.opp.home?'@ ':'vs ') + m.opp.code;
+  /* At home is "vs", away is "@" — it was the wrong way round. */
+  const face = (m.opp.atHome ? 'vs ' : '@ ') + m.opp.code;
   if(!m.diff) return '<span class="pill" title="not enough games on this defense yet">'+esc(face)+'</span>';
   return '<span class="pill '+(m.diff.cls==='bad'?'live':m.diff.cls==='good'?'ok':'')+'" title="'+
     esc(m.opp.code+' ranks '+(m.byPos?m.byPos.rank+' of '+m.byPos.of+' against '+p.pos:'—')+
@@ -12112,9 +12502,17 @@ function pctRank(v, arr){
 /* Blend the two, with the league deciding how much each side counts. */
 function formIndex(p){
   const w = clamp(+S.settings.value.realWeight||0, 0, 100)/100;
-  const peers = S.players.filter(x=> x.pos===p.pos);
-  const fVals = peers.map(fantasyPPG).filter(v=> v!=null);
-  const rVals = peers.map(realPPG).filter(v=> v!=null);
+  /* The ladders for a position are the same for every man on it, so they are
+     built once rather than rebuilt for each player in the list. */
+  const tab = memo('formTab|'+p.pos, ()=>{
+    const peers = S.players.filter(x=> x.pos===p.pos);
+    return {
+      peers,
+      fVals: peers.map(fantasyPPG).filter(v=> v!=null),
+      rVals: peers.map(realPPG).filter(v=> v!=null)
+    };
+  });
+  const peers = tab.peers, fVals = tab.fVals, rVals = tab.rVals;
   const f = fantasyPPG(p), r = realPPG(p);
   if(f==null && r==null) return pctRank(p.value||0, peers.map(x=> x.value||0));
   const fi = f==null ? 0.5 : pctRank(f, fVals);
@@ -12163,7 +12561,8 @@ function extensionQuote(p, years, startOffset){
   const aav = Math.max(+S.settings.contracts.minSalary||0, roundInc(sum(yrs)/years*prem));
   return { perYear:yrs, aav, total:roundInc(aav*years), prem };
 }
-function valueBreakdown(p){
+function valueBreakdown(p){ return memo('vb|'+(p&&p.id), ()=> valueBreakdownRaw(p)); }
+function valueBreakdownRaw(p){
   const peers = S.players.filter(x=> x.pos===p.pos);
   return {
     fantasy: fantasyPPG(p), real: realPPG(p),
@@ -12248,7 +12647,8 @@ function ladderRound(v){
   return S.settings.contracts.ladder.roundWhole ? Math.round(v) : roundInc(v);
 }
 /* Every salary being paid at a position, biggest first. */
-function aavTable(pos){
+function aavTable(pos){ return memo('aav|'+pos, ()=> aavTableRaw(pos)); }
+function aavTableRaw(pos){
   return S.players
     .filter(x=> x.pos===pos && x.contract && !x.contract.waiver)
     .map(aavOf).filter(v=> v>0).sort((a,b)=> b-a);
@@ -12341,7 +12741,8 @@ function seasonPPG(p, year){
   return null;
 }
 /* His best available average: this season, else the most recent one he played. */
-function lastKnownPPG(p){
+function lastKnownPPG(p){ return memo('lk|'+(p&&p.id), ()=> lastKnownPPGRaw(p)); }
+function lastKnownPPGRaw(p){
   const now = seasonPPG(p);
   if(now != null) return {ppg:now, year:S.league.season};
   const years = playerYears(p).filter(y=> y !== S.league.season);
@@ -12378,7 +12779,8 @@ function scoreIn(p, year){
    else — part what he did on the field, part what he scored for you. */
 /* Is the ladder ranking on fantasy points per game alone? */
 function ladderByFpts(){ return !!((S.settings.contracts.ladder||{}).byFpts); }
-function positionRank(p, year){
+function positionRank(p, year){ return memo('pr|'+(p&&p.id)+'|'+year, ()=> positionRankRaw(p, year)); }
+function positionRankRaw(p, year){
   if(year==null) return null;
   /* Ranking on his scoring alone means the real-life side carries no weight. */
   const w = ladderByFpts() ? 0 : clamp(+S.settings.value.realWeight||0, 0, 100)/100;
@@ -12759,7 +13161,11 @@ function runWaivers(now){
     }
     /* He joins at the league's waiver salary — the bid is budget, not cap. */
     if(isOrphan(p)) p.contract = Object.assign({}, p.contract, {teamId:win.teamId});
-    else p.contract = makeWaiverContract(win.teamId, win.years);
+    else {
+      /* Winning a bid buys the man, not a longer deal — the minimum, one year. */
+      p.contract = makeWaiverContract(win.teamId, 1);
+      p.contract.faSigned = Date.now();
+    }
     delete p.droppedAt;                     /* the hold is spent */
     if(faabOn() && win.bid > 0) faabSpend(win.teamId, win.bid);
     win.status='won'; win.wonAt=Date.now();
@@ -13865,7 +14271,8 @@ function livePct(t){
   if(!played) return 0;
   return (r.w + r.t*0.5) / played;
 }
-function standings(withWhy){ return rankTeams((t)=>{ const r=liveRecord(t); return r.w + r.t*0.5; }, withWhy); }
+function standings(withWhy){ return memo('standings|'+(withWhy?1:0), ()=> standingsRaw(withWhy)); }
+function standingsRaw(withWhy){ return rankTeams((t)=>{ const r=liveRecord(t); return r.w + r.t*0.5; }, withWhy); }
 /* The same ladder, with phantom wins folded in. Draft order only. */
 function draftStandings(withWhy){
   return rankTeams((t)=>{ const r=liveRecord(t); return r.w + r.t*0.5 + phantomWins(t); }, withWhy);
@@ -13906,7 +14313,8 @@ function rankTeams(score, withWhy){
    from. Phantom wins count here and nowhere else.
    If the league hands the loser bracket's winner the first pick, that team is
    lifted to the top and everybody else keeps their order behind them. */
-function draftOrder(){
+function draftOrder(){ return memo('draftOrder', ()=> draftOrderRaw()); }
+function draftOrderRaw(){
   const base = draftStandings().slice().reverse();
   if(!loserPrizeOn()) return base;
   const champ = loserChampion();
@@ -13918,8 +14326,13 @@ function draftOrder(){
   return out;
 }
 function draftSlot(teamId){
-  const i = draftOrder().findIndex(t=> t.id===teamId);
-  return i < 0 ? S.teams.length : i+1;
+  /* The order is the same for everybody, so work it out once and read off it. */
+  const map = memo('draftSlots', ()=>{
+    const o = {};
+    draftOrder().forEach((t,i)=>{ o[t.id] = i+1; });
+    return o;
+  });
+  return map[teamId] || S.teams.length;
 }
 function pickSlot(pk){
   if(isComp(pk)) return S.teams.length + (pk.comp.index||1);
@@ -13961,7 +14374,8 @@ function lastChampion(){
   return (rec && rec.champion) || null;
 }
 /* Everything the season owes, given how it finished. */
-function payouts(year){
+function payouts(year){ return memo('payouts|'+(year||''), ()=> payoutsRaw(year)); }
+function payoutsRaw(year){
   const y = year || S.league.season;
   const d = payoutCfg();
   const table = standings();
@@ -14143,9 +14557,16 @@ function formPPG(p){
    production at that position. A player worth more than he costs is an asset. */
 function worthPerYear(p){
   const pos = p.pos;
-  const peers = S.players.filter(x=> x.pos===pos && x.contract);
-  const pts = peers.map(formPPG).filter(v=> v>0).sort((a,b)=> b-a);
-  const pay = peers.map(baseSalary).filter(v=> v>0).sort((a,b)=> b-a);
+  /* The two ladders for a position are the same for everybody on it — built
+     once rather than for each man in turn. */
+  const tables = memo('worthTables|'+pos, ()=>{
+    const peers = S.players.filter(x=> x.pos===pos && x.contract);
+    return {
+      pts: peers.map(formPPG).filter(v=> v>0).sort((a,b)=> b-a),
+      pay: peers.map(baseSalary).filter(v=> v>0).sort((a,b)=> b-a)
+    };
+  });
+  const pts = tables.pts, pay = tables.pay;
   if(!pts.length || !pay.length) return 0;
   const mine = formPPG(p);
   /* Where he sits among his position, and what the league pays at that rank. */
@@ -14155,7 +14576,8 @@ function worthPerYear(p){
   return Math.round(at * 100) / 100;
 }
 /* One player, weighed up. */
-function playerWorth(p, year){
+function playerWorth(p, year){ return memo('pw|'+(p&&p.id)+'|'+(year||''), ()=> playerWorthRaw(p, year)); }
+function playerWorthRaw(p, year){
   const y = year || S.league.season;
   const c = p.contract;
   const age = +p.age || 0;
@@ -14428,7 +14850,8 @@ function recordWeek(){
    the most points without earning a spot on record — a wildcard for the team
    that has been unlucky rather than bad. */
 function wildcardOn(){ return ((S.settings.playoffs||{}).pointsSpot) === true; }
-function playoffField(){
+function playoffField(){ return memo('playoffField', ()=> playoffFieldRaw()); }
+function playoffFieldRaw(){
   const p = S.settings.playoffs;
   const size = clamp(+p.teams||0, 0, S.teams.length);
   const table = standings();
@@ -14734,22 +15157,52 @@ async function pullNews(loud){
 }
 /* Headline matching, not a per-player feed. Surname plus first initial keeps
    the Smiths apart without missing "J. Smith" style references. */
+/* Matching every player against every story is the single most expensive thing
+   the app does — sixteen hundred players, two regular expressions apiece, for
+   each story. It is worked out once and read off after that. */
+/* Named apart from newsIndex(item), which is where a story sits in the list. */
+function newsMatches(){
+  return memo('newsMatches', ()=>{
+    const items = (S.news && S.news.items) || [];
+    const byPlayer = {}, byItem = new Map();
+    if(!items.length) return {byPlayer, byItem};
+    /* Each story's text, lowercased once rather than per player. */
+    const hays = items.map(x=> ((x.headline||'') + ' ' + (x.description||'')).toLowerCase());
+    items.forEach(x=> byItem.set(x, []));
+    S.players.forEach(p=>{
+      if(!p || !p.name) return;
+      const bits = String(p.name).split(/\s+/);
+      const last = bits[bits.length-1], first = bits[0] || '';
+      if(!last || last.length < 3) return;
+      const lastL = last.replace(/[^\w]/g,'').toLowerCase();
+      if(!lastL) return;
+      /* A cheap test first: if the surname is not in the text at all, there is
+         nothing to check. That throws out almost every pair immediately. */
+      let hits = null;
+      for(let i=0;i<hays.length;i++){
+        if(hays[i].indexOf(lastL) < 0) continue;
+        const firstL = first.replace(/[^\w]/g,'').toLowerCase();
+        const hay = hays[i];
+        const full = new RegExp('\\b'+firstL+'\\W+'+lastL+'\\b','i');
+        const surname = new RegExp('\\b'+lastL+'\\b','i');
+        const initial = firstL ? new RegExp('\\b'+firstL[0]+'\\.','i') : null;
+        if(full.test(hay) || (surname.test(hay) && initial && initial.test(hay))){
+          (hits = hits || []).push(items[i]);
+          byItem.get(items[i]).push(p);
+        }
+      }
+      if(hits) byPlayer[p.id] = hits.slice(0,6);
+    });
+    return {byPlayer, byItem};
+  });
+}
 function playerNews(p){
-  const items = (S.news && S.news.items) || [];
-  if(!items.length || !p || !p.name) return [];
-  const bits = String(p.name).split(/\s+/);
-  const last = bits[bits.length-1], first = bits[0] || '';
-  if(!last || last.length < 3) return [];
-  const full = new RegExp('\\b'+first.replace(/[^\w]/g,'')+'\\W+'+last.replace(/[^\w]/g,'')+'\\b','i');
-  const surname = new RegExp('\\b'+last.replace(/[^\w]/g,'')+'\\b','i');
-  return items.filter(x=>{
-    const hay = x.headline + ' ' + x.description;
-    return full.test(hay) || (surname.test(hay) && (new RegExp('\\b'+first[0]+'\\.','i')).test(hay));
-  }).slice(0,6);
+  if(!p || !p.id) return [];
+  return newsMatches().byPlayer[p.id] || [];
 }
 /* Which players in this league a story is actually about. */
 function newsTouches(item){
-  return S.players.filter(p=> playerNews(p).indexOf(item) >= 0);
+  return newsMatches().byItem.get(item) || [];
 }
 function newsIndex(item){ return (S.news.items||[]).indexOf(item); }
 ACT.readNews = (d)=>{
@@ -14964,15 +15417,40 @@ function autoFillOn(teamId){
   return !!(t && t.autoFill);
 }
 /* Who could take his place: same slot, on the bench, fit, and projected best. */
-function standInFor(p, teamId, week){
+/* Which place in the lineup a man is filling, so a replacement is judged against
+   the right list — a flex takes a back, a receiver or a tight end; a superflex
+   takes a quarterback as well; everywhere else it is like for like. */
+function slotAt(teamId, week, index){
+  const list = [];
+  (S.settings.roster.slots||[]).forEach(sl=>{
+    for(let i=0;i<sl.count;i++) list.push(sl);
+  });
+  return list[index] || null;
+}
+/* Who may come on for a man who is out, in the place he was filling.
+   Three rules, all of which have to hold:
+     he can play that place — the same position, or anything the flex allows
+     his own game has not kicked off
+     and it does not start before the game of the man he is replacing */
+function standInFor(p, teamId, week, slot){
   const w = +week || +S.live.week || 1;
   const saved = ((S.lineups||{})[w]||{})[teamId] || [];
   const started = {}; saved.forEach(id=>{ if(id) started[id]=1; });
-  const slot = (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(p.pos) >= 0);
-  const fits = (x)=> slot ? slot.eligible.indexOf(x.pos) >= 0 : x.pos === p.pos;
+  /* The place he is filling. Fall back to the first that takes his position. */
+  const place = slot || (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(p.pos) >= 0);
+  const fits = (x)=> place ? place.eligible.indexOf(x.pos) >= 0 : x.pos === p.pos;
+  const hisKick = kickoffAt(p.nfl, w);
   return teamPlayers(teamId)
     .filter(x=> x.id!==p.id && playerSlot(x)==='active' && !started[x.id] && fits(x) && !isOut(x))
-    .filter(x=> !gameStarted(x))          /* his game must not have kicked off */
+    /* Nobody whose game has kicked off, and nobody who has already played. */
+    .filter(x=> !gameStarted(x) && !gameLive(x.nfl, w) && !gameFinal(x.nfl, w))
+    /* And nobody kicking off before the man he is covering — otherwise his score
+       would already be known when the substitution was made. */
+    .filter(x=>{
+      const theirs = kickoffAt(x.nfl, w);
+      if(hisKick == null || theirs == null) return true;
+      return theirs >= hisKick;
+    })
     .map(x=> ({p:x, proj: projFor(x, w) != null ? projFor(x, w) : (projFromPosition(x)||0)}))
     .sort((a,b)=> b.proj - a.proj)[0] || null;
 }
@@ -14987,8 +15465,10 @@ function autoFillRun(){
     saved.forEach((pid, i)=>{
       const p = byId(S.players, pid);
       if(!p || !isOut(p)) return;
-      if(gameStarted(p)) return;                 /* too late, his game has gone */
-      const sub = standInFor(p, t.id, w);
+      /* Once his game is under way he is locked in, whatever his status says —
+         pressing the button afterwards cannot take him back out. */
+      if(gameStarted(p) || gameLive(p.nfl, w) || gameFinal(p.nfl, w)) return;
+      const sub = standInFor(p, t.id, w, slotAt(t.id, w, i));
       if(!sub) return;
       saved[i] = sub.p.id;
       swaps++;
@@ -15432,7 +15912,9 @@ function reminderText(t){
     (t?t.name+' — ':'')+'amount owed: '+duesMoney(dueAmount(t||{dues:{}}))+'\n'+
     'Due: '+dayOnly(d.dueDate)+(dl!=null?(dl<0?' ('+Math.abs(dl)+' days overdue)':' (in '+dl+' days)'):'')+'\n'+
     (d.payTo?'Send to: '+d.payTo+'\n':'')+(d.instructions?'\n'+d.instructions+'\n':'')+
-    '\nStill outstanding: '+S.teams.filter(x=>!x.dues.paid).map(x=>x.name).join(', ');
+    /* Read the season's own record, not the old single field — that is why
+       teams already marked paid were still being named in the message. */
+    '\nStill outstanding: '+(duesOwing().map(x=>x.name).join(', ') || 'nobody, everyone has paid');
 }
 ACT.remindOne = (d)=>{
   const t = byId(S.teams,d.id);
@@ -15972,7 +16454,7 @@ ACT.sleeperGo = async ()=>{
     const players = await sleeperPlayerMap();
     impProgress('Putting it together…', 85);
 
-    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
+    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
     const season = parseInt(league.season,10) || S.league.season;
 
     if(o.teams){
@@ -16005,7 +16487,7 @@ ACT.sleeperGo = async ()=>{
         if(op.sleeperId) oldById[String(op.sleeperId)] = keep;
         oldDeals[keyOf(op.name, op.pos)] = keep;
       });
-      let kept = 0, freshDeals = 0;
+      let kept = 0, freshDeals = 0, noDeal = 0, skippedIDP = 0;
       const reuse = (p, teamId)=>{
         const had = (p.sleeperId && oldById[String(p.sleeperId)]) || oldDeals[keyOf(p.name, p.pos)];
         if(had){
@@ -16015,14 +16497,31 @@ ACT.sleeperGo = async ()=>{
           if(p.exp==null && had.exp!=null) p.exp = had.exp;
           if(had.nflPractice) p.nflPractice = true;
           kept++;
-        } else {
+        } else if(o.contracts){
+          /* Only when the commissioner has actually asked for it. Otherwise a
+             player Sleeper has on a roster but this league has never priced is
+             left without a deal, for somebody to sign properly. */
           p.contract = makeContract(teamId, +S.settings.contracts.minSalary||1, 1, 'ev', season);
           freshDeals++;
+        } else {
+          p.contract = null;
+          noDeal++;
         }
       };
-      S.teams=[]; S.players=[]; S.picks=[]; S.auctions=[]; S.faAuctions=[]; S.trades=[];
-      S.live = {week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0};
-      S.dvp = {}; S.season = {year:season, byPlayer:{}};
+      /* Only clear what is actually being brought in. Ticking one box used to
+         wipe the lot, which is how a league lost its picks by importing rosters. */
+      const oldPicks = S.picks, oldTrades = S.trades, oldLive = S.live, oldSeason = S.season;
+      S.teams=[]; S.players=[]; S.auctions=[]; S.faAuctions=[];
+      if(o.picks !== false){ S.picks=[]; } else { S.picks = oldPicks; }
+      S.trades = oldTrades || [];
+      /* A running week and what has been scored are nothing to do with Sleeper's
+         roster list — they stay unless the schedule is being replaced. */
+      if(o.schedule){
+        S.live = {week:1, games:[], stats:{}, feed:[], matchups:[], talk:[], lastTick:0};
+        S.dvp = {}; S.season = {year:season, byPlayer:{}};
+      } else {
+        S.live = oldLive; S.season = oldSeason;
+      }
       const mk = Object.keys(MASCOTS);
       rosters.forEach((r,i)=>{
         const u = byUser[r.owner_id] || {};
@@ -16077,6 +16576,9 @@ ACT.sleeperGo = async ()=>{
         const pl = players[pid]; if(!pl) return;
         const raw = pl.position || (pl.fantasy_positions||[])[0];
         if(!/^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(String(raw||''))) return;
+        /* A league that does not start defenders does not want eight hundred of
+           them arriving. They come back the moment it says it does. */
+        if(!idpOn() && IDP_POS.indexOf(String(raw).toUpperCase()) >= 0) { skippedIDP++; return; }
         if(!pl.team && raw!=='DEF') return;              /* not on an NFL club */
         const p = {id:uid('p'), sleeperId:pid, name:sleeperName(pl,pid), pos:raw,
           nfl:pl.team||'', age:+pl.age||0, value:1, contract:null,
@@ -16184,7 +16686,7 @@ ACT.sleeperGo = async ()=>{
   }
 };
 ACT.slOpt = (d)=>{
-  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
+  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
   ui.tmp.slOpts[d.k] = !ui.tmp.slOpts[d.k];
   render();
 };
@@ -16267,7 +16769,7 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
     })():''}
 
     ${sub==='sleeper'?(()=>{
-      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
+      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
       const done = ui.tmp.slDone;
       return `<div class="grid g2">
       <div class="panel"><div class="ph"><h3>Pull it straight from Sleeper</h3></div><div class="pb stack">
@@ -16290,6 +16792,17 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
           <span>The schedule <span class="dim">— who plays who, week by week</span></span></label>
         <label class="check"><input type="checkbox" ${o.depth?'checked':''} data-a="slOpt" data-k="depth">
           <span>Depth charts <span class="dim">— where each player sits on his NFL club</span></span></label>
+        <label class="check"><input type="checkbox" ${idpOn()?'checked':''} data-set="settings.roster.idp">
+          <span>I want individual defenders
+            <span class="dim">— off by default. Your lineup has no place for one, so they are left out of
+            free agency and out of an import.</span></span></label>
+        ${idpOn() ? '' : `<div class="hint">${idpFreeCount()} defender${idpFreeCount()===1?'':'s'} are
+          sitting in free agency where nobody can use them.
+          ${isCommish() && idpFreeCount() ? '<button class="btn sm ghost" data-a="dropIDP">Remove them</button>' : ''}</div>`}
+        <label class="check"><input type="checkbox" ${o.contracts?'checked':''} data-a="slOpt" data-k="contracts">
+          <span>Give a contract to anybody who has not got one
+            <span class="dim">— off by default. Existing deals are never touched either way; this only
+            decides what happens to a player Sleeper has on a roster who has never been priced here.</span></span></label>
         <label class="check"><input type="checkbox" ${o.picks!==false?'checked':''} data-a="slOpt" data-k="picks">
           <span>Draft picks <span class="dim">— including the ones already traded</span></span></label>
         <button class="btn pri wide" data-a="sleeperGo" ${ui.tmp.slBusy?'disabled':''}>${ui.tmp.slBusy?'Working…':'Pull the league'}</button>
@@ -17091,18 +17604,18 @@ const SCORING_GROUPS = [
     ['pass_yd','Points per passing yard'],['pass_td','Passing TD'],['pass_fd','Passing first down'],
     ['pass_2pt','Two-point conversion'],['pass_int','Pass intercepted'],['pass_int_td','Pick six thrown'],
     ['pass_cmp','Pass completed'],['pass_inc','Incomplete pass'],['pass_att','Pass attempt'],
-    ['pass_sack','QB sacked'],['pass_cmp_40p','40+ yard completion'],['pass_td_40p','40+ yard passing TD']
+    ['pass_sack','QB sacked'],['pass_cmp_40p','40+ yard completion'],['pass_cmp_50p','Completion of 50+'],['pass_td_40p','40+ yard passing TD'],['pass_td_50p','Passing TD of 50+']
   ]],
   ['Rushing', [
     ['rush_yd','Points per rushing yard'],['rush_td','Rushing TD'],['rush_fd','Rushing first down'],
-    ['rush_2pt','Two-point conversion'],['rush_att','Carry'],['rush_40p','40+ yard rush'],['rush_td_40p','40+ yard rushing TD']
+    ['rush_2pt','Two-point conversion'],['rush_att','Carry'],['rush_40p','40+ yard rush'],['rush_50p','Rush of 50+'],['rush_td_40p','40+ yard rushing TD'],['rush_td_50p','Rushing TD of 50+']
   ]],
   ['Receiving', [
     ['rec','Reception'],['rec_yd','Points per receiving yard'],['rec_td','Receiving TD'],
     ['rec_fd','Receiving first down'],['rec_2pt','Two-point conversion'],
     ['rec_0_4','Catch of 0 to 4 yards'],['rec_5_9','Catch of 5 to 9'],['rec_10_19','Catch of 10 to 19'],
-    ['rec_20_29','Catch of 20 to 29'],['rec_30_39','Catch of 30 to 39'],['rec_40p','Catch of 40+'],
-    ['rec_td_40p','40+ yard receiving TD'],
+    ['rec_20_29','Catch of 20 to 29'],['rec_30_39','Catch of 30 to 39'],['rec_40p','Catch of 40+'],['rec_50p','Reception of 50+'],
+    ['rec_td_40p','40+ yard receiving TD'],['rec_td_50p','Receiving TD of 50+'],
     ['bonus_rec_rb','Extra per catch — RB'],['bonus_rec_wr','Extra per catch — WR'],['bonus_rec_te','Extra per catch — TE']
   ]],
   ['Kicking', [
@@ -17152,6 +17665,8 @@ const SCORING_GROUPS = [
     ['bonus_rush_yd_100','100 to 199 rushing yards'],['bonus_rush_yd_200','200+ rushing yards'],
     ['bonus_rec_yd_100','100 to 199 receiving yards'],['bonus_rec_yd_200','200+ receiving yards'],
     ['bonus_rush_rec_yd_100','100 to 199 rush + rec'],['bonus_rush_rec_yd_200','200+ rush + rec'],
+    ['bonus_fd_qb','First down by a QB'],['bonus_fd_rb','First down by a RB'],
+    ['bonus_fd_wr','First down by a WR'],['bonus_fd_te','First down by a TE'],
     ['bonus_pass_cmp_25','25+ completions'],['bonus_rush_att_20','20+ carries']
   ]],
   ['IDP', [
@@ -17191,16 +17706,10 @@ const SCORING_GROUPS = [
     ['idp_tkl_loss_3p','idp tkl loss 3p'],
     ['idp_tkl_sol','idp tkl sol'],
     ['int_td','int td'],
-    ['pass_cmp_50p','pass cmp 50p'],
     ['pass_int_td_50p','pass int td 50p'],
     ['pass_rush_yd','pass rush yd'],
     ['pass_sack_yd','pass sack yd'],
-    ['pass_td_50p','pass td 50p'],
-    ['rec_50p','rec 50p'],
-    ['rec_td_50p','rec td 50p'],
-    ['rush_50p','rush 50p'],
     ['rush_rec_yd','rush rec yd'],
-    ['rush_td_50p','rush td 50p'],
     ['st_fum_lost','st fum lost'],
     ['td','td'],
     ['two_pt','two pt']
@@ -17750,6 +18259,10 @@ VIEWS.settings = function(){
           <button class="btn ghost" data-a="simReset">Start the next week</button>
           ${lastClosedWeek() ? '<button class="btn ghost" data-a="reopenWeek">Put week '+
             lastClosedWeek()+' back</button>' : ''}
+          ${lastClosedWeek() ? '<button class="btn ghost" data-a="beatCatchUp">Get the reporters to file</button>' : ''}
+          ${lastClosedWeek() ? '<button class="btn ghost" data-a="checkCorrections" '+
+            (ui.tmp.fixBusy?'disabled':'')+'>'+(ui.tmp.fixBusy?'Checking…':'Check for stat corrections')+
+            '</button>' : ''}
           <button class="btn ghost danger" data-a="wipeSeason">Clear the whole season</button>
         </div>
         <div class="hr"></div>
@@ -17778,6 +18291,15 @@ VIEWS.settings = function(){
           It has been taken off Live scoring so nobody trips over it mid-Sunday.<br>
           <b>Put week N back</b> undoes a close — the week reopens, its result comes off the books and
           the scoring is unfolded. Use it if a week was closed out before you meant it to be.
+          ${(()=>{
+            const w = correctionWeeks();
+            if(!w.length) return '';
+            return '<br><b>Stat corrections</b> are checked a few times a day against Sleeper for week'+
+              (w.length===1?' ':'s ')+w.slice().sort((a,b)=>a-b).join(', ')+
+              ' — the NFL revises figures for days after a game, and scores, results and records are put '+
+              'right on their own when it does.'+
+              (S.live.fixAt ? ' Last checked '+dstr(S.live.fixAt)+'.' : '');
+          })()}
           <b>Clear this week</b> wipes what has been scored and leaves you on the same week.
           <b>Start the next week</b> records this one and moves everybody on.
           <b>Clear the whole season</b> puts everything back to week 1 with nothing played — for when you have
@@ -17793,6 +18315,19 @@ VIEWS.settings = function(){
             <input type="number" min="1" max="6" data-set="settings.rookie.windowMaxDeal" value="${+rookieRules().windowMaxDeal||3}"></label>
           <label class="f"><span>Rookie draft ended</span>
             <input type="date" data-norender data-set="settings.rookie.draftEnd" value="${esc(rookieRules().draftEnd||'')}"></label>
+            <label class="f"><span>Free agent draft ended</span>
+              <input type="date" data-norender data-set="settings.rookie.faDraftEnd"
+                value="${esc((S.settings.rookie||{}).faDraftEnd||'')}"></label>
+            <div class="hint" style="grid-column:1/-1">${(()=>{
+              const end = faDraftEnd();
+              if(end == null) return 'Neither draft has an end date, so free agency contracts can still be '+
+                'adjusted. Put the dates in and the window closes on its own.';
+              const shut = end + faWindowDays()*86400000;
+              return inFAWindow()
+                ? 'Contracts signed out of free agency can be adjusted until <b>'+dstr(shut)+'</b>.'
+                : 'That window shut on '+dstr(shut)+'. A free agency signing is '+
+                  money(+S.settings.waivers.salary||1)+' for one year and cannot be changed now.';
+            })()}</div>
           <label class="f"><span>This season's draft is</span>
             <select data-set="settings.rookie.draftDone">
               <option value=""${rookieRules().draftDone==null?' selected':''}>work it out from the date</option>
@@ -18316,6 +18851,17 @@ VIEWS.settings = function(){
           ${pct(c.cap.backload.pct)} of the gap${c.cap.backload.credit?', and it works both ways':', and front-loading earns nothing back'}.</div>
         <div class="hr"></div>
         <label class="f"><span>Dead cap when you cut a player (%)</span><input type="number" min="0" max="100" data-set="settings.cap.deadCapPct" value="${c.cap.deadCapPct}"></label>
+        <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.lateCutOn" ${lateCutOn()?'checked':''}>
+          <span>Late cuts save nothing
+            <span class="dim">— past the week below, the whole of that season's salary stays on your books</span></span></label>
+        ${!lateCutOn() ? '' : `<label class="f"><span>From after week</span>
+          <input type="number" min="1" max="18" data-set="settings.cap.lateCutWeek" value="${lateCutWeek()}"></label>
+        <div class="hint" style="grid-column:1/-1">Past week ${lateCutWeek()}, releasing somebody frees a
+          roster place and nothing more — you are actually worse off if you replace him, because the
+          replacement costs ${money(+S.settings.waivers.salary||1)} or more on top.
+          ${pastLateCut() ? '<b>It is week '+(+S.live.week||1)+', so this is in force now.</b>'
+            : 'It is week '+(+S.live.week||1)+', so cuts still save money at the usual '+
+              pct(+S.settings.cap.deadCapPct||0)+'.'}</div>`}
         <label class="check"><input type="checkbox" data-set="settings.cap.deadCapSpread" ${c.cap.deadCapSpread?'checked':''}>
           <span>Spread the charge over the years left on the deal</span></label>
         <label class="f"><span>Years shown in projections</span>
@@ -20486,7 +21032,7 @@ function adoptRemote(state, rev, force){
     if(typeof Supa==='object' && Supa.ready()) supaPush();
     if(Date.now() - (ui.tmp.thinToastAt||0) > 60000){
       ui.tmp.thinToastAt = Date.now();
-      toast('Kept your copy — the server had a thinner one. It is in Settings \u2192 Data.','warn');
+      /* Quiet. A copy is kept either way and the newest league is what shows. */
     }
     return;
   }
@@ -20864,11 +21410,11 @@ const Supa = {
              it. Theirs goes into the saved copies either way. */
           try{ keepBackup(theirs, 'the thinner copy from the server, not used'); }catch(e){}
           S.rev = theirRev;
-          this.set('warn','Kept your copy — the server had a thinner one');
+          this.set('ok','Synced');
           this.busy = false;
           if(Date.now() - (ui.tmp.thinToastAt||0) > 60000){
             ui.tmp.thinToastAt = Date.now();
-            toast('Kept your copy — the server had a thinner one. It is in Settings \u2192 Data.','warn');
+            /* Quiet — see above. */
           }
           setTimeout(()=> this.push(), 300);
           return;
@@ -21106,6 +21652,17 @@ function tickAll(){
   /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
+  /* Look for revisions a few times a day. The NFL takes days over them, so
+     there is nothing to gain from asking more often. */
+  if(!fixBusy && (Date.now() - lastFixAt) > 4*3600000 && sleeperLeague()){
+    lastFixAt = Date.now();
+    setTimeout(()=>{ pullCorrections(true).then(nn=>{ if(nn) render(); }, ()=>{}); }, 4000);
+  }
+  /* Once, on the first tick, in case a week closed while they were blocked. */
+  if(!ui.tmp.beatCaught){
+    ui.tmp.beatCaught = true;
+    try{ if(reportersCatchUp()) needsRender = true; }catch(e){}
+  }
   try{ if(injuryWatch()) needsRender = true; }catch(e){}
   try{ if(subsRun()) needsRender = true; }catch(e){}
   try{ if(autoFillRun()) needsRender = true; }catch(e){}
