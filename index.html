@@ -196,7 +196,7 @@ th{
 td{padding:8px 10px;border-bottom:1px solid var(--rule-soft);font-size:13.5px;vertical-align:middle}
 tbody tr:hover{background:rgba(255,255,255,.022)}
 tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
-.scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.scrollx{-webkit-overflow-scrolling:touch}
 .pos{
   display:inline-block;min-width:34px;text-align:center;padding:2px 5px;border-radius:3px;
   font:600 10.5px/1.5 var(--disp);letter-spacing:.09em;border:1px solid;
@@ -843,6 +843,43 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 /* A score you can open up. */
 .scorelink{color:inherit;text-decoration:none;border-bottom:1px dotted var(--dim)}
 .scorelink:hover{color:var(--brass);border-bottom-color:var(--brass)}
+
+/* ---- Any table you have to scroll ------------------------------------------
+   Every wide table in the app keeps its headings at the top and its first
+   column — the name, the team, the year, whatever identifies the row — at the
+   left, so you always know what you are looking at. Both are solid, and the
+   heading sits on top of the first column where the two meet. */
+.scrollx{overflow:auto;max-height:72vh}
+.scrollx > table{border-collapse:separate;border-spacing:0}
+.scrollx > table > thead > tr > th{
+  position:sticky;top:0;z-index:3;
+  background:var(--ink-2);
+  box-shadow:inset 0 -1px 0 var(--rule)}
+.scrollx > table > tbody > tr > td:first-child,
+.scrollx > table > tfoot > tr > td:first-child{
+  position:sticky;left:0;z-index:2;
+  background:var(--ink-2);
+  box-shadow:inset -1px 0 0 var(--rule)}
+.scrollx > table > thead > tr > th:first-child{
+  left:0;z-index:4;
+  box-shadow:inset -1px 0 0 var(--rule), inset 0 -1px 0 var(--rule)}
+/* A highlighted row keeps its colour under the pinned first column. */
+.scrollx > table > tbody > tr:hover > td:first-child{background:var(--ink-3)}
+.scrollx > table > tbody > tr.rzrow > td:first-child{background:#2A1A20}
+.scrollx > table > tbody > tr.tot > td:first-child,
+.scrollx > table > tfoot > tr.tot > td:first-child{background:var(--ink-3)}
+/* Wide enough to read, never so wide it swallows the screen. */
+.scrollx > table > thead > tr > th:first-child,
+.scrollx > table > tbody > tr > td:first-child,
+.scrollx > table > tfoot > tr > td:first-child{max-width:44vw}
+@media (max-width:520px){
+  .scrollx{max-height:66vh}
+  .scrollx > table > thead > tr > th:first-child,
+  .scrollx > table > tbody > tr > td:first-child,
+  .scrollx > table > tfoot > tr > td:first-child{max-width:52vw}
+}
+/* A short table needs no cap — let it stand at its own height. */
+.scrollx.short{max-height:none}
 </style>
 </head>
 <body>
@@ -865,7 +902,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-21f · pick several, at that price or under';
+const APP_BUILD = '2026-08-21m · tick boxes that actually tick';
 
 /* ============================================================
    HOME LEAGUE
@@ -1325,6 +1362,8 @@ function defaultState(){
         loadMinTotal:10, flatYears:[],
         minSalary:1, allowRestructure:true, tagPct:120, rookieScale:false,
         limits:{}, extendExtra:2, decideHours:0, defaultYears:1,
+        /* Extensions shut at the first kickoff of this week. 0 for no deadline. */
+        extendDeadlineWeek:16,
         minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null,
           /* Rank purely on what he scored per game for this league, ignoring the
              real-life blend, and let the ladder set the price off that. */
@@ -1332,7 +1371,8 @@ function defaultState(){
         limitEnforce:{ signings:true, extensions:true, auctions:true, draft:true, rookies:true, trades:false }
       },
       players:{ on:true, firmness:60, showAsk:'range', termBonusPct:6, loyalty:8 },
-      tag:{ on:true, counts:{QB:5, RB:10, WR:10, TE:5, K:5, DEF:5, DL:5, LB:5, DB:5},
+      tag:{ on:true, afterSeason:true,
+        counts:{QB:5, RB:10, WR:10, TE:5, K:5, DEF:5, DL:5, LB:5, DB:5},
             raisePct:0, maxPerTeam:1, windowOpen:false, stealOn:true, matchHours:48, requireFirsts:2,
             /* A second from a later draft owes another in its turn. */
             cascadeSeconds:true },
@@ -2207,6 +2247,14 @@ function maybeNotify(key, title, body, kind, whoTeamId){
 }
 let saveT=null;
 function save(now){
+  /* Nothing is written while previewing somebody. You are there to look at what
+     they see, not to act for them — and a change made by accident in their name
+     would be worse than useless. */
+  if(viewAsTeam()){
+    toast('You are seeing the site as '+teamName(viewAsTeam())+' — nothing is saved','warn');
+    render();
+    return;
+  }
   /* Whatever was being protected has now gone up. */
   clearSettingsHold();
   S.meta.savedAt = Date.now();
@@ -3171,6 +3219,17 @@ document.addEventListener('click', e=>{
   if(/^(SELECT|INPUT|TEXTAREA|OPTION)$/.test(t.tagName)) return;
   const fn = ACT[t.dataset.a];
   if(fn){ e.preventDefault(); fn(t.dataset, t, e); }
+});
+/* A tick box or a picker carrying data-a is driven by change, not click — the
+   handler above steps over them so a select can still open. Without this they
+   did nothing at all: the box took the tick on screen and the app never heard
+   about it, so saving wrote the old value back. */
+document.addEventListener('change', e=>{
+  const t = e.target;
+  if(!t || !t.dataset || !t.dataset.a) return;
+  if(!/^(SELECT|INPUT|TEXTAREA)$/.test(t.tagName||'')) return;
+  const fn = ACT[t.dataset.a];
+  if(fn) fn(t.dataset, t, e);
 });
 document.addEventListener('change', e=>{
   const t = e.target.closest('[data-set]');
@@ -4689,7 +4748,13 @@ ACT.sendTalk = ()=>{
 /* Each manager's own notification switches. Writes to the acting team so a
    commissioner setting these while acting-as another team sets THAT team's. */
 ACT.notifyToggle = (d, el)=>{
-  const t = myTeam(); if(!t) return;      /* your own prefs, not a team you are acting-as */
+  /* Your own team, by the seat you signed in on. myTeam() falls back to the
+     first side in the league when it cannot tell, which would quietly write
+     everybody's choices onto one team and leave the rest with nothing on —
+     so it is only trusted when it really is yours. */
+  const seat = mySeatId();
+  const t = seat ? byId(S.teams, seat) : null;
+  if(!t) return toast('Sign in so these can be kept for your team','bad');
   t.notify = Object.assign({}, NOTIFY_DEFAULT, t.notify||{});
   t.notify[d.k] = el ? !!el.checked : !t.notify[d.k];
   save();
@@ -5506,7 +5571,11 @@ ACT.applyPaste = ()=>{
    ============================================================ */
 /* Which team the page is showing. Defaults to your own — the seat you signed
    in on, not the shared myTeamId, which is whoever saved last. */
-function currentTeamId(){ return viewAsTeam() || ui.tmp.teamView || mySeatId() || (S.teams[0]||{}).id; }
+function currentTeamId(){
+  /* The picker wins, even while previewing — you should be able to walk round
+     every team as they would see it, not be pinned to one. */
+  return ui.tmp.teamView || viewAsTeam() || mySeatId() || (S.teams[0]||{}).id;
+}
 /* May the current user act on this team's roster — their own team, or a
    commissioner acting for anyone. */
 /* Which team is mine. This depends on who is signed in, not on the league state
@@ -5524,6 +5593,11 @@ function mySeatId(){
 function handOnOthers(){ return powerOn('actAs'); }
 function canManage(teamId){
   if(!teamId) return false;
+  /* While previewing a manager, his roster is treated as yours — the whole
+     point is to see exactly what he sees, buttons and all. Nothing can be saved
+     in that state, so it is safe to show them. */
+  const seat = viewAsTeam();
+  if(seat) return teamId === seat;
   if(teamId === mySeatId()) return true;                 /* always your own */
   const boss = isCommish() || (typeof Supa === 'object' && Supa.boss && Supa.boss());
   return !!boss && handOnOthers();
@@ -7068,8 +7142,8 @@ ACT.bidDrop = (d)=>{
   if(!b || !mustManage(b.teamId)) return;
   const p = byId(S.players, b.playerId);
   b.status = 'pulled'; b.why = 'withdrawn';
-  logIt(teamName(b.teamId)+' withdrew a bid'+(p? ' for '+p.name : ''),
-    {type:'admin', teams:[b.teamId]});
+  /* Withdrawing is private too — it says what you were after and that you
+     thought better of it. */
   save(); render();
   toast(p? 'Bid for '+p.name+' withdrawn' : 'Bid withdrawn','good');
 };
@@ -7094,8 +7168,7 @@ ACT.bidEditGo = (d)=>{
   if(faabOn() && v > fixInc(faabLeft(b.teamId) + b.bid))
     return toast('That is more than you have left','bad');
   const was = b.bid; b.bid = v;
-  logIt(teamName(b.teamId)+' moved a bid from '+money(was)+' to '+money(v),
-    {type:'admin', teams:[b.teamId]});
+  /* And changing one. */
   closeModal(); save(); render();
   toast('Bid is now '+money(v),'good');
 };
@@ -9710,6 +9783,44 @@ function applyExtension(p, addYears, aav, structId){
 function ladderMode(){
   return !S.settings.players.on && S.settings.contracts.ladder.on;
 }
+/* Where he sits at his position on season average, and what the ladder asks for
+   that place — shown whether or not he may actually be extended. */
+function ladderLook(p){
+  if(!ladderMode()) return '';
+  const y = S.league.season;
+  let rk = positionRank(p, y);
+  let year = y;
+  /* If this season is too thin, fall back to the last one he played. */
+  if(!rk){
+    for(let back=1; back<=3; back++){
+      const r2 = positionRank(p, y-back);
+      if(r2){ rk = r2; year = y-back; break; }
+    }
+  }
+  if(!rk) return '<div class="tiny dim">He has not played enough at '+esc(p.pos)+
+    ' for a place yet, so the ladder cannot price him.</div>';
+  const line = lineIn(p.id, rk.year != null ? rk.year : year);
+  const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
+  const price = ladderPrice(p.pos, rk.rank);
+  const w = ladderWorking(p.pos, rk.rank);
+  return '<div class="row" style="gap:14px;align-items:baseline">'+
+      '<div><div class="eyebrow">He is</div>'+
+        '<div class="big">'+esc(p.pos)+rk.rank+'</div>'+
+        '<div class="tiny dim">of '+rk.of+' in '+(rk.year!=null?rk.year:year)+'</div></div>'+
+      (ppg!=null ? '<div><div class="eyebrow">Averaging</div>'+
+        '<div class="big">'+ppg.toFixed(2)+'</div>'+
+        '<div class="tiny dim">a game over '+line.gp+'</div></div>' : '')+
+      '<div><div class="eyebrow">The ladder asks</div>'+
+        '<div class="big">'+money(price)+'</div>'+
+        '<div class="tiny dim">a year</div></div>'+
+    '</div>'+
+    '<div class="tiny dim" style="margin-top:6px">'+
+    (ladderByFpts()
+      ? 'Ranked on what he scored for you a game and nothing else.'
+      : 'Ranked on a blend of his real-life work and what he scored for you.')+
+    (w && w.how ? ' The '+esc(p.pos)+' band for '+esc(w.band)+' is priced off '+esc(w.how)+'.' : '')+
+    '</div>';
+}
 function ladderQuote(p){
   const g = canExtend(p);
   if(!g.ok || !g.rank) return null;
@@ -9723,12 +9834,18 @@ ACT.extend = (d)=>{
   if(waiverBarsExtension(p))
     return toast('He came in at '+money(+S.settings.waivers.salary||1)+
       ' off the wire, so he cannot be extended while the tag is on','bad');
+  { const w = extWindowOpen();
+    if(!w.ok && !isCommish()) return toast(w.why,'bad'); }
   const g = canExtend(p);
   if(!g.ok){
+    /* He cannot be extended yet, but what he would cost is still worth knowing —
+       where he sits at his position and what the ladder asks for that place. */
+    const look = ladderLook(p);
     return modal('Not yet — '+p.name,
       '<p>'+esc(g.why)+'</p>'+
       '<div class="kv" style="margin-top:12px"><dt>Played this season</dt><dd>'+(g.games||0)+'</dd>'+
       '<dt>Needed</dt><dd>'+minGames()+'</dd></div>'+
+      (look ? '<div class="hr"></div><div class="flabel">What he would cost</div>'+look : '')+
       '<div class="hint">Change the threshold under Settings › Contracts, or wait until he has played.</div>',
       '<button class="btn ghost" data-a="closeModal">Close</button>');
   }
@@ -12734,9 +12851,10 @@ function weekReportHTML(w){
           wr.left>0.05 ? wr.left.toFixed(1) : '0.0'}</div></div>
       </div>
       ${wr.left>0.05
-        ? '<div class="hint bad">'+wr.rows.filter(r=>r.missed).map(r=>
-            esc(r.p.name)+' ('+r.pts.toFixed(1)+') should have started ahead of '+
-            (wr.rows.filter(x=>x.wasted).map(x=>esc(x.p.name)+' ('+x.pts.toFixed(1)+')')[0] || 'somebody')
+        ? '<div class="hint bad">'+(wr.swaps||[]).map(sw=>
+            esc(sw.inMan.name)+' ('+sw.inPts.toFixed(1)+') '+
+            (sw.flex ? 'should have been '+esc(sw.slot) : 'should have started at '+esc(sw.slot))+
+            (sw.outMan ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(1)+')' : '')
           ).join('; ')+'</div>'
         : '<div class="hint good">Nothing was left on the bench — this is the best that could have been done.</div>'}
     </div>
@@ -12748,8 +12866,26 @@ function weekReportHTML(w){
         <td class="right num"><a href="#" data-a="scoreCard" data-id="${r.p.id}" data-w="${w}"
           class="scorelink" title="how he scored it"><b>${r.pts.toFixed(2)}</b></a></td>
         <td>${r.started?'<span class="pill ok">started</span>':'<span class="dim tiny">bench</span>'}</td>
-        <td class="tiny ${r.missed?'bad':r.wasted?'dim':''}">${
-          r.missed ? 'should have started' : r.wasted ? 'someone better was sat down' : ''}</td>
+        <td class="tiny ${r.missed?'bad':r.wasted?'dim':''}">${(()=>{
+          /* Say where he should have played and who for, and call a flex a flex. */
+          if(r.missed){
+            const sw = r.swapIn;
+            if(!sw) return 'should have started';
+            const where = sw.flex
+              ? 'should have been '+esc(sw.slot)
+              : 'should have started at '+esc(sw.slot);
+            return where + (sw.outMan
+              ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(1)+')'
+              : '');
+          }
+          if(r.wasted){
+            const sw = r.swapOut;
+            if(!sw) return 'someone better was sat down';
+            return (sw.flex ? 'the '+esc(sw.slot)+' should have been ' : 'beaten at '+esc(sw.slot)+' by ')+
+              esc(sw.inMan.name)+' ('+sw.inPts.toFixed(1)+')';
+          }
+          return '';
+        })()}</td>
       </tr>`).join('')}</tbody></table></div>
     <div class="pb"><div class="hint">Only men who could actually have been started count \u2014 anybody on the
       taxi squad or injured reserve was never an option, so he is not held against you.</div></div>
@@ -13589,21 +13725,57 @@ const NOTIFY_KINDS = [
    person's phone. It is deliberately kept off the league state — otherwise a
    copy arriving from the server, or another manager's settings, would reach
    across and change what you had chosen. Nothing here ever syncs. */
+/* Which notifications this person wants, on this device.
+
+   It lives in localStorage so it is never synced between people. But a phone
+   will sometimes refuse that — Safari in private browsing, an installed app
+   with storage restricted, a browser set to clear on close. When the write was
+   simply swallowed the tick sprang back off with nothing to explain why, which
+   is what was happening on mobile. So it is held in memory first and written
+   through to whatever will actually keep it. */
+let popMem = null, popStoreOk = null;
 function popPrefs(){
+  if(popMem) return popMem;
   try{
     const raw = localStorage.getItem('fo-notify');
     const o = raw ? JSON.parse(raw) : null;
-    if(o && typeof o === 'object') return {on: o.on === true, kinds: o.kinds || {}};
+    if(o && typeof o === 'object'){
+      popMem = {on: o.on === true, kinds: o.kinds || {}};
+      return popMem;
+    }
   }catch(e){}
   /* First time on this device: take whatever the league copy had, so nobody
-     loses a choice they already made, then keep it here from now on. */
+     loses a choice they already made. */
   const old = ((S.settings||{}).notify||{}).pop;
-  const seed = old ? {on: old.on === true, kinds: old.kinds || {}} : {on:false, kinds:{}};
-  savePopPrefs(seed);
-  return seed;
+  popMem = old ? {on: old.on === true, kinds: old.kinds || {}} : {on:false, kinds:{}};
+  savePopPrefs(popMem);
+  return popMem;
+}
+/* Can this browser keep anything at all? Worked out once, honestly. */
+function popCanStore(){
+  if(popStoreOk != null) return popStoreOk;
+  try{
+    localStorage.setItem('fo-probe','1');
+    localStorage.removeItem('fo-probe');
+    popStoreOk = true;
+  }catch(e){ popStoreOk = false; }
+  return popStoreOk;
 }
 function savePopPrefs(o){
-  try{ localStorage.setItem('fo-notify', JSON.stringify({on:!!o.on, kinds:o.kinds||{}})); }catch(e){}
+  /* Memory first — this is what the page reads back, so the tick always holds
+     for as long as the app is open, whatever the browser allows. */
+  popMem = {on: !!o.on, kinds: o.kinds || {}};
+  try{ localStorage.setItem('fo-notify', JSON.stringify(popMem)); popStoreOk = true; }
+  catch(e){
+    popStoreOk = false;
+    /* Nothing local will keep it, so put it with the league rather than lose it.
+       It is one person's choice in a shared file, which is not ideal, but a
+       setting that will not stay on is worse. */
+    try{
+      S.settings.notify = S.settings.notify || {};
+      S.settings.notify.pop = {on: popMem.on, kinds: popMem.kinds};
+    }catch(e2){}
+  }
 }
 function popOn(){ return popPrefs().on === true; }
 function popWants(kind){
@@ -13779,7 +13951,9 @@ function placeWaiverBid(playerId, teamId, bid, years){
   S.waiverBids = S.waiverBids.filter(b=> !(b.playerId===playerId && b.teamId===teamId && b.status==='open'));
   S.waiverBids.unshift({id:uid('wb'), playerId, teamId, bid:amt, years:Math.max(1,+years||1),
     at:Date.now(), status:'open'});
-  logIt(teamName(teamId)+' bid '+money(amt)+' on '+p.name, {type:'waiver', teams:[teamId], players:[p.id]});
+  /* A bid is nobody else's business until it is settled — showing them in the
+     transactions told the whole league who was after whom and for how much.
+     Only the win goes on the record. */
   save();
   return {ok:true, at:nextWaiverRun()};
 }
@@ -13862,8 +14036,9 @@ function runWaivers(now){
     win.rankWas = waiverRank(win.teamId);
     waiverUsed(win.teamId);
     won++;
-    logIt(teamName(win.teamId)+' won '+p.name+' on waivers for '+money(win.bid)+
-      (faabOn()? ' ('+money(faabLeft(win.teamId))+' left)' : ''),
+    /* Who won him and what he cost, and nothing else — what is left in somebody's
+       budget is his own business. */
+    logIt(teamName(win.teamId)+' won '+p.name+' on waivers for '+money(win.bid),
       {type:'waiver', teams:[win.teamId], players:[p.id]});
     notify('Waiver won', teamName(win.teamId)+' picked up '+p.name+' for '+money(win.bid)+'.',
       'good', [win.teamId]);
@@ -15484,11 +15659,68 @@ function weekRoster(teamId, week){
   const got = done
     ? Math.round((+(done.home===teamId ? done.hp : done.ap)||0)*100)/100
     : (saved.length ? Math.round(sum(saved.map(id=> fptsInWeek(id, w)))*100)/100 : best.total);
+  /* Pair each man who should have played with the man he should have played
+     instead of. Going slot by slot looks obvious but is wrong: the best lineup
+     is filled greedily, so the man in the ideal FLEX may score less than the one
+     actually there while the lineup as a whole is still better. So each man who
+     was left out is matched to the man he could genuinely have replaced —
+     somewhere he can play, and where he actually scored more. */
+  const slots = [];
+  (S.settings.roster.slots||[]).forEach(sl=>{ for(let i=0;i<sl.count;i++) slots.push(sl); });
+  const startedNow = saved.length
+    ? saved.map((id,i)=> ({id, place: slots[i] || null}))
+    : best.starters.map((sl,i)=> ({id: sl.p && sl.p.id, place: slots[i] || null}));
+  const idealIds = {}; best.starters.forEach(sl=>{ if(sl.p) idealIds[sl.p.id] = 1; });
+  /* Who was left out, best first. */
+  const missedMen = teamPlayers(teamId)
+    .filter(p=> idealIds[p.id] && !(saved.length ? saved.indexOf(p.id)>=0
+                                                 : !!idealIds[p.id]))
+    .map(p=> ({p, pts: Math.round(fptsInWeek(p.id, w)*100)/100}))
+    .sort((a,b)=> b.pts - a.pts);
+  const takenPlace = {};
+  const swaps = [];
+  missedMen.forEach(mm=>{
+    /* The weakest man he could have come in for, so the gain is real and the
+       place named is one he can actually play. */
+    let pick = null;
+    startedNow.forEach((st, i)=>{
+      if(takenPlace[i] || !st.id || !st.place) return;
+      if((st.place.eligible||[]).indexOf(mm.p.pos) < 0) return;
+      const out = byId(S.players, st.id);
+      if(!out || idealIds[out.id]) return;         /* he belongs there anyway */
+      const outPts = Math.round(fptsInWeek(out.id, w)*100)/100;
+      if(outPts >= mm.pts) return;                 /* no gain, so not worth saying */
+      const isFlex = (st.place.eligible||[]).length > 1;
+      /* A back belongs at running back. Only send him to the flex if there is
+         no proper place for him, so the flex is left for the man who needs it
+         and the advice reads the way a manager would think it. */
+      if(!pick) { pick = {i, out, outPts, place: st.place, flex:isFlex}; return; }
+      if(pick.flex && !isFlex) { pick = {i, out, outPts, place: st.place, flex:isFlex}; return; }
+      if(pick.flex === isFlex && outPts < pick.outPts)
+        pick = {i, out, outPts, place: st.place, flex:isFlex};
+    });
+    if(!pick) return;
+    takenPlace[pick.i] = 1;
+    swaps.push({
+      slot: pick.place.label,
+      /* A place that takes more than one position is a flex, whatever it is
+         called — that is what makes the difference worth spelling out. */
+      flex: (pick.place.eligible||[]).length > 1,
+      inMan: mm.p, inPts: mm.pts,
+      outMan: pick.out, outPts: pick.outPts
+    });
+  });
+  const byIn = {}, byOut = {};
+  swaps.forEach(sw=>{
+    if(sw.inMan) byIn[sw.inMan.id] = sw;
+    if(sw.outMan) byOut[sw.outMan.id] = sw;
+  });
+  rows.forEach(r=>{ r.swapIn = byIn[r.p.id] || null; r.swapOut = byOut[r.p.id] || null; });
   return {
     week:w, rows, got, best:best.total,
     eff: best.total>0 ? Math.round((got/best.total)*1000)/10 : null,
     left: Math.round((best.total - got)*100)/100,
-    bestSlots: best.starters
+    bestSlots: best.starters, swaps
   };
 }
 /* What a manager could have scored that week, if we kept it. */
@@ -16064,6 +16296,53 @@ function surDue(c){
   if(c.status==='deciding') return ((c.namedAt||c.at) + r.rejectHours*3600000) - Date.now();
   if(c.status==='moving')   return (c.at + r.moveDays*86400000) - Date.now();
   return 0;
+}
+/* ---- When a tag or an extension may be done -------------------------------
+   The tag is an off-season move: it is there to hold somebody whose deal has
+   run out, so it waits until the season is over. An extension is an in-season
+   move, but not right to the wire — everything has to be settled before the
+   last weeks matter. */
+function seasonOver(){
+  /* Past the last week of the regular season, or the playoffs are done. */
+  const last = +((S.settings.playoffs||{}).lastWeek) || 17;
+  return (+S.live.week||1) > last;
+}
+function tagWindowOpen(){
+  const t = S.settings.tag || {};
+  if(t.afterSeason === false) return {ok:true};
+  if(seasonOver()) return {ok:true};
+  return {ok:false, why:'Tags wait until the season is over — it is week '+
+    (+S.live.week||1)+' of '+((+((S.settings.playoffs||{}).lastWeek)) || 17)+'.'};
+}
+/* Extensions close at the first kickoff of the deadline week. */
+function extDeadlineWeek(){
+  const c = S.settings.contracts || {};
+  return c.extendDeadlineWeek == null ? 16 : (+c.extendDeadlineWeek || 0);
+}
+function extDeadlineAt(){
+  const w = extDeadlineWeek();
+  if(!w) return null;
+  /* The first game of that week, if the card is known. */
+  const card = ((S.live.nfl||{})[w]) || [];
+  const kicks = card.map(g=> +g.at).filter(v=> v && !isNaN(v));
+  if(kicks.length) return Math.min.apply(null, kicks);
+  const book = (S.live.kicks||{})[w] || {};
+  const times = Object.keys(book).map(k=> +book[k]).filter(v=> v && !isNaN(v));
+  return times.length ? Math.min.apply(null, times) : null;
+}
+function extWindowOpen(){
+  const w = extDeadlineWeek();
+  if(!w) return {ok:true};
+  const at = extDeadlineAt();
+  /* If the week's card is not known yet, go on the week number alone. */
+  if(at == null){
+    if((+S.live.week||1) >= w)
+      return {ok:false, why:'Extensions closed at week '+w+' — it is week '+(+S.live.week||1)+'.'};
+    return {ok:true};
+  }
+  if(Date.now() >= at)
+    return {ok:false, why:'Extensions closed at the first kickoff of week '+w+', on '+dstr(at)+'.'};
+  return {ok:true, by:at};
 }
 /* ---- Substitutes ------------------------------------------------------------
    Name a man to come on for a starter before the weekend, and if that starter
@@ -18917,6 +19196,21 @@ VIEWS.settings = function(){
           <div class="panel"><div class="ph"><h3>Extensions</h3></div><div class="pb stack">
             <label class="f"><span>Years an extension may run past the maximum</span>
               <input type="number" min="0" max="5" data-set="settings.contracts.extendExtra" value="${ct.extendExtra}"></label>
+            <label class="f"><span>Extensions shut at week
+              <span class="dim">— at the first kickoff of it; 0 for no deadline</span></span>
+              <input type="number" min="0" max="18" data-set="settings.contracts.extendDeadlineWeek"
+                value="${extDeadlineWeek()}"></label>
+            <div class="hint" style="grid-column:1/-1">${(()=>{
+              const w2 = extDeadlineWeek();
+              if(!w2) return 'No deadline — a man can be extended whenever he qualifies.';
+              const g2 = extWindowOpen();
+              const at = extDeadlineAt();
+              return 'Anything done before the first game of week '+w2+
+                ' counts, so long as he has his '+minGames()+' games in. '+
+                (g2.ok
+                  ? (at? 'That is '+dstr(at)+'.' : 'It is week '+(+S.live.week||1)+', so the window is open.')
+                  : '<b class="bad">'+esc(g2.why)+'</b>');
+            })()}</div>
             <label class="f"><span>Games he must play before you can extend him</span>
               <input type="number" min="0" max="25" data-set="settings.contracts.minGames" value="${ct.minGames}"></label>
             <div class="hint">${ct.minGames>0
@@ -19293,6 +19587,14 @@ VIEWS.settings = function(){
         <div class="panel"><div class="ph"><h3>Franchise tag</h3></div><div class="pb stack">
           <label class="check"><input type="checkbox" data-set="settings.tag.on" ${S.settings.tag.on?'checked':''}>
             <span>Let teams hold a player on a franchise tag</span></label>
+            <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.tag.afterSeason" ${(S.settings.tag.afterSeason!==false)?'checked':''}>
+              <span>Tags only once the season is over
+                <span class="dim">— it is a move for holding somebody whose deal has run out, not an
+                in-season one</span></span></label>
+            <div class="hint" style="grid-column:1/-1">${(()=>{
+              const g3 = tagWindowOpen();
+              return g3.ok ? 'Tags can be used now.' : esc(g3.why);
+            })()}</div>
           <div class="flabel">The tag pays the average of the top…</div>
           <div class="grid g3">
             ${['QB','RB','WR','TE','K','DEF'].map(pos=>`<label class="f"><span>${pos} <span class="dim">${money(tagPrice(pos))}</span></span>
@@ -19807,6 +20109,10 @@ VIEWS.settings = function(){
             '<label class="check"><input type="checkbox" data-a="popKind" data-k="'+k+'" '+
             (popWants(k)?'checked':'')+'><span>'+esc(label)+'</span></label>').join('')}
         </div>`}`}
+        ${!popCanStore() ? '<div class="hint bad"><b>This browser will not keep settings.</b> '+
+          'Your choices hold while the app is open and are kept with the league as a fallback, but a '+
+          'phone in private browsing will forget them when you close it. Open the site normally, or add '+
+          'it to your home screen, and they will stick.</div>' : ''}
         <div class="hint">These are yours and this phone's — they are not part of the league, so a
           deploy, a sync, or anybody else's settings can never change them.
           These come from the app itself, so they arrive whenever it is open in a tab —
@@ -19854,7 +20160,7 @@ VIEWS.settings = function(){
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Notifications</h3></div>
         <div class="pb stack">
           <div class="hint">These are <b>your</b> notifications — each manager sets their own. Everything is always written to the transaction log; these switches only control whether <b>${esc((myTeam()||{}).name||'you')}</b> also gets a notification. All off by default.</div>
-          ${(()=>{ const np = teamNotify((myTeam()||{}).id); return ''+
+          ${(()=>{ const np = teamNotify(mySeatId()); return ''+
           '<label class="check"><input type="checkbox" data-a="notifyToggle" data-k="contractEdits"'+(np.contractEdits?' checked':'')+'><span>A contract is edited — tells you who changed which player\'s deal</span></label>'+
           '<label class="check"><input type="checkbox" data-a="notifyToggle" data-k="unsetLineup"'+(np.unsetLineup?' checked':'')+'><span>Your lineup is not set when a week kicks off</span></label>'+
           '<label class="check"><input type="checkbox" data-a="notifyToggle" data-k="bigPlays"'+(np.bigPlays?' checked':'')+'><span>A big play by one of your starters this week (touchdowns, long scores)</span></label>'+
@@ -21512,6 +21818,8 @@ ACT.takeSeat = (d)=>{
 };
 ACT.tagPlayer = (d)=>{
   { const o = ownerOf(d.id); if(o && !mustManage(o)) return; }
+  { const g = tagWindowOpen();
+    if(!g.ok) return toast(g.why,'bad'); }
   const p = byId(S.players, d.id);
   if(!p || !p.contract) return;
   const tid = p.contract.teamId, price = tagPriceFor(p);
