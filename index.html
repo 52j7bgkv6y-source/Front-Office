@@ -865,7 +865,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-20q · reminders name only debtors';
+const APP_BUILD = '2026-08-21f · pick several, at that price or under';
 
 /* ============================================================
    HOME LEAGUE
@@ -1309,6 +1309,8 @@ function defaultState(){
         deadCapPct:50, deadCapSpread:true, floorPct:0, projectYears:10,
         /* Past this week a cut frees a roster place but saves no money. */
         lateCutOn:true, lateCutWeek:15,
+      /* A minimum man on injured reserve can be let go with nothing behind. */
+      hurtFreeCut:true,
         rollover:{ on:false, mode:'pct', value:10, max:'' },
         /* You may finish the current year up to this far below zero. Stay
            negative when the year ends and the shortfall is charged against
@@ -1348,6 +1350,13 @@ function defaultState(){
         runAt:'03:00', lastRun:0,
         /* A dropped player sits on waivers until this hour the next morning. */
         dropClearHour:8 },
+      /* A side starting more of one position than the league thinks reasonable
+         can be asked to give one up. */
+      surplus:{ on:true, pos:'QB', startedMax:2,
+        nameHours:24,      /* to say which man is going */
+        rejectHours:24,    /* for the claimant to turn him down */
+        moveDays:7,        /* to trade him on before he is handed over */
+        payRound:3 },      /* the round of pick that changes hands */
       taxi:{ claimsOn:true, windowHours:24, limitMode:'off', limitMax:2,
         /* One rookie a year may be parked out of reach, and paid for. */
         redshirtOn:true, redshirtMax:1,
@@ -2330,7 +2339,8 @@ const NAV = [
 const MOBILE_TABS = ['live','chat','trades','cap'];
 
 function myTeam(){
-  const seat = viewAsTeam() || S.league.myTeamId;
+  /* The team object. Which seat is mine follows the sign-in, same as elsewhere. */
+  const seat = viewAsTeam() || mySeatId();
   return byId(S.teams, seat) || S.teams[0] || null;
 }
 /* One commissioner, plus anyone they have handed the keys to. */
@@ -2475,7 +2485,9 @@ function actAsAllowed(){ return isCommish() && powerOn('actAs'); }
    Only this decides whether the preview control is offered at all. */
 function reallyCommish(){
   if(typeof Supa==='object' && Supa.ready()) return Supa.boss();
-  return isCommishTeam(S.league.myTeamId);
+  /* Judged on the team this person is actually on, not the shared myTeamId —
+     otherwise whoever saved last hands everybody the commissioner's buttons. */
+  return isCommishTeam(mySeatId());
 }
 /* Whose eyes you are looking through, if you are previewing somebody. */
 function viewAsTeam(){ return (typeof ui==='object' && ui.tmp && ui.tmp.viewAs) || null; }
@@ -4034,13 +4046,13 @@ function matchupLine(p){
     (posBit?' <span class="tiny dim">'+esc(posBit)+'</span>':'')+
     (splitBit?' <span class="tiny dim">· '+esc(splitBit)+'</span>':'');
 }
-function bestLineup(teamId){
+function bestLineup(teamId, week){
   /* Only men who could actually have been started. Somebody on the taxi squad or
      injured reserve was never an option, so counting him would make every
      manager look worse than he was. */
   const pool = teamPlayers(teamId)
     .filter(p=> playerSlot(p)==='active')
-    .map(p=>({p, pts:fpts(p.id)})).sort((a,b)=> b.pts-a.pts);
+    .map(p=>({p, pts:fptsInWeek(p.id, week)})).sort((a,b)=> b.pts-a.pts);
   const used = {}, starters=[];
   S.settings.roster.slots.forEach(sl=>{
     for(let i=0;i<sl.count;i++){
@@ -5492,20 +5504,29 @@ ACT.applyPaste = ()=>{
 /* ============================================================
    VIEW · TEAMS & ROSTERS  +  contract editor
    ============================================================ */
-function currentTeamId(){ return viewAsTeam() || ui.tmp.teamView || S.league.myTeamId || (S.teams[0]||{}).id; }
+/* Which team the page is showing. Defaults to your own — the seat you signed
+   in on, not the shared myTeamId, which is whoever saved last. */
+function currentTeamId(){ return viewAsTeam() || ui.tmp.teamView || mySeatId() || (S.teams[0]||{}).id; }
 /* May the current user act on this team's roster — their own team, or a
    commissioner acting for anyone. */
-function canManage(teamId){
-  if(isCommish()) return true;
-  /* Somebody signed in as the league's owner runs everything, whatever the
-     league state happens to say about which team is whose. */
-  if(typeof Supa === 'object' && Supa.boss && Supa.boss()) return true;
-  /* Which team is mine depends on who is signed in, not on the league state —
-     myTeamId is shared, so whoever saved last would otherwise decide it for
-     everybody and lock every other manager out of his own roster. */
+/* Which team is mine. This depends on who is signed in, not on the league state
+   — myTeamId is shared, so whoever saved last would otherwise decide it for
+   everybody and lock every other manager out of his own roster. */
+function mySeatId(){
   if(typeof Supa === 'object' && Supa.seated && Supa.seated() && Supa.member && Supa.member.team_id)
-    return teamId === Supa.member.team_id;
-  return teamId === S.league.myTeamId;
+    return Supa.member.team_id;
+  return S.league.myTeamId;
+}
+/* Anybody may look at anybody's roster. Acting on one is a different matter:
+   your own is always yours, and somebody else's takes the commissioner's hand
+   on another team, which is a setting he turns on rather than something he has
+   by default. */
+function handOnOthers(){ return powerOn('actAs'); }
+function canManage(teamId){
+  if(!teamId) return false;
+  if(teamId === mySeatId()) return true;                 /* always your own */
+  const boss = isCommish() || (typeof Supa === 'object' && Supa.boss && Supa.boss());
+  return !!boss && handOnOthers();
 }
 /* Refuse outright, not just hide the button. Anybody can reach a handler. */
 function mustManage(teamId){
@@ -5536,6 +5557,11 @@ VIEWS.teams = function(){
       <div><div class="eyebrow">${esc(t.owner||'Owner')} · ${roster.length} under contract${
         mine ? '' : ' · <span class="warn">looking only</span>'}</div><h1>${esc(t.name)}</h1></div>
       <div class="spacer"></div>
+      ${(!canManage(tid) && tid !== mySeatId()) ? '<span class="pill" title="'+
+        (isCommish()
+          ? 'a hand on another team is switched off in Settings \u2192 Powers'
+          : 'you can look at any team, but only act on your own')+
+        '">looking only</span>' : ''}
       ${rosterLocked(tid) ? '<span class="pill bad" title="nothing can be done until this is put right">'+
         overRoster(tid)+' over the limit</span>' : ''}
       ${autoFillLeagueOn() && canManage(tid) ? '<button class="btn sm '+(autoFillOn(tid)?'pri':'ghost')+
@@ -5691,6 +5717,10 @@ VIEWS.teams = function(){
             ${(S.settings.tag.on && !isWaiver(p))?'<button class="btn sm ghost" data-a="tagPlayer" data-id="'+p.id+'">'+(isTagged(p)?'Tagged':'Tag')+'</button>':''}
             ${isCommish()?'<button class="btn sm ghost" data-a="editContract" data-id="'+p.id+'">Edit</button>':''}
             <button class="btn sm ghost" data-a="blockPlayer" data-id="${p.id}">Block</button>
+            ${isCommish() && freeCutOk(p).ok
+              ? '<button class="btn sm" data-a="hurtCut" data-id="'+p.id+'" '+
+                'title="minimum deal and on injured reserve — he can go for nothing">Let go free</button> '
+              : ''}
             <button class="btn sm danger" data-a="release" data-id="${p.id}" title="${
               pastLateCut() ? esc('week '+(+S.live.week||1)+' — cutting him saves nothing, his '+
                 money(grossHit(p,y))+' stays on the books')
@@ -5698,7 +5728,6 @@ VIEWS.teams = function(){
               pastLateCut()?' <span class="dim">·0</span>':''}</button>`}</td></tr>`;
       }).join('') || '<tr><td colspan="12" class="dim center" style="padding:24px">No players under contract.</td></tr>'}
       </tbody>
-      ${''}
       <tfoot><tr class="tot"><td colspan="5" class="right">Committed</td>
         ${yrs.map(yy=>'<td class="right money">'+money(teamCommitted(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
       ${(()=>{
@@ -5735,7 +5764,64 @@ VIEWS.teams = function(){
       /* A redshirt is not on the board — nobody can come for him. */
       const board = S.players.filter(p=> p.contract && onTaxi(p) && p.contract.teamId!==tid && !isRedshirt(p));
       const retired = S.players.filter(isRetired);
+      /* Sides starting more of one position than the league allows. */
+      const sr = surRules();
+      const fat = sr.on ? S.teams.filter(t2=> surOver(t2.id, +S.live.week||1)) : [];
+      const myClaims = sr.on ? surClaims().filter(c=>
+        (c.fromTeam===tid || c.toTeam===tid) &&
+        ['naming','deciding','moving'].indexOf(c.status)>=0) : [];
+      const surPanel = !sr.on ? '' : `
+        <div class="panel" style="margin-bottom:14px"><div class="ph">
+          <h3>Too many ${esc(sr.pos)}s</h3><div class="spacer"></div>
+          <span class="tiny dim">more than ${sr.startedMax} started</span></div>
+          ${myClaims.length ? '<div class="pb tight scrollx"><table><thead><tr>'+
+            '<th>Claim</th><th>Man</th><th>Stage</th><th class="right">Left</th><th></th></tr></thead><tbody>'+
+            myClaims.map(c=>{
+              const p2 = c.playerId ? byId(S.players, c.playerId) : null;
+              const mineFrom = c.fromTeam===tid;
+              const left = Math.max(0, surDue(c));
+              const stage = c.status==='naming' ? (mineFrom? 'name the man you are giving up'
+                                                           : 'waiting for them to name one')
+                : c.status==='deciding' ? (mineFrom? 'waiting for them to accept or reject'
+                                                   : 'accept him, or reject the claim')
+                : 'trade him on, or he goes across';
+              return '<tr><td>'+esc(mineFrom? teamName(c.toTeam)+' claimed off you'
+                                            : 'you claimed off '+teamName(c.fromTeam))+'</td>'+
+                '<td>'+(p2? esc(p2.name) : '<span class="dim">not named yet</span>')+'</td>'+
+                '<td class="tiny">'+esc(stage)+'</td>'+
+                '<td class="right tiny '+(left<3600000?'bad':'dim')+'">'+hhmm(left)+'</td>'+
+                '<td class="right nowrap">'+
+                  (mineFrom && c.status==='naming' && canManage(tid)
+                    ? '<button class="btn sm pri" data-a="surName" data-id="'+c.id+'">Name him</button>' : '')+
+                  (!mineFrom && c.status==='deciding' && canManage(tid)
+                    ? '<button class="btn sm pri" data-a="surAccept" data-id="'+c.id+'">Take him</button> '+
+                      '<button class="btn sm ghost danger" data-a="surReject" data-id="'+c.id+'">Reject</button>' : '')+
+                  (isCommish() && c.status==='moving'
+                    ? '<button class="btn sm ghost" data-a="surSettleNow" data-id="'+c.id+'">Settle now</button>' : '')+
+                '</td></tr>';
+            }).join('')+'</tbody></table></div>' : ''}
+          ${fat.length ? '<div class="pb"><div class="flabel">Open to a claim</div>'+
+            fat.map(t2=>{
+              const men = surOver(t2.id, +S.live.week||1) || [];
+              const already = surOpenOn(t2.id);
+              return '<div class="row" style="gap:8px;align-items:center;margin-bottom:4px">'+
+                '<div><b style="font-weight:500">'+esc(t2.name)+'</b> '+
+                '<span class="tiny dim">started '+men.length+' — '+
+                men.map(p2=> esc(p2.name)).join(', ')+'</span></div><div class="spacer"></div>'+
+                (t2.id===tid ? '<span class="tiny dim">that is you</span>'
+                 : already ? '<span class="tiny dim">already claimed</span>'
+                 : canManage(tid)
+                   ? '<button class="btn sm" data-a="surClaim" data-team="'+t2.id+'">Claim one</button>' : '')+
+              '</div>';
+            }).join('')+'</div>' : '<div class="pb"><div class="dim tiny">Nobody is starting more than '+
+            sr.startedMax+' '+esc(sr.pos)+'s this week.</div></div>'}
+          <div class="pb"><div class="hint">A side starting more than ${sr.startedMax} ${esc(sr.pos)}s can be
+            asked to give one up. They have ${sr.nameHours} hours to say which, you have ${sr.rejectHours}
+            hours to turn him down, and they have ${sr.moveDays} day${sr.moveDays===1?'':'s'} from the claim
+            to trade him on. If they do not, he is yours for your best ${ordinal(sr.payRound)}-round pick.</div></div>
+        </div>`;
       return `
+      ${surPanel}
       <div class="grid g4 keep2" style="margin-bottom:14px">
         ${[['active','Active',R.maxRoster],['taxi','Taxi squad',R.taxi],['ir','Injured reserve',R.ir]]
           .map(([k,label,cap])=>{
@@ -5763,8 +5849,8 @@ VIEWS.teams = function(){
         ${mineOut.map(c=>`<tr><td><b style="font-weight:500">${esc(playerName(c.playerId))}</b>
             <div class="tiny muted">your claim on ${esc(teamName(c.fromTeam))}</div></td>
           <td class="right"><span class="clock calm" style="font-size:17px" data-clock="tc:${c.id}">${hhmm(c.clock.remain)}</span></td>
-          <td class="right nowrap"><button class="btn sm ghost" data-a="taxiWithdraw" data-id="${c.id}">Pull it</button>
-            ${isCommish()?'<button class="btn sm ghost" data-a="taxiSettleNow" data-id="'+c.id+'">Settle now</button>':''}</td></tr>`).join('')}
+          <td class="right nowrap"><span class="tiny dim">their move</span>
+            ${isCommish()?' <button class="btn sm ghost" data-a="taxiSettleNow" data-id="'+c.id+'">Settle now</button>':''}</td></tr>`).join('')}
         </tbody></table></div></div>`:''}
 
       <div class="grid g2">
@@ -6178,7 +6264,39 @@ VIEWS.teams = function(){
           'These count against the cap alongside contracts.</div></div>'}
         </div></div>` : ''}
 
-    ${sub==='fa' ? `<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
+    ${sub==='fa' ? `
+      ${(()=>{
+        const mineT = actingTeam();
+        const bids = myWaiverBids(mineT);
+        const rank = waiverRank(mineT);
+        return `<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Your waiver bids</h3>
+          <div class="spacer"></div>
+          <span class="tiny dim">priority ${rank} of ${S.teams.length}${
+            faabOn()? ' \u00b7 '+money(faabLeft(mineT))+' left' : ''}</span></div>
+          ${bids.length ? `<div class="pb tight scrollx"><table>
+            <thead><tr><th>Order</th><th>Player</th><th class="right">Bid</th><th></th></tr></thead>
+            <tbody>${bids.map((b,i)=>{
+              const p2 = byId(S.players, b.playerId);
+              return `<tr>
+                <td class="num dim">${i+1}
+                  ${canManage(mineT) ? '<button class="btn sm ghost" data-a="bidMove" data-id="'+b.id+
+                    '" data-dir="up" '+(i===0?'disabled':'')+' title="try this one first">\u2191</button>'+
+                    '<button class="btn sm ghost" data-a="bidMove" data-id="'+b.id+
+                    '" data-dir="down" '+(i===bids.length-1?'disabled':'')+'>\u2193</button>' : ''}</td>
+                <td>${p2? esc(p2.name)+' '+posTag(p2.pos) : '<span class="dim">gone</span>'}</td>
+                <td class="right money">${money(b.bid)}</td>
+                <td class="right nowrap">${canManage(mineT)
+                  ? '<button class="btn sm" data-a="bidEdit" data-id="'+b.id+'">Change</button> '+
+                    '<button class="btn sm ghost danger" data-a="bidDrop" data-id="'+b.id+'">Withdraw</button>'
+                  : ''}</td></tr>`;
+            }).join('')}</tbody></table></div>` : '<div class="pb"><div class="dim tiny">No bids in.</div></div>'}
+          <div class="pb"><div class="hint">Most money always wins. If two sides bid the same it goes on the
+            waiver order — you are <b>${rank}</b> of ${S.teams.length}, and 1 claims first. Win a claim and
+            you drop to the bottom; you move up as others claim. Bidding and losing costs you nothing, and
+            neither does a free agent you never went for.
+            ${bids.length>1 ? ' The arrows set which of <i>your own</i> bids is tried first when two of them are level.' : ''}</div></div>
+        </div>`;
+      })()}<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
       ${faabOn() ? '<span class="pill" title="your waiver budget for the season">'+
         money(faabLeft(actingTeam()))+' to bid</span>' : ''}
       <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
@@ -6522,7 +6640,7 @@ VIEWS.teams = function(){
             return `<tr><td>${esc(t.name)}</td>
               <td class="${boss===t.id?'dim':'warn'}">${esc(teamName(boss))}${boss===t.id?'':' <span class="tiny">(holds their first)</span>'}</td>
               <td class="right num">${lu.total.toFixed(1)}${lu.saved?'':' <span class="tiny dim">best</span>'}</td>
-              <td class="right">${canSetLineup(t.id)
+              <td class="right">${canSetLineup(t.id, +S.live.week||1)
                 ? '<button class="btn sm" data-a="editLineup" data-team="'+t.id+'" data-w="'+(+S.live.week||1)+'">Set lineup</button>'
                 : ''}</td></tr>`;
           }).join('')}</tbody></table></div>`:''}
@@ -6536,7 +6654,10 @@ VIEWS.teams = function(){
 };
 function faRows(list){
   const q = (ui.tmp.faq||'').toLowerCase();
-  const f = list.filter(p=> !q || p.name.toLowerCase().includes(q) || p.pos.toLowerCase()===q || (p.nfl||'').toLowerCase()===q).slice(0,60);
+  /* Filter, but do NOT cut yet. Cutting here meant a man the whole world was
+     picking up never made the list at all if he happened to sit past the
+     sixtieth by price — which is exactly the man you want at the top. */
+  const f = list.filter(p=> !q || p.name.toLowerCase().includes(q) || p.pos.toLowerCase()===q || (p.nfl||'').toLowerCase()===q);
   const wv = waiverDeadlinePassed();
   const sorted = sortRows('fa', f, {
     name:p=>p.name, pos:p=>p.pos, nfl:p=>p.nfl||'', age:p=>+p.age||0,
@@ -6544,19 +6665,21 @@ function faRows(list){
     proj:p=>{ const v = projFor(p, faWeek()); return v==null ? -1 : v; },
     act:p=>{ const v = weekPoints(p, faWeek()); return v==null ? -1 : v; }
   }, {key:'price',dir:-1});
-  /* Anybody the rest of the world is moving on — being added OR dropped — goes
-     above everybody else. Among those, the ones being added come first, each
-     group busiest first. Only when the list is in its usual order: if you have
-     sorted a column yourself, that is what you asked for and it is left alone. */
-  const rows = (ui.tmp.sort && ui.tmp.sort.fa) ? sorted : sorted.slice().sort((a,b)=>{
-    const ta = trendFor(a), tb = trendFor(b);
-    /* 2 for being added, 1 for being dropped, 0 for nobody touching him. */
-    const rank = (t)=> !t ? 0 : (t.dir === 'up' ? 2 : 1);
-    const ra = rank(ta), rb = rank(tb);
-    if(ra !== rb) return rb - ra;
-    if(!ra) return 0;                       /* neither is trending — leave them */
-    return (tb.count||0) - (ta.count||0);   /* busiest first within the group */
-  });
+  /* Three bands, always, whatever else is going on: everybody being added, then
+     everybody being dropped, then everybody nobody is touching. This used to be
+     skipped the moment you sorted a column, which meant one click on a heading
+     buried the men you most wanted to see. Now your sort still applies — it
+     just applies inside each band rather than across the lot. */
+  const band = (p)=>{ const t = trendFor(p); return !t ? 2 : (t.dir === 'up' ? 0 : 1); };
+  const rows = sorted.slice().sort((a,b)=>{
+    const ba = band(a), bb = band(b);
+    if(ba !== bb) return ba - bb;
+    /* Inside a band: whatever you sorted by, or the busiest first. The sort
+       lives in ui.tmp.sorts, which is what sortOf reads. */
+    if(sortOf('fa')) return 0;                      /* the list arrived sorted */
+    if(ba === 2) return 0;
+    return ((trendFor(b)||{}).count||0) - ((trendFor(a)||{}).count||0);
+  }).slice(0, 60);      /* and only now take the first sixty */
   return rows.map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
     ${trendTag(p)} ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
     <td class="right num">${p.age||'—'}</td>
@@ -6579,7 +6702,10 @@ function faRows(list){
       }
       return '<button class="btn sm" data-a="editContract" data-id="'+p.id+'">'+
         (isOrphan(p)?'Take him on' : wv?'Claim':'Sign')+'</button>';
-    })()}</td></tr>`).join('')
+    })()}
+    ${isCommish()? '<button class="btn sm ghost" data-a="assignPlayer" data-id="'+p.id+
+      '" title="put him on a team yourself, for a price or for nothing">Award</button>' : ''}
+    </td></tr>`).join('')
     || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.</td></tr>';
 }
 ACT.sub = (d)=>{
@@ -6654,6 +6780,336 @@ ACT.bidField = (d, el)=>{
   ui.tmp.bid = ui.tmp.bid || {};
   ui.tmp.bid[d.f] = d.f==='years' ? +el.value : (+el.value||0);
   if(d.f==='years') $('#modalBox .mb').innerHTML = bidForm();
+};
+/* ---- A manager's own bids ---------------------------------------------------
+   His to cancel, change, and put in whatever order he likes. His order only
+   decides which of HIS bids is tried first when two of them are level; across
+   teams it is always the money, then the waiver order. */
+function myWaiverBids(teamId){
+  return (S.waiverBids||[])
+    .filter(b=> b.teamId===teamId && b.status==='open')
+    .sort((a,b)=> ((a.seq==null?9999:a.seq) - (b.seq==null?9999:b.seq)) || (a.at - b.at));
+}
+/* ---- The commissioner's hand -------------------------------------------------
+   Setting a budget, and putting a player on a team for whatever it should have
+   cost — or for nothing at all. */
+ACT.faabSet = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const t = byId(S.teams, d.team); if(!t) return;
+  const y = S.league.season;
+  const left = Math.max(0, Math.round((+el.value||0)*100)/100);
+  t.faab = t.faab || {};
+  /* The sheet holds what has been spent, so set it from what should be left. */
+  t.faab[y] = Math.max(0, Math.round((faabBudget() - left)*100)/100);
+  clearCapCache();
+};
+ACT.faabSetGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  logIt('Budgets adjusted by hand', {type:'admin'});
+  save(); render();
+  toast('Budgets saved','good');
+};
+ACT.faabResetAll = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  modal('Give everybody a full budget',
+    '<p class="muted" style="margin:0">Every side goes back to '+money(faabBudget())+
+    ' for '+S.league.season+'. Nothing else is touched.</p>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="faabResetGo">Reset them all</button>');
+};
+ACT.faabResetGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const y = S.league.season;
+  S.teams.forEach(t=>{ t.faab = t.faab || {}; t.faab[y] = 0; });
+  clearCapCache();
+  logIt('Every budget reset to '+money(faabBudget()), {type:'admin'});
+  closeModal(); save(); render();
+  toast('Everybody is back to '+money(faabBudget()),'good');
+};
+/* Put a player on a team, charging whatever the commissioner says. */
+ACT.assignPlayer = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  ui.tmp.assign = {id:p.id, team:(S.teams[0]||{}).id, cost:0, charge:false};
+  modal('Put '+esc(p.name)+' on a team',
+    '<label class="f"><span>Team</span>'+teamSelect(null, ui.tmp.assign.team,
+      {attrs:'data-oninput="assignField" data-f="team"'})+'</label>'+
+    '<label class="check"><input type="checkbox" data-a="assignCharge">'+
+      '<span>Take it out of their budget</span></label>'+
+    '<label class="f"><span>Bid</span><input type="number" min="0" step="0.5" '+
+      'data-k="assigncost" value="0"></label>'+
+    '<div class="hint">He signs at '+money(+S.settings.waivers.salary||1)+' for one year, like any '+
+    'free agent. The bid is what comes off the budget \u2014 leave the box unticked and it costs them '+
+    'nothing at all.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="assignGo" data-id="'+p.id+'">Put him on</button>');
+};
+ACT.assignField = (d, el)=>{ ui.tmp.assign = ui.tmp.assign||{}; ui.tmp.assign[d.f] = el.value; };
+ACT.assignCharge = (d, el)=>{ ui.tmp.assign = ui.tmp.assign||{}; ui.tmp.assign.charge = !!el.checked; };
+ACT.assignGo = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  const a = ui.tmp.assign || {};
+  const tid = a.team || (S.teams[0]||{}).id;
+  if(!tid) return;
+  if(activeRoom(tid) <= 0)
+    return toast(teamName(tid)+"'s active roster is full",'bad');
+  const box = $('[data-k="assigncost"]');
+  const cost = Math.max(0, Math.round((+(box && box.value) || 0)*100)/100);
+  /* He comes in like any free agent — the minimum, one year. */
+  if(isOrphan(p)) p.contract = Object.assign({}, p.contract, {teamId:tid});
+  else {
+    p.contract = makeWaiverContract(tid, 1);
+    p.contract.faSigned = Date.now();
+  }
+  delete p.droppedAt;
+  if(a.charge && cost > 0) faabSpend(tid, cost);
+  /* Taking a man off the wire uses a claim, the same as winning one. */
+  waiverUsed(tid);
+  /* Any open bids on him are settled. */
+  (S.waiverBids||[]).filter(b=> b.playerId===p.id && b.status==='open').forEach(b=>{
+    b.status = b.teamId===tid ? 'won' : 'lost';
+    b.why = b.teamId===tid ? 'awarded by the commissioner' : 'he was awarded elsewhere';
+  });
+  clearCapCache();
+  logIt(teamName(tid)+' were given '+p.name+
+    (a.charge && cost>0 ? ' for '+money(cost)+' of budget' : ' at no cost to their budget'),
+    {type:'admin', teams:[tid], players:[p.id]});
+  notify('Player awarded', p.name+' has been put on '+teamName(tid)+
+    (a.charge && cost>0 ? ' for '+money(cost)+'.' : ' at no cost.'), 'info');
+  closeModal(); save(); render();
+  toast(p.name+' is on '+teamName(tid),'good');
+};
+/* ---- The surplus claim, step by step ---------------------------------------- */
+ACT.surClaim = (d)=>{
+  const me = actingTeam();
+  const from = d.team;
+  const r = surRules();
+  if(!mustManage(me)) return;
+  if(from===me) return toast('That is your own side','bad');
+  const men = surOver(from, +S.live.week||1);
+  if(!men) return toast(teamName(from)+' is not starting more than '+r.startedMax+' '+r.pos+'s','bad');
+  if(surOpenOn(from)) return toast('There is already a claim against them','bad');
+  const pick = surPayPick(me);
+  modal('Claim a '+esc(r.pos)+' off '+esc(teamName(from)),
+    '<p class="muted" style="margin:0 0 8px">'+esc(teamName(from))+' started <b>'+men.length+'</b> '+
+    esc(r.pos)+'s this week — '+men.map(p=> esc(p.name)).join(', ')+'.</p>'+
+    '<div class="kv">'+
+      '<dt>They have</dt><dd>'+r.nameHours+' hours to say which one is going</dd>'+
+      '<dt>You then have</dt><dd>'+r.rejectHours+' hours to turn him down</dd>'+
+      '<dt>And they have</dt><dd>'+r.moveDays+' day'+(r.moveDays===1?'':'s')+
+        ' from now to trade him on</dd>'+
+      '<dt>If they do not</dt><dd>'+(pick
+        ? 'he is yours for your '+pickLabel(pick)
+        : '<span class="bad">you have no '+ordinal(r.payRound)+'-round pick to give</span>')+'</dd>'+
+    '</div>'+
+    (pick? '' : '<div class="hint bad">You need a '+ordinal(r.payRound)+
+      '-round pick in hand to make this claim.</div>'),
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    (pick? '<button class="btn pri" data-a="surClaimGo" data-team="'+from+'">Put the claim in</button>' : ''));
+};
+ACT.surClaimGo = (d)=>{
+  const me = actingTeam(), from = d.team, r = surRules();
+  if(!mustManage(me)) return;
+  if(surOpenOn(from)) return toast('There is already a claim against them','bad');
+  const pick = surPayPick(me);
+  if(!pick) return toast('You need a '+ordinal(r.payRound)+'-round pick to claim','bad');
+  const men = surOver(from, +S.live.week||1);
+  if(!men) return toast('They are not over the limit','bad');
+  surClaims().unshift({
+    id:uid('sc'), at:Date.now(), fromTeam:from, toTeam:me, pos:r.pos,
+    week:+S.live.week||1, status:'naming', pickId:pick.id,
+    pool:men.map(p=> p.id), log:[{at:Date.now(), text:teamName(me)+' put a claim in'}]
+  });
+  logIt(teamName(me)+' claimed a '+r.pos+' off '+teamName(from),
+    {type:'admin', teams:[me, from]});
+  notify('A '+r.pos+' has been claimed off you',
+    teamName(me)+' wants one of your '+r.pos+'s. You have '+r.nameHours+
+    ' hours to say which one is going.', 'warn', [from]);
+  popNotify('A '+r.pos+' has been claimed off you', 'Name the man within '+r.nameHours+' hours.', 'league');
+  closeModal(); save(); render();
+  toast('Claim is in','good');
+};
+/* The holder names the man he is giving up. */
+ACT.surName = (d)=>{
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  if(!mustManage(c.fromTeam)) return;
+  const men = (c.pool||[]).map(id=> byId(S.players,id)).filter(Boolean);
+  modal('Which '+esc(c.pos)+' is going?',
+    '<p class="muted" style="margin:0 0 8px">'+esc(teamName(c.toTeam))+
+    ' has claimed one. Name him, and they have '+surRules().rejectHours+
+    ' hours to turn him down.</p>'+
+    '<div class="stack">'+men.map(p=>
+      '<button class="btn" style="width:100%;justify-content:flex-start" data-a="surNameGo" '+
+      'data-id="'+c.id+'" data-p="'+p.id+'">'+esc(p.name)+' '+posTag(p.pos)+
+      ' <span class="dim tiny">'+money(grossHit(p, S.league.season))+'</span></button>').join('')+'</div>',
+    '<button class="btn ghost" data-a="closeModal">Not yet</button>');
+};
+ACT.surNameGo = (d)=>{
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  if(!mustManage(c.fromTeam)) return;
+  const p = byId(S.players, d.p);
+  if(!p || (c.pool||[]).indexOf(p.id) < 0) return toast('He was not one of the three','bad');
+  c.playerId = p.id; c.namedAt = Date.now(); c.status = 'deciding';
+  c.log.unshift({at:Date.now(), text:teamName(c.fromTeam)+' named '+p.name});
+  logIt(teamName(c.fromTeam)+' named '+p.name+' against the claim',
+    {type:'admin', teams:[c.fromTeam, c.toTeam], players:[p.id]});
+  notify(p.name+' has been named',
+    teamName(c.fromTeam)+' is offering '+p.name+'. You have '+surRules().rejectHours+
+    ' hours to turn him down.', 'warn', [c.toTeam]);
+  popNotify(p.name+' has been named', 'Accept him or reject the claim.', 'league');
+  closeModal(); save(); render();
+  toast(p.name+' named','good');
+};
+/* The claimant can take him now, or reject and walk away. */
+ACT.surAccept = (d)=>{
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  if(!mustManage(c.toTeam)) return;
+  c.status = 'moving'; c.acceptedAt = Date.now();
+  c.log.unshift({at:Date.now(), text:teamName(c.toTeam)+' accepted him'});
+  const left = Math.max(0, surDue(c));
+  notify('He was accepted',
+    teamName(c.toTeam)+' will take '+(byId(S.players,c.playerId)||{}).name+'. You have '+
+    hhmm(left)+' to trade him elsewhere.', 'warn', [c.fromTeam]);
+  save(); render();
+  toast('Accepted — they have until the clock runs out to move him','good');
+};
+ACT.surReject = (d)=>{
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  if(!mustManage(c.toTeam)) return;
+  c.status = 'rejected'; c.endedAt = Date.now();
+  c.log.unshift({at:Date.now(), text:teamName(c.toTeam)+' rejected the man named'});
+  logIt(teamName(c.toTeam)+' rejected '+((byId(S.players,c.playerId)||{}).name||'the man named')+
+    ' and the claim is off', {type:'admin', teams:[c.fromTeam, c.toTeam]});
+  notify('The claim was rejected', teamName(c.toTeam)+' did not want '+
+    ((byId(S.players,c.playerId)||{}).name||'him')+'. Nothing changes hands.', 'info', [c.fromTeam]);
+  save(); render();
+  toast('Claim rejected','good');
+};
+/* Hand the man over for the pick. Fired by the clock, or by a commissioner. */
+function surSettle(c){
+  const p = byId(S.players, c.playerId);
+  const pick = byId(S.picks, c.pickId);
+  if(!p || !p.contract){ c.status='void'; c.why='he is no longer there'; return 0; }
+  /* He may already have been traded on, which is the whole point of the week. */
+  if(p.contract.teamId !== c.fromTeam){
+    c.status = 'moved'; c.endedAt = Date.now();
+    c.log.unshift({at:Date.now(), text:p.name+' was traded on in time'});
+    notify('The claim lapsed', p.name+' was moved on before the clock ran out.', 'info',
+      [c.fromTeam, c.toTeam]);
+    return 1;
+  }
+  p.contract.teamId = c.toTeam;
+  if(playerSlot(p)==='taxi' || playerSlot(p)==='practice') p.slot = 'active';
+  if(pick) pick.ownerTeamId = c.fromTeam;
+  c.status = 'settled'; c.endedAt = Date.now();
+  c.log.unshift({at:Date.now(), text:p.name+' went across for '+(pick? pickLabel(pick) : 'a pick')});
+  clearCapCache();
+  logIt(p.name+' went to '+teamName(c.toTeam)+' on a '+c.pos+' claim'+
+    (pick? ', with '+pickLabel(pick)+' going the other way' : ''),
+    {type:'admin', teams:[c.fromTeam, c.toTeam], players:[p.id]});
+  notify('The claim has settled', p.name+' is now '+teamName(c.toTeam)+"'s"+
+    (pick? ', and '+teamName(c.fromTeam)+' take '+pickLabel(pick) : '')+'.', 'warn',
+    [c.fromTeam, c.toTeam]);
+  return 1;
+}
+/* The clocks. A missed deadline settles itself rather than hanging about. */
+function surTick(){
+  const r = surRules();
+  if(!r.on) return 0;
+  let moved = 0;
+  surClaims().forEach(c=>{
+    if(['naming','deciding','moving'].indexOf(c.status) < 0) return;
+    if(surDue(c) > 0) return;
+    if(c.status === 'naming'){
+      /* Nobody named anybody. The claimant picks instead — the dearest, since
+         sitting on your hands should not be the cheap way out. */
+      const men = (c.pool||[]).map(id=> byId(S.players,id)).filter(p=> p && p.contract &&
+        p.contract.teamId === c.fromTeam);
+      if(!men.length){ c.status='void'; c.why='none of them are still there'; moved++; return; }
+      const dearest = men.slice().sort((a,b)=>
+        grossHit(b, S.league.season) - grossHit(a, S.league.season))[0];
+      c.playerId = dearest.id; c.namedAt = Date.now(); c.status = 'deciding';
+      c.log.unshift({at:Date.now(), text:'nobody was named in time, so '+dearest.name+' was taken'});
+      notify('Nobody was named in time',
+        dearest.name+' has been picked for you. '+teamName(c.toTeam)+' has '+r.rejectHours+
+        ' hours to turn him down.', 'bad', [c.fromTeam, c.toTeam]);
+      moved++;
+      return;
+    }
+    if(c.status === 'deciding'){
+      /* Not rejected in time counts as accepted. */
+      c.status = 'moving';
+      c.log.unshift({at:Date.now(), text:'not rejected in time, so he stands'});
+      moved++;
+      return;
+    }
+    if(c.status === 'moving'){ moved += surSettle(c); }
+  });
+  if(moved){ clearCapCache(); save(); }
+  return moved;
+}
+ACT.surSettleNow = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  surSettle(c); save(); render();
+};
+ACT.surCancel = (d)=>{
+  const c = surClaims().find(x=> x.id===d.id); if(!c) return;
+  /* Same rule: once it is in, it is the other side's move. */
+  if(!isCommish()) return toast('The claim is in — it is their move now','bad');
+  c.status = 'cancelled'; c.endedAt = Date.now();
+  c.log.unshift({at:Date.now(), text:'called off'});
+  save(); render();
+  toast('Claim called off','good');
+};
+ACT.bidDrop = (d)=>{
+  const b = (S.waiverBids||[]).find(x=> x.id===d.id);
+  if(!b || !mustManage(b.teamId)) return;
+  const p = byId(S.players, b.playerId);
+  b.status = 'pulled'; b.why = 'withdrawn';
+  logIt(teamName(b.teamId)+' withdrew a bid'+(p? ' for '+p.name : ''),
+    {type:'admin', teams:[b.teamId]});
+  save(); render();
+  toast(p? 'Bid for '+p.name+' withdrawn' : 'Bid withdrawn','good');
+};
+ACT.bidEdit = (d)=>{
+  const b = (S.waiverBids||[]).find(x=> x.id===d.id);
+  if(!b || !mustManage(b.teamId)) return;
+  const p = byId(S.players, b.playerId);
+  modal('Change the bid'+(p? ' for '+esc(p.name) : ''),
+    '<label class="f"><span>Bid</span><input type="number" min="0" step="0.5" '+
+    'data-k="bidamt" value="'+b.bid+'"></label>'+
+    '<div class="hint">'+money(fixInc(faabLeft(b.teamId) + b.bid))+' to play with. '+
+    'Most money always wins; level money goes on the waiver order, and you are '+
+    waiverRank(b.teamId)+' of '+S.teams.length+'.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="bidEditGo" data-id="'+b.id+'">Change it</button>');
+};
+ACT.bidEditGo = (d)=>{
+  const b = (S.waiverBids||[]).find(x=> x.id===d.id);
+  if(!b || !mustManage(b.teamId)) return;
+  const box = $('[data-k="bidamt"]');
+  const v = Math.max(0, Math.round((+(box && box.value) || 0)*100)/100);
+  if(faabOn() && v > fixInc(faabLeft(b.teamId) + b.bid))
+    return toast('That is more than you have left','bad');
+  const was = b.bid; b.bid = v;
+  logIt(teamName(b.teamId)+' moved a bid from '+money(was)+' to '+money(v),
+    {type:'admin', teams:[b.teamId]});
+  closeModal(); save(); render();
+  toast('Bid is now '+money(v),'good');
+};
+/* Move one of your own bids up or down your list. */
+ACT.bidMove = (d)=>{
+  const b = (S.waiverBids||[]).find(x=> x.id===d.id);
+  if(!b || !mustManage(b.teamId)) return;
+  const list = myWaiverBids(b.teamId);
+  const i = list.findIndex(x=> x.id===b.id);
+  const j = i + (d.dir==='up' ? -1 : 1);
+  if(i<0 || j<0 || j>=list.length) return;
+  const tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+  list.forEach((x,k)=>{ x.seq = k; });
+  save(); render();
 };
 ACT.bidGo = ()=>{
   const b = ui.tmp.bid || {};
@@ -7189,6 +7645,77 @@ ACT.release = (d)=>{
 };
 ACT.cutSplit = (d)=>{ ui.tmp.cutSplit = d.m==='split' ? 'split' : 'now'; ACT.release({id:ui.tmp.cutPid}); };
 ACT.releaseGo = (d)=>{ releasePlayer(d.id, ui.tmp.cutSplit||'now'); ui.tmp.cutSplit=null; closeModal(); save(); render(); toast('Player released'); };
+/* ---- Cutting a hurt man off a minimum deal ----------------------------------
+   A player on nothing but the league minimum for a single year, who is on
+   injured reserve in real life, is not an asset anybody is hoarding. A
+   commissioner can let him go for nothing rather than leaving a side carrying
+   dead money on somebody who will not play again this season. */
+function onRealIR(p){
+  const st = String(((p||{}).injury||{}).status || '').toUpperCase();
+  /* Injured reserve or the physically-unable list. "Out" for a week is not the
+     same thing and does not count. */
+  return /^(IR|PUP|NFI|SUSP)/.test(st);
+}
+function freeCutOk(p){
+  const r = (S.settings.cap||{});
+  if(r.hurtFreeCut === false) return {ok:false, why:'switched off for this league'};
+  const c = p && p.contract;
+  if(!c || !c.teamId) return {ok:false, why:'he is not on a roster'};
+  const floor = +S.settings.waivers.salary || +S.settings.contracts.minSalary || 1;
+  const perYear = Math.round(((+c.total||0) / Math.max(1, +c.years||1))*100)/100;
+  if((+c.years||1) > 1) return {ok:false, why:'his deal runs more than a year'};
+  if(perYear > floor + 0.005)
+    return {ok:false, why:'he is on '+money(perYear)+', above the '+money(floor)+' minimum'};
+  if(!onRealIR(p))
+    return {ok:false, why:'he is not on injured reserve'+
+      (((p.injury||{}).status) ? ' — he is listed '+esc(p.injury.status) : '')};
+  return {ok:true, perYear, floor};
+}
+/* Let him go with nothing left behind. */
+ACT.duesRemindNow = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const owing = duesOwing();
+  if(!owing.length) return toast('Nobody owes anything','warn');
+  /* Clear the clock so the run goes through, then let it do the work. */
+  S.settings.dues.lastRemind = 0;
+  const n2 = duesWeeklyRun();
+  render();
+  toast(n2 ? n2+' side'+(n2===1?'':'s')+' reminded — see the league room' : 'Nothing to send','good');
+};
+ACT.hurtCut = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  const g = freeCutOk(p);
+  if(!g.ok) return toast('He cannot be let go for nothing — '+g.why,'bad');
+  const from = p.contract.teamId;
+  modal('Let '+esc(p.name)+' go for nothing',
+    '<p class="muted" style="margin:0 0 8px">He is on '+money(g.perYear)+' for a single year and is '+
+    esc(String((p.injury||{}).status||'on injured reserve'))+' in real life. '+
+    esc(teamName(from))+' can let him go with <b>no dead money at all</b>.</p>'+
+    '<div class="kv"><dt>Normally left behind</dt><dd>'+money(cutSaving(p) ? 
+      fixInc(grossHit(p, S.league.season) - cutSaving(p)) : grossHit(p, S.league.season))+'</dd>'+
+    '<dt>This way</dt><dd class="good">nothing</dd></div>'+
+    '<div class="hint">He goes into free agency like anybody else, and can be signed back.</div>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn pri" data-a="hurtCutGo" data-id="'+p.id+'">Let him go</button>');
+};
+ACT.hurtCutGo = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  const g = freeCutOk(p);
+  if(!g.ok) return toast('He cannot be let go for nothing — '+g.why,'bad');
+  const from = p.contract.teamId;
+  const was = grossHit(p, S.league.season);
+  p.contract = null; p.slot = 'active'; delete p.ir;
+  markDropped(p);
+  clearCapCache();
+  logIt(teamName(from)+' let '+p.name+' go for nothing — '+money(was)+
+    ' on injured reserve, no dead money', {type:'drop', teams:[from], players:[p.id]});
+  notify('Let go for nothing', p.name+' was on '+money(was)+' and injured reserve, so '+
+    teamName(from)+' let him go with nothing left behind.', 'info');
+  closeModal(); save(); render();
+  toast(p.name+' let go, nothing owed','good');
+};
 ACT.freeCut = (d)=>{
   const p = byId(S.players,d.id);
   const from = p.contract ? p.contract.teamId : null;
@@ -8702,11 +9229,23 @@ ACT.taxiDefend = (d)=>{
 };
 ACT.taxiWithdraw = (d)=>{
   const c = byId(S.taxiClaims,d.id);
-  c.status='withdrawn'; c.reason='pulled by '+teamName(c.toTeam);
-  c.log.unshift({at:Date.now(), text:'Claim pulled'});
+  if(!c) return;
+  /* Once a claim is in, the claimant has nothing more to do — it is the other
+     side's move. Only a commissioner can call one off. */
+  if(!isCommish())
+    return toast('The claim is in. It is '+teamName(c.fromTeam)+"'s move now",'bad');
+  c.status='withdrawn'; c.reason='called off by the commissioner';
+  c.log.unshift({at:Date.now(), text:'Claim called off'});
+  logIt(teamName(c.toTeam)+"'s claim on "+playerName(c.playerId)+' was called off',
+    {type:'admin', teams:[c.fromTeam, c.toTeam]});
   save(); render();
+  toast('Claim called off','good');
 };
-ACT.taxiSettleNow = (d)=>{ const c=byId(S.taxiClaims,d.id); c.clock.remain=0; settleTaxiClaim(c); save(); render(); };
+ACT.taxiSettleNow = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const c=byId(S.taxiClaims,d.id); if(!c) return;
+  c.clock.remain=0; settleTaxiClaim(c); save(); render();
+};
 
 /* contract editor ---------------------------------------------------------- */
 ACT.editContract = (d)=>{
@@ -8762,12 +9301,15 @@ ACT.editContract = (d)=>{
       '<button class="btn ghost" data-a="closeModal">Never mind</button>'+
       '<button class="btn pri" data-a="claimWaiver" data-id="'+p.id+'" data-team="'+tid+'">Claim him</button>');
   }
-  if(c && c.waiver){
+  /* A manager gets told what the tag means and little else. A commissioner goes
+     straight into the editor, where the tag is his to set or clear like any
+     other term — otherwise ticking the box was a one-way door: once a man was
+     tagged, Edit never showed the box again. */
+  if(c && c.waiver && !isCommish()){
     return modal('Waiver contract — '+p.name,
       '<p>Waiver players sit at '+money(S.settings.waivers.salary)+' and cannot be re-priced or extended while the tag is on.</p>'+
       '<p class="muted tiny">He clears at the turn of the season unless the league lifts the tag.</p>',
       '<button class="btn ghost" data-a="closeModal">Close</button>'+
-      (isCommish()?'<button class="btn" data-a="liftWaiver" data-id="'+p.id+'">Lift the tag</button>':'')+
       '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Drop him</button>');
   }
   if(!d.keep) ui.tmp.cd = { pid:p.id, teamId: c? c.teamId : currentTeamId(), total: c? c.total : Math.max(1, p.value||1),
@@ -8798,6 +9340,7 @@ ACT.editContract = (d)=>{
     ${isCommish() ? `
     <div class="hr"></div>
     <div class="flabel">Waiver wire</div>
+    ${(c && c.waiver) ? '<div class="hint">He carries the tag now. Untick this and save to lift it.</div>' : ''}
     <label class="check"><input type="checkbox" data-a="cdWaiver" ${ui.tmp.cd.waiver?'checked':''}>
       <span>Mark this as a waiver wire pickup
         <span class="dim">— he carries the W tag, and while he is on ${money(+S.settings.waivers.salary||1)}
@@ -9050,11 +9593,19 @@ ACT.liftWaiver = (d)=>{
 };
 /* Commissioner said yes to a deal with no money on it. */
 ACT.saveContractZero = ()=>{
+  if(!isCommish()) return toast('Only a commissioner can change a contract','bad');
   if(!isCommish()) return toast('Commissioners only','bad');
   (ui.tmp.cd = ui.tmp.cd || {}).forceZero = true;
   ACT.saveContract();
 };
 ACT.saveContract = ()=>{
+  /* Writing a contract is a commissioner's job. The Edit button is hidden from
+     everybody else and editContract refuses them, but the save itself had no
+     guard — so the terms could still be rewritten by reaching this directly. */
+  { const cd0 = ui.tmp.cd || {};
+    const p0 = byId(S.players, cd0.pid);
+    const held = p0 && p0.contract && p0.contract.teamId;
+    if(held && !isCommish()) return toast('Only a commissioner can change a contract','bad'); }
   const cd = ui.tmp.cd, p = byId(S.players,cd.pid);
   if(cd.total<=0 && !cd.forceZero){
     if(!isCommish()) return toast('Give the deal a value','bad');
@@ -9201,6 +9752,44 @@ function extModal(){
   const owed = replaces ? extBackloadGap(c) : 0;
   const firstYear = replaces ? (c.startYear + c.years - 1) : (c.startYear + c.years);
   modal('Extend '+p.name, `
+    ${(()=>{
+      /* Where he finished and what the ladder asks for him, in plain terms —
+         the figure the extension is actually priced off. */
+      if(!ladderMode()) return '';
+      /* canExtend has already worked out which season counts — this one if he
+         has played enough of it, otherwise the last one he did. */
+      const gate = canExtend(p);
+      const rk = (lq && lq.gate && lq.gate.rank) || gate.rank;
+      const line = rk ? lineIn(p.id, rk.year) : null;
+      const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
+      if(!lq || !rk) return '<div class="assetbox" style="margin-bottom:12px">'+
+        '<div class="flabel">The ladder</div><div class="tiny dim">'+
+        (rk ? 'He is '+esc(p.pos)+ordinal(rk.rank).replace(/^\d+/,'')+' — '+rk.rank+' of '+rk.of+
+              ', but the ladder has no price for him.'
+            : 'He has not played enough for a place at '+esc(p.pos)+' yet, so the ladder cannot price him.')+
+        '</div></div>';
+      return '<div class="assetbox" style="margin-bottom:12px;border-color:#2F5C3A">'+
+        '<div class="row" style="gap:14px;align-items:baseline">'+
+          '<div><div class="eyebrow">The ladder asks</div>'+
+            '<div class="big">'+money(lq.price)+'</div>'+
+            '<div class="tiny dim">a year</div></div>'+
+          '<div><div class="eyebrow">He finished</div>'+
+            '<div class="big">'+esc(p.pos)+rk.rank+'</div>'+
+            '<div class="tiny dim">of '+rk.of+' in '+rk.year+'</div></div>'+
+          (ppg!=null ? '<div><div class="eyebrow">Which is</div>'+
+            '<div class="big">'+ppg.toFixed(2)+'</div>'+
+            '<div class="tiny dim">a game over '+line.gp+'</div></div>' : '')+
+        '</div>'+
+        '<div class="tiny dim" style="margin-top:6px">'+
+        (ladderByFpts()
+          ? 'Ranked on what he scored for you a game and nothing else, which is how this league has it set.'
+          : 'Ranked on a blend of his real-life work and what he scored for you.')+
+        /* ladderWorking hands back an object, not a sentence — read it out. */
+        (lq.work && lq.work.how
+          ? ' The '+esc(p.pos)+' band for '+esc(lq.work.band)+' is priced off '+esc(lq.work.how)+'.'
+          : '')+'</div>'+
+      '</div>';
+    })()}
     ${replaces ? `<div class="assetbox" style="margin-bottom:12px;border-color:#5C4526">
       <div class="flabel">What this replaces</div>
       <div class="tiny">He has ${yearsLeft(c)} years left. The new deal takes over from <b>${firstYear}</b> —
@@ -9421,6 +10010,10 @@ VIEWS.cap = function(){
       <div class="panel"><div class="ph"><h3>Release rules</h3></div><div class="pb stack">
         <label class="f"><span>Dead cap on a release</span><input type="number" min="0" max="100" data-set="settings.cap.deadCapPct" value="${c.deadCapPct}"></label>
             <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.lateCutOn" ${lateCutOn()?'checked':''}>
+        <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.hurtFreeCut" ${(S.settings.cap.hurtFreeCut!==false)?'checked':''}>
+          <span>A commissioner can let a hurt man on the minimum go for nothing
+            <span class="dim">— a single year at ${money(+S.settings.waivers.salary||1)} and on injured
+            reserve in real life, cut with no dead money at all</span></span></label>
               <span>Late cuts save nothing
                 <span class="dim">— past the week below, the whole season's salary stays on the books</span></span></label>
             ${!lateCutOn() ? '' : `<label class="f"><span>From after week</span>
@@ -9443,7 +10036,8 @@ function actingTeam(){
   /* Standing in for somebody only counts while the league allows it. The moment
      that is switched off you are yourself again, whoever you were last on. */
   const stand = actAsAllowed() ? ui.tmp.actAs : null;
-  return viewAsTeam() || stand || S.league.myTeamId || (S.teams[0]||{}).id;
+  /* Which seat is mine follows the sign-in, not the shared myTeamId. */
+  return viewAsTeam() || stand || mySeatId() || (S.teams[0]||{}).id;
 }
 function actAsBar(){
   if(typeof Supa==='object' && Supa.seated() && !Supa.boss()){
@@ -9462,12 +10056,19 @@ function pickValue(pk){
 }
 /* A want that names a shape rather than a name: "a WR", "a 2027 first". */
 function specLabel(sp){
-  if(sp.kind==='pos') return 'any ' + sp.pos + (sp.min ? ' worth ' + money(sp.min) + '+' : '');
+  /* A price on a want is a ceiling now — "this price of player or under" —
+     which is how somebody shopping for a cheap body actually thinks. Old wants
+     were written with a floor, so those are still read that way. */
+  if(sp.kind==='pos'){
+    if(sp.max) return 'any ' + sp.pos + ' at ' + money(sp.max) + ' or under';
+    if(sp.min) return 'any ' + sp.pos + ' worth ' + money(sp.min) + '+';
+    return 'any ' + sp.pos;
+  }
   if(sp.kind==='pick') return (sp.year||'any year') + ' ' + (sp.round ? 'round ' + sp.round : 'any round');
   return '?';
 }
 function specValue(sp){
-  if(sp.kind==='pos') return +sp.min||0;
+  if(sp.kind==='pos') return +sp.max || +sp.min || 0;
   if(sp.kind==='pick') return pickValue({round:+sp.round||3});
   return 0;
 }
@@ -9481,7 +10082,9 @@ function meetsSpecs(offer, ask){
   const usedP = {}, usedK = {};
   return specs.every(sp=>{
     if(sp.kind==='pos'){
-      const hit = players.find(x=> !usedP[x.id] && x.pos===sp.pos && (!sp.min || (x.value||0) >= +sp.min));
+      const hit = players.find(x=> !usedP[x.id] && x.pos===sp.pos &&
+        (!sp.max || capHit(x, S.league.season) <= +sp.max + 0.005) &&
+        (!sp.min || (x.value||0) >= +sp.min));
       if(hit){ usedP[hit.id]=1; return true; }
       return false;
     }
@@ -9713,16 +10316,21 @@ function askForm(){
   </div>
   <div class="flabel" style="margin-top:12px">Or ask for a shape rather than a name</div>
   <div class="assetbox"><div style="margin-bottom:8px">${specChips(a,'askSpecRm')||'<span class="dim tiny">no open-ended wants</span>'}</div>
+    <div class="hint" style="margin-bottom:6px">Pick as many as you would take from either list and they all
+      go on at once. A price is <b>for this price of player or under</b>.</div>
     <div class="row">
-      <select id="askpos" style="min-width:110px"><option value="">Any player at…</option>
+      <select id="askpos" multiple size="5" style="min-width:110px"
+        title="hold ctrl, or tap more than one, to ask for several">
         ${['QB','RB','WR','TE','K','DEF','DL','LB','DB'].map(x=>'<option value="'+x+'">'+x+'</option>').join('')}</select>
-      <input type="number" id="askposmin" placeholder="worth at least" style="width:130px" step="${S.settings.cap.increment}">
+      <input type="number" id="askposmin" placeholder="this price or under" style="width:150px" step="${S.settings.cap.increment}">
       <button class="btn sm" data-a="askSpecAdd" data-kind="pos">Add</button>
     </div>
     <div class="row" style="margin-top:6px">
-      <select id="askpkr" style="min-width:100px"><option value="">Any round</option>
+      <select id="askpkr" multiple size="5" style="min-width:110px"
+        title="pick as many rounds as you would take">
         ${[1,2,3,4,5].map(r=>'<option value="'+r+'">Round '+r+'</option>').join('')}</select>
-      <select id="askpky" style="min-width:100px"><option value="">Any year</option>
+      <select id="askpky" multiple size="4" style="min-width:110px"
+        title="and as many years">
         ${[1,2,3,4].map(i=>'<option value="'+(S.league.season+i)+'">'+(S.league.season+i)+'</option>').join('')}</select>
       <button class="btn sm" data-a="askSpecAdd" data-kind="pick">Add</button>
     </div>
@@ -9768,15 +10376,30 @@ ACT.askField = (d,el)=>{
     if(h) h.innerHTML = askRetLine(ui.tmp.ask);
   }
 };
+/* Whatever is highlighted in a list, as plain values. */
+function picked(sel){
+  const el = $(sel);
+  if(!el) return [];
+  if(el.selectedOptions) return Array.from(el.selectedOptions).map(o=> o.value).filter(Boolean);
+  /* Some browsers, and the test harness, only give us options. */
+  return Array.from(el.options||[]).filter(o=> o.selected).map(o=> o.value).filter(Boolean)
+    .concat(el.value && !(el.options||[]).length ? [el.value] : []);
+}
 ACT.askSpecAdd = (d)=>{
   const a = ui.tmp.ask; a.specs = a.specs||[];
   if(d.kind==='pos'){
-    const pos = ($('#askpos')||{}).value; if(!pos) return;
-    a.specs.push({kind:'pos', pos, min:+(($('#askposmin')||{}).value)||0});
+    const list = picked('#askpos');
+    if(!list.length) return toast('Pick at least one position','bad');
+    const max = +(($('#askposmin')||{}).value) || 0;
+    /* One want per position, so asking for a back OR a receiver reads as two
+       wants rather than one muddled one. */
+    list.forEach(pos=> a.specs.push({kind:'pos', pos, max}));
   } else {
-    const r = ($('#askpkr')||{}).value, y = ($('#askpky')||{}).value;
-    if(!r && !y) return;
-    a.specs.push({kind:'pick', round:r?+r:null, year:y?+y:null});
+    const rounds = picked('#askpkr'), years = picked('#askpky');
+    if(!rounds.length && !years.length) return toast('Pick a round or a year','bad');
+    if(!rounds.length) years.forEach(y=> a.specs.push({kind:'pick', round:null, year:+y}));
+    else if(!years.length) rounds.forEach(r=> a.specs.push({kind:'pick', round:+r, year:null}));
+    else rounds.forEach(r=> years.forEach(y=> a.specs.push({kind:'pick', round:+r, year:+y})));
   }
   $('#modalBox .mb').innerHTML = askForm();
 };
@@ -11599,7 +12222,10 @@ const REPORTERS = [
 function reporterFor(week, n){ return REPORTERS[(week*3 + n) % REPORTERS.length]; }
 /* Talk up the big score, have a go at the worst. */
 function reporterLines(week){
-  const games = (S.schedule||[]).filter(g=> +g.week===+week);
+  /* Only fixtures that have actually been played. A row with no result is not a
+     team that scored nothing — it is a game the app has no figure for, and
+     reading it as zero is how a reporter ends up saying somebody managed 0.0. */
+  const games = (S.schedule||[]).filter(g=> +g.week===+week && g.hp!=null && g.ap!=null);
   if(!games.length) return [];
   const rows = [];
   games.forEach(g=>{
@@ -11629,10 +12255,40 @@ function reporterLines(week){
   return out.slice(0, 3);
 }
 /* Drop them into the league chat. Never notifies anyone — it is colour, not news. */
+/* A fingerprint of a week's results, so a piece can be checked against the
+   figures it was actually written from. */
+function weekStamp(week){
+  const w = +week;
+  const rows = (S.schedule||[]).filter(g=> +g.week===w && g.hp!=null && g.ap!=null)
+    .map(g=> g.home+':'+(+g.hp||0).toFixed(1)+'|'+g.away+':'+(+g.ap||0).toFixed(1))
+    .sort();
+  return rows.join(',');
+}
+/* Throw away a piece written off figures that have since changed — a reporter
+   who said somebody managed nothing when the results say otherwise. Judged on
+   the figures, not on the words, so a side that genuinely scored nothing keeps
+   its write-up instead of being rewritten for ever. */
+function scrapBadPieces(){
+  const before = (S.chat||[]).length;
+  const stamps = {};
+  S.chat = (S.chat||[]).filter(m=>{
+    if(!m || !m.beat) return true;
+    const w = +m.reporterWeek;
+    if(!w) return true;
+    if(stamps[w] == null) stamps[w] = weekStamp(w);
+    /* Written before the results were in, or written off different figures. */
+    if(!m.stamp) return !stamps[w];
+    return m.stamp === stamps[w];
+  });
+  return before - S.chat.length;
+}
 /* A week can be closed without the writers filing — that is what happened when
    the week-in-figures post was blocking them. This goes back and files for any
    closed week that never got its pieces. */
 function reportersCatchUp(){
+  /* Anything written off a wrong figure goes in the bin first, so the week
+     counts as unwritten and gets done again properly. */
+  const scrapped = scrapBadPieces();
   const done = [...new Set((S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week))]
     .sort((a,b)=> a-b);
   let filed = 0;
@@ -11640,7 +12296,7 @@ function reportersCatchUp(){
     if((S.chat||[]).some(m=> +m.reporterWeek === w && m.beat)) return;
     filed += postReporters(w) ? 1 : 0;
   });
-  if(filed) save();
+  if(filed || scrapped) save();
   return filed;
 }
 function postReporters(week){
@@ -11654,7 +12310,8 @@ function postReporters(week){
   const lines = reporterLines(week);
   lines.forEach(l=>{
     S.chat.push({id:uid('c'), at:Date.now(), teamId:null, reporter:l.rep.name, outlet:l.rep.outlet,
-      reporterWeek:week, beat:true, text:l.text, media:null, notify:'none'});
+      reporterWeek:week, beat:true, stamp:weekStamp(week),
+      text:l.text, media:null, notify:'none'});
   });
   if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
   return lines.length;
@@ -13127,6 +13784,35 @@ function placeWaiverBid(playerId, teamId, bid, years){
   return {ok:true, at:nextWaiverRun()};
 }
 /* Settle every open bid: highest wins, and the loser keeps his money. */
+/* ---- Waiver priority --------------------------------------------------------
+   A rolling order, 1 to however many teams there are. 1 claims first. Win a
+   claim and you go to the back; everybody below you moves up one. Bidding and
+   losing costs you nothing, and neither does a free agent you never bid on. */
+function waiverList(){
+  S.waiverRank = S.waiverRank || [];
+  /* Seed it from the standings the first time, worst side first. */
+  if(!S.waiverRank.length){
+    S.waiverRank = standings().slice().reverse().map(t=> t.id);
+  }
+  /* Keep it honest as teams come and go. */
+  const have = new Set(S.waiverRank);
+  S.teams.forEach(t=>{ if(!have.has(t.id)) S.waiverRank.push(t.id); });
+  S.waiverRank = S.waiverRank.filter(id=> S.teams.some(t=> t.id===id));
+  return S.waiverRank;
+}
+function waiverRank(teamId){
+  const i = waiverList().indexOf(teamId);
+  return i < 0 ? S.teams.length : i + 1;
+}
+/* Used a claim — to the back of the queue, everybody else up one. */
+function waiverUsed(teamId){
+  const list = waiverList();
+  const i = list.indexOf(teamId);
+  if(i < 0) return;
+  list.splice(i, 1);
+  list.push(teamId);
+  S.waiverRank = list;
+}
 function runWaivers(now){
   const bids = (S.waiverBids||[]).filter(b=> b.status==='open');
   if(!bids.length) return 0;
@@ -13136,10 +13822,10 @@ function runWaivers(now){
   Object.keys(byPlayer).forEach(pid=>{
     const p = byId(S.players, pid);
     const list = byPlayer[pid].sort((x,y)=>
+      /* Most money always wins. */
       (y.bid - x.bid) ||
-      /* A tie goes to whoever is worse off in the standings, then to whoever
-         bid first. */
-      (waiverOrder(x.teamId) - waiverOrder(y.teamId)) ||
+      /* Level money goes on the waiver order — 1 claims before 12. */
+      (waiverRank(x.teamId) - waiverRank(y.teamId)) ||
       (x.at - y.at));
     if(!p || (p.contract && p.contract.teamId)){
       list.forEach(b=>{ b.status='void'; b.why='he was already taken'; });
@@ -13170,6 +13856,11 @@ function runWaivers(now){
     if(faabOn() && win.bid > 0) faabSpend(win.teamId, win.bid);
     win.status='won'; win.wonAt=Date.now();
     list.slice(1).forEach(b=>{ b.status='lost'; });
+    /* He has used his claim, so he goes to the back and everybody moves up.
+       Losing a bid costs nothing, and neither does a free agent nobody went
+       for — only a claim actually won moves the order. */
+    win.rankWas = waiverRank(win.teamId);
+    waiverUsed(win.teamId);
     won++;
     logIt(teamName(win.teamId)+' won '+p.name+' on waivers for '+money(win.bid)+
       (faabOn()? ' ('+money(faabLeft(win.teamId))+' left)' : ''),
@@ -14761,22 +15452,38 @@ function clearSimulated(){
 }
 /* Every man on a team for a week: what he scored, whether he was started, and
    whether leaving him out cost anything. */
+/* What a man scored in a given week. The live feed only knows about the week
+   being played; anything earlier has to come out of what was recorded, which is
+   why looking back at week 1 from week 2 showed everybody on nothing. */
+function fptsInWeek(pid, week){
+  const w = +week || +S.live.week || 1;
+  if(w === (+S.live.week||1)) return fpts(pid);
+  const rec = (((S.season||{}).byPlayer||{})[pid]||{}).weeks;
+  const line = rec && rec[w];
+  return line ? (+line.fpts||0) : 0;
+}
 function weekRoster(teamId, week){
   const w = +week || +S.live.week || 1;
   const saved = ((S.lineups||{})[w]||{})[teamId] || [];
   const started = {}; saved.forEach(id=>{ if(id) started[id] = 1; });
-  const best = bestLineup(teamId);
+  const best = bestLineup(teamId, w);
   const shouldHave = {}; best.starters.forEach(sl=>{ if(sl.p) shouldHave[sl.p.id] = sl.slot; });
   const rows = teamPlayers(teamId).map(p=>{
     const slot = playerSlot(p);
-    const pts = Math.round(fpts(p.id)*100)/100;
+    const pts = Math.round(fptsInWeek(p.id, w)*100)/100;
     /* With no lineup saved, the app fields his best, so everybody in that best
        lineup counts as started. */
     const wasIn = saved.length ? !!started[p.id] : !!shouldHave[p.id];
     return {p, slot, pts, started:wasIn, optimal:!!shouldHave[p.id],
             missed: !wasIn && !!shouldHave[p.id], wasted: wasIn && !shouldHave[p.id]};
   }).sort((a,b)=> b.pts - a.pts);
-  const got = saved.length ? Math.round(sum(saved.map(id=> fpts(id)))*100)/100 : best.total;
+  /* And what the side actually put up that week. For a week already closed the
+     fixture is the truth; fall back to adding the men up. */
+  const done = (S.schedule||[]).find(g=> +g.week===w && g.hp!=null &&
+    (g.home===teamId || g.away===teamId));
+  const got = done
+    ? Math.round((+(done.home===teamId ? done.hp : done.ap)||0)*100)/100
+    : (saved.length ? Math.round(sum(saved.map(id=> fptsInWeek(id, w)))*100)/100 : best.total);
   return {
     week:w, rows, got, best:best.total,
     eff: best.total>0 ? Math.round((got/best.total)*1000)/10 : null,
@@ -15031,7 +15738,10 @@ function lineupBoss(teamId, week){
   return teamId;
 }
 function canSetLineup(teamId, week){
-  return isCommish() || actingTeam() === lineupBoss(teamId, week);
+  /* Somebody else's lineup is somebody else's, unless a hand on another team is
+     switched on — the same rule as every other button on his roster. */
+  if(actingTeam() === lineupBoss(teamId, week)) return true;
+  return canManage(teamId);
 }
 /* The lineup as it stands: what was saved, or the best one if nothing was. */
 function lineupFor(teamId, week){
@@ -15289,6 +15999,71 @@ function injuryWatch(){
   });
   if(told) save();
   return told;
+}
+/* ---- Claiming off a side with too many of one position ----------------------
+   A team starting three quarterbacks in a week is stockpiling. Anybody may put
+   in a claim. Then:
+     the holder has so long to say WHICH man he is giving up
+     the claimant has so long after that to reject the choice
+     and the holder has a week from the claim to trade him on;
+       if he does not, the man goes to the claimant for the claimant's
+       best third-round pick. */
+/* 1st, 2nd, 3rd — for reading a round number aloud. */
+function ordinal(n2){
+  const v = +n2 || 0, t = v % 100;
+  if(t>=11 && t<=13) return v+'th';
+  return v + ({1:'st',2:'nd',3:'rd'}[v%10] || 'th');
+}
+function surRules(){
+  const r = (S.settings||{}).surplus || {};
+  return {
+    on: r.on !== false,
+    pos: r.pos || 'QB',
+    startedMax: r.startedMax == null ? 2 : +r.startedMax,
+    nameHours: +r.nameHours || 24,
+    rejectHours: +r.rejectHours || 24,
+    moveDays: +r.moveDays || 7,
+    payRound: +r.payRound || 3
+  };
+}
+/* Who a team actually started at that position in a given week. */
+function startedAt(teamId, pos, week){
+  const w = +week || +S.live.week || 1;
+  const saved = ((S.lineups||{})[w]||{})[teamId];
+  const ids = (saved && saved.length) ? saved.filter(Boolean)
+    : bestLineup(teamId, w).starters.filter(x=>x.p).map(x=>x.p.id);
+  return ids.map(id=> byId(S.players,id)).filter(p=> p && p.pos === pos);
+}
+/* Is this side over the line, and therefore open to a claim? */
+function surOver(teamId, week){
+  const r = surRules();
+  if(!r.on) return null;
+  const men = startedAt(teamId, r.pos, week);
+  return men.length > r.startedMax ? men : null;
+}
+function surClaims(){ S.surClaims = S.surClaims || []; return S.surClaims; }
+function surOpenOn(teamId){
+  return surClaims().find(c=> c.fromTeam===teamId && ['naming','deciding','moving'].indexOf(c.status)>=0);
+}
+function surOpenBy(teamId){
+  return surClaims().filter(c=> c.toTeam===teamId && ['naming','deciding','moving'].indexOf(c.status)>=0);
+}
+/* The claimant's best third-rounder — the price if it comes to that. */
+function surPayPick(teamId){
+  const r = surRules();
+  const mine = (S.picks||[]).filter(k=> k.ownerTeamId===teamId && +k.round===r.payRound && !k.used);
+  if(!mine.length) return null;
+  /* Best means earliest — the soonest year, then the best slot. */
+  return mine.slice().sort((a,b)=> (a.year-b.year) || (pickSlot(a)-pickSlot(b)))[0];
+}
+/* How long is left on whichever clock is running. */
+function surDue(c){
+  const r = surRules();
+  if(!c) return 0;
+  if(c.status==='naming')   return (c.at + r.nameHours*3600000) - Date.now();
+  if(c.status==='deciding') return ((c.namedAt||c.at) + r.rejectHours*3600000) - Date.now();
+  if(c.status==='moving')   return (c.at + r.moveDays*86400000) - Date.now();
+  return 0;
 }
 /* ---- Substitutes ------------------------------------------------------------
    Name a man to come on for a starter before the weekend, and if that starter
@@ -15851,6 +16626,23 @@ VIEWS.dues = function(){
             <span>Remind anyone still owing, once a week</span></label>
           ${d.remindWeekly===false ? '' : `<label class="f"><span>On a</span>
             <select data-set="settings.dues.remindDay">
+          <div class="hint" style="grid-column:1/-1">${(()=>{
+            const d2 = S.settings.dues||{};
+            if(d2.remindWeekly === false) return 'No weekly reminder is being sent.';
+            const last = +d2.lastRemind||0;
+            const next = duesNextRemind();
+            const owing = duesOwing();
+            return 'A reminder goes to <b>everyone still owing</b> — a notice in the app, a pop-up on '+
+              'their phone if they have those on, and a post in the league room naming them. '+
+              'It is not an email; the app has no way to send one.'+
+              '<br>'+(last? 'Last one went '+dstr(last)+'.' : 'None has gone yet.')+
+              ' '+(owing.length
+                ? (next && next<=Date.now()
+                    ? '<b>The next is due now</b> and goes the next time anybody opens the app.'
+                    : 'The next is due '+dstr(next)+'.')
+                : 'Nobody owes anything, so none will go.')+
+              (isCommish()? ' <button class="btn sm ghost" data-a="duesRemindNow">Send one now</button>' : '');
+          })()}</div>
               ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
                 '<option value="'+i+'"'+((+d.remindDay||0)===i?' selected':'')+'>'+nm+'</option>').join('')}
             </select></label>
@@ -15978,21 +16770,52 @@ function weeklyReportRun(){
   save();
   return 1;
 }
+/* When the next nudge is due. */
+function duesNextRemind(){
+  const d = S.settings.dues || {};
+  if(d.remindWeekly === false) return null;
+  const last = +d.lastRemind || 0;
+  if(!last) return Date.now();                 /* never sent — due now */
+  return last + 7*86400000;
+}
 function duesWeeklyRun(){
   const d = S.settings.dues || {};
-  if(!d.remindWeekly) return 0;
-  const now = new Date();
-  if(now.getDay() !== (+d.remindDay||0)) return 0;
-  /* Once per calendar week, not once per visit. */
-  const last = +d.lastRemind || 0;
-  if(last && (Date.now() - last) < 6*24*3600000) return 0;
+  if(d.remindWeekly === false) return 0;
   const y = S.league.season;
+  const last = +d.lastRemind || 0;
+  const now = new Date();
+  /* The chosen day is when it would like to go. But nothing runs unless
+     somebody has the app open, so if that day came and went unattended it goes
+     the next time anybody looks — otherwise a league where nobody opens the app
+     on a Monday never gets a reminder at all, which is what was happening. */
+  const onItsDay = now.getDay() === (+d.remindDay||0);
+  const overdue  = last && (Date.now() - last) >= 8*86400000;
+  const neverYet = !last;
+  if(!(onItsDay || overdue || neverYet)) return 0;
+  if(last && (Date.now() - last) < 6*86400000) return 0;   /* not twice a week */
   const owing = duesOwing(y);
   d.lastRemind = Date.now();
   if(!owing.length){ save(); return 0; }
-  owing.forEach(t=> noteReminder(t, y));
-  notify('Dues still owing', owing.length+' team'+(owing.length===1?'':'s')+
-    ' have not paid for '+y+'.', 'warn');
+  /* Three ways, so it cannot be missed: a notice to each side that owes, a pop-up
+     on their phone, and a post in the league room naming them. */
+  owing.forEach(t=>{
+    noteReminder(t, y);
+    notify('You still owe your dues',
+      'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
+      (d.dueDate? ', due '+dayOnly(d.dueDate) : '')+
+      (d.payTo? '. Send to '+d.payTo : '')+'.', 'warn', [t.id]);
+    popNotify('Dues still owing', duesMoney(dueAmount(t, y))+' for '+y+'.', 'dues');
+  });
+  S.chat = S.chat || [];
+  S.chat.unshift({id:uid('c'), at:Date.now(), teamId:null,
+    reporter:'The Front Office', outlet:'dues', reporterWeek:null,
+    text:'Still owing for '+y+': '+owing.map(t=> t.name).join(', ')+'.'+
+      (d.dueDate? ' Due '+dayOnly(d.dueDate)+'.' : '')+
+      (d.payTo? ' Send to '+d.payTo+'.' : ''),
+    media:null, notify:'none'});
+  if(S.chat.length>500) S.chat.splice(0, S.chat.length-500);
+  logIt('Reminded '+owing.length+' side'+(owing.length===1?'':'s')+' about dues',
+    {type:'admin', teams:owing.map(t=>t.id)});
   save();
   return owing.length;
 }
@@ -16457,15 +17280,24 @@ ACT.sleeperGo = async ()=>{
     const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
     const season = parseInt(league.season,10) || S.league.season;
 
-    if(o.teams){
+    /* Rebuilding the sides and rebuilding the rosters are one job in Sleeper's
+       data — a roster IS a team there. So either box brings that job in, and
+       what it then does with the players depends on which was ticked:
+         teams ticked  → the sides, their names and owners
+         roster ticked → who is on whose roster
+       Tick neither and none of it runs, which is what "ignores the boxes"
+       amounted to: rosters alone did nothing, and teams alone did the lot. */
+    const doSquads = !!(o.teams || o.roster);
+    if(doSquads){
       keepBackup(S, 'before the Sleeper import');
       const byUser = {};
       users.forEach(u=> byUser[u.user_id] = u);
       /* Manual adjustments belong to the league, not to Sleeper. Keep them
          through the rebuild and put them back on the matching team, so an
          import can never quietly wipe money somebody was owed or charged. */
-      const oldAdj = {}, oldDead = {}, oldDues = {}, oldLook = {};
+      const oldAdj = {}, oldDead = {}, oldDues = {}, oldLook = {}, oldNames = {};
       S.teams.forEach(t=>{
+        oldNames[t.id] = {name:t.name, owner:t.owner, email:t.email};
         const k = String(t.name||'').toLowerCase();
         if((t.adj||[]).length) oldAdj[k] = deep(t.adj);
         if((t.dead||[]).length) oldDead[k] = deep(t.dead);
@@ -16511,8 +17343,15 @@ ACT.sleeperGo = async ()=>{
       /* Only clear what is actually being brought in. Ticking one box used to
          wipe the lot, which is how a league lost its picks by importing rosters. */
       const oldPicks = S.picks, oldTrades = S.trades, oldLive = S.live, oldSeason = S.season;
-      S.teams=[]; S.players=[]; S.auctions=[]; S.faAuctions=[];
-      if(o.picks !== false){ S.picks=[]; } else { S.picks = oldPicks; }
+      /* Only empty what is being rebuilt. The team ids come straight off the
+         Sleeper roster ids, so rebuilding the sides without the rosters leaves
+         every man pointing at the same team he was already on. */
+      const oldPlayers = S.players;
+      S.teams=[]; S.auctions=[]; S.faAuctions=[];
+      if(o.roster) S.players=[]; else S.players = oldPlayers;
+      /* An unticked box means no. "not false" counted an absent box as a yes,
+         which is how importing teams or rosters quietly rebuilt the picks. */
+      if(o.picks){ S.picks=[]; } else { S.picks = oldPicks; }
       S.trades = oldTrades || [];
       /* A running week and what has been scored are nothing to do with Sleeper's
          roster list — they stay unless the schedule is being replaced. */
@@ -16525,9 +17364,14 @@ ACT.sleeperGo = async ()=>{
       const mk = Object.keys(MASCOTS);
       rosters.forEach((r,i)=>{
         const u = byUser[r.owner_id] || {};
-        const name = (u.metadata && u.metadata.team_name) || u.display_name || ('Team '+(i+1));
+        const fromSleeper = (u.metadata && u.metadata.team_name) || u.display_name || ('Team '+(i+1));
+        /* Only take Sleeper's name and owner when Teams was actually ticked.
+           Importing rosters alone must not rename anybody. */
+        const had = oldNames['t'+r.roster_id];
+        const name = o.teams ? fromSleeper : ((had && had.name) || fromSleeper);
         const t = {id:'t'+r.roster_id, name, abbr:name.slice(0,3).toUpperCase(),
-          owner:u.display_name||'', email:'',
+          owner: o.teams ? (u.display_name||'') : ((had && had.owner) || u.display_name || ''),
+          email: (had && had.email) || '',
           /* Whatever this league had charged or credited this team stays with it. */
           dead:oldDead[String(name||'').toLowerCase()] || [],
           adj: oldAdj[String(name||'').toLowerCase()] || [],
@@ -16546,7 +17390,9 @@ ACT.sleeperGo = async ()=>{
         if(look.jerseys     != null) t.jerseys     = look.jerseys;
         if(look.pants       != null) t.pants       = look.pants;
         S.teams.push(t);
-        [].concat(r.players||[], r.taxi||[], r.reserve||[])
+        /* Who is on the roster only changes when Rosters was ticked. With only
+           Teams ticked the sides are rebuilt and every man stays where he was. */
+        (o.roster ? [].concat(r.players||[], r.taxi||[], r.reserve||[]) : [])
           .filter((v,j,a)=> v && a.indexOf(v)===j)
           .forEach(pid=>{
             const pl = players[pid];
@@ -16624,7 +17470,7 @@ ACT.sleeperGo = async ()=>{
       S.league.name = league.name || S.league.name;
       S.league.season = season;
       if(S.teams[0]){ S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
-      if(o.picks !== false){
+      if(o.picks){
         /* Every pick for the next three seasons, then the ones Sleeper says have
            already changed hands. */
         let rounds = 4;
@@ -16646,7 +17492,10 @@ ACT.sleeperGo = async ()=>{
           if(pk && to) pk.ownerTeamId = to;
         });
         ui.tmp.slPicks = S.picks.length;
-      } else {
+      } else if(!S.picks.length){
+        /* Only when there are none at all — a brand new league needs a set to
+           start with. Otherwise this pushed a second set on top of the ones
+           already there, so importing teams or rosters quietly doubled them. */
         for(let y=season+1; y<=season+3; y++) for(let rd=1; rd<=4; rd++)
           S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
       }
@@ -17736,7 +18585,7 @@ VIEWS.settings = function(){
           <p class="muted" style="margin:0">Each of these is a commissioner power. Switch one off and it disappears
             for everyone, yourself included, until you switch it back on.</p>
           <div class="grid g2">
-            ${[['actAs','Stand in for another manager','make trades and set lineups as somebody else'],
+            ${[['actAs','A hand on another team','use the buttons on somebody else\u2019s roster \u2014 cut, extend, set his lineup, trade for him. Everybody can always look at every team; this decides whether a commissioner can act on one'],
                ['closeWeek','Close out the week','and start the next one, from Live scoring'],
                ['feedSource','Change the feed source','where live scores come from'],
                ['capTools','Cap growth and release rules','on the Cap ladder'],
@@ -17748,8 +18597,9 @@ VIEWS.settings = function(){
               '<label class="check"><input type="checkbox" data-set="settings.powers.'+k+'" '+
               (powerOn(k)?'checked':'')+'><span>'+label+' <span class="dim">\u2014 '+note+'</span></span></label>').join('')}
           </div>
-          <div class="hint">Standing in for another manager is off to begin with, so nobody can make a move on
-            somebody else's behalf by accident.</div>
+          <div class="hint">A hand on another team is off to begin with, so nobody makes a move on somebody
+            else's behalf by accident. With it off a commissioner still sees every roster — he simply has no
+            buttons on anybody's but his own.</div>
         </div></div>`}
       ${reallyCommish()?`<div class="panel" style="grid-column:1/-1"><div class="ph"><h3>See the site as somebody else</h3></div>
         <div class="pb stack">
@@ -17940,6 +18790,33 @@ VIEWS.settings = function(){
           <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.taxi.claimsOn" ${S.settings.taxi.claimsOn?'checked':''}>
             <span>Let teams claim players off each other's taxi squads</span></label>
           <label class="f"><span>Claim window (hours)</span><input type="number" min="1" data-set="settings.taxi.windowHours" value="${S.settings.taxi.windowHours}"></label>
+            <div class="hint" style="grid-column:1/-1"><div class="hr"></div>
+              <div class="flabel">Too many of one position</div></div>
+            <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.surplus.on" ${surRules().on?'checked':''}>
+              <span>A side starting too many of one position can be asked to give one up</span></label>
+            ${!surRules().on ? '' : `
+              <label class="f"><span>Position</span>
+                <select data-set="settings.surplus.pos">
+                  ${['QB','RB','WR','TE','K','DEF'].map(x=>'<option value="'+x+'"'+
+                    (surRules().pos===x?' selected':'')+'>'+x+'</option>').join('')}
+                </select></label>
+              <label class="f"><span>More than this many started</span>
+                <input type="number" min="1" max="6" data-set="settings.surplus.startedMax" value="${surRules().startedMax}"></label>
+              <label class="f"><span>Hours to name the man</span>
+                <input type="number" min="1" max="168" data-set="settings.surplus.nameHours" value="${surRules().nameHours}"></label>
+              <label class="f"><span>Hours to reject him</span>
+                <input type="number" min="1" max="168" data-set="settings.surplus.rejectHours" value="${surRules().rejectHours}"></label>
+              <label class="f"><span>Days to trade him on</span>
+                <input type="number" min="1" max="30" data-set="settings.surplus.moveDays" value="${surRules().moveDays}"></label>
+              <label class="f"><span>Round of pick that pays for him</span>
+                <input type="number" min="1" max="7" data-set="settings.surplus.payRound" value="${surRules().payRound}"></label>
+              <div class="hint" style="grid-column:1/-1">As it stands: a side starting more than
+                ${surRules().startedMax} ${esc(surRules().pos)}s can be claimed against. They get
+                ${surRules().nameHours} hours to name the man, the claimant ${surRules().rejectHours} hours
+                to turn him down, and they have ${surRules().moveDays} day${surRules().moveDays===1?'':'s'}
+                from the claim to trade him elsewhere — otherwise he goes across for the claimant's best
+                ${ordinal(surRules().payRound)}-round pick. Miss the naming window and the claimant gets the
+                dearest of them; miss the rejection window and he stands.</div>`}
           <label class="f"><span>Season-ending IR gives back</span>
             <select data-set="settings.ir.mode">
               <option value="games"${(S.settings.ir||{}).mode==='games'?' selected':''}>A share, on games he has played</option>
@@ -18150,6 +19027,26 @@ VIEWS.settings = function(){
             ${!faabOn() ? '' : `<div class="grid g2">
               <label class="f"><span>Budget each</span>
                 <input type="number" min="0" step="1" data-set="settings.waivers.faab.budget" value="${faabBudget()}"></label>
+            <div class="hint" style="grid-column:1/-1">
+              <div class="flabel">What each side has left</div>
+              <div class="scrollx"><table><thead><tr><th>Team</th><th class="right">Spent</th>
+                <th class="right">Left</th><th class="right">Waiver order</th></tr></thead><tbody>
+                ${S.teams.slice().sort((a,b)=> waiverRank(a.id)-waiverRank(b.id)).map(t2=>`<tr>
+                  <td>${esc(t2.name)}</td>
+                  <td class="right num dim">${money(faabSpent(t2.id))}</td>
+                  <td class="right"><input type="number" min="0" step="0.5" style="width:90px"
+                    data-norender data-oninput="faabSet" data-team="${t2.id}"
+                    value="${faabLeft(t2.id)}"></td>
+                  <td class="right num">${waiverRank(t2.id)}</td></tr>`).join('')}
+              </tbody></table></div>
+              <div class="row" style="gap:6px;margin-top:6px">
+                <button class="btn sm pri" data-a="faabSetGo">Save the budgets</button>
+                <button class="btn sm ghost" data-a="faabResetAll">Give everybody a full budget</button>
+              </div>
+              <div class="tiny dim" style="margin-top:4px">Type what a side should have left and save.
+                The waiver order is the rolling one — 1 claims first, and whoever wins a claim goes to
+                the bottom.</div>
+            </div>
               <label class="f"><span>Least you may bid</span>
                 <input type="number" min="0" step="1" data-set="settings.waivers.faab.minBid" value="${+((S.settings.waivers.faab||{}).minBid)||0}"></label>
             </div>
@@ -18526,7 +19423,6 @@ VIEWS.settings = function(){
         </div></div>
       </div>
 
-      ${''}
       <div class="panel"><div class="ph"><h3>Every slot, and what it pays</h3><div class="spacer"></div>
         <label class="row" style="gap:6px"><span class="eyebrow">Season</span>
           <select data-a="rookieYearView">${Array.from({length:8},(_,i)=>S.league.season+i).map(yy=>
@@ -19590,7 +20486,10 @@ ACT.flatYear = (d, el)=>{
   if(on && i<0) list.push(y);
   if(!on && i>=0) list.splice(i,1);
   c.flatYears = list.sort((a,b)=>a-b);
-  save(); render();
+  /* Straight to disk and straight up to the server. Left to the debounce this
+     could still be sitting in a timer when the page was replaced, which is how
+     a tick went missing across a deploy. */
+  save(true); render();
 };
 ACT.clearLimits = ()=>{ S.settings.contracts.limits = {}; save(); render(); };
 /* Which season the slot grid is showing. Defaults to the one we are in, so the
@@ -20901,9 +21800,12 @@ const Sync = {
       const r = await fetch(this.url(), {method:'PUT', headers:this.head(), body});
       const j = await r.json().catch(()=>({}));
       if(r.status===409){
+        /* The newest copy wins, quietly. adoptRemote keeps a copy of what was
+           here first, and still refuses a copy that would wipe the contracts —
+           that is damage rather than a newer league. */
         adoptRemote(j.state, +j.rev||0);
-        this.set('warn','Someone saved first — took their copy');
-        render(); toast('Someone else saved first. Their version is loaded, redo your change.','bad');
+        this.set('ok','Synced');
+        renderQuiet();
       } else if(!r.ok){ throw new Error(j.error || ('server said '+r.status)); }
       else { S.rev = +j.rev||((+S.rev||0)+1); this.lastPush=Date.now(); this.set('ok','Saved revision '+S.rev); if(loud) toast('Pushed to the server','good'); }
     }catch(e){ this.set('bad', e.message); if(loud) toast('Push failed — '+e.message,'bad'); }
@@ -20915,8 +21817,9 @@ const Sync = {
 /* Everything about *how this device connects* is local and must survive a pull.
    Adopting somebody else's copy of those would wipe the league code off this
    phone, and then there would be nothing to pull next time it opened. */
-/* Two versions of the league exist. Show what each holds and let the user
-   decide, rather than quietly replacing one with the other. */
+/* Kept only so an old saved link cannot reach a missing function. The league
+   no longer asks anybody to referee a clash — the newest copy simply wins, with
+   a backup of what was replaced in Settings → Data. */
 function showConflict(){
   const c = ui.tmp.conflict; if(!c) return;
   const line = (t,p,r)=> '<td class="right num">'+t+'</td><td class="right num">'+p+'</td>'+
@@ -21419,14 +22322,19 @@ const Supa = {
           setTimeout(()=> this.push(), 300);
           return;
         }
-        /* A genuine clash between two real copies: ask, rather than pick for them. */
-        this.set('warn','Somebody saved first');
-        ui.tmp.conflict = {state:theirs, rev:theirRev,
-          mineTeams:(S.teams||[]).length, minePlayers:(S.players||[]).length, mineRev:+S.rev||0,
-          theirTeams:((theirs||{}).teams||[]).length, theirPlayers:((theirs||{}).players||[]).length,
-          mineWorth:dealsWorth(S), theirWorth:dealsWorth(theirs)};
+        /* Two real copies. The newest wins, quietly — nobody wants to be asked to
+           referee a clash between two versions of their own league, least of all
+           when the two are identical. A copy of what was on this device goes into
+           the saved copies first, so nothing is ever actually lost, and Settings
+           → Data can put it back. */
+        /* adoptRemote keeps a copy of what was here before taking theirs. */
+        adoptRemote(theirs, theirRev);
+        this.set('ok','Synced');
         this.busy = false;
-        return showConflict();
+        /* Whatever this device had that the newer copy does not, goes back up. */
+        setTimeout(()=> this.push(), 300);
+        renderQuiet();
+        return;
       } else {
         S.rev = +(data && data.rev) || ((+S.rev||0)+1);
         this.lastPush = Date.now();
@@ -21661,9 +22569,11 @@ function tickAll(){
   /* Once, on the first tick, in case a week closed while they were blocked. */
   if(!ui.tmp.beatCaught){
     ui.tmp.beatCaught = true;
+    /* This also bins anything written off a wrong figure and writes it again. */
     try{ if(reportersCatchUp()) needsRender = true; }catch(e){}
   }
   try{ if(injuryWatch()) needsRender = true; }catch(e){}
+  try{ if(surTick()) needsRender = true; }catch(e){}
   try{ if(subsRun()) needsRender = true; }catch(e){}
   try{ if(autoFillRun()) needsRender = true; }catch(e){}
   try{ if(waiverTick()) needsRender = true; }catch(e){}
