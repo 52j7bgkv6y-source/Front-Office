@@ -114,7 +114,13 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
   background:rgba(15,26,36,.93);backdrop-filter:blur(10px);
 }
 #topbar .spacer{flex:1}
-.capchip{display:flex;flex-direction:column;gap:2px;padding:2px 12px;border-left:1px solid var(--rule)}
+/* The bar could not shrink below what was in it, so on a 360px phone — most
+   Androids, and an iPhone mini — the whole app scrolled sideways on every
+   single screen. It may shrink now, and the cap figures give way first. */
+#topbar{min-width:0;overflow:hidden}
+#topbar>*{min-width:0}
+.capchip{display:flex;flex-direction:column;gap:2px;padding:2px 12px;border-left:1px solid var(--rule);min-width:0}
+.capchip .k,.capchip .v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .capchip .k{font:600 10px/1 var(--disp);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 .capchip .v{font:500 15px/1.1 var(--mono)}
 #view{padding:22px;max-width:1480px;width:100%}
@@ -124,7 +130,14 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
 .hr{height:1px;background:var(--rule);margin:18px 0}
 
 /* ── panels & grids ───────────────────────────────────── */
-.panel{background:var(--ink-2);border:1px solid var(--rule);border-radius:var(--r);box-shadow:var(--shadow)}
+.panel{background:var(--ink-2);border:1px solid var(--rule);border-radius:var(--r);box-shadow:var(--shadow);min-width:0}
+/* A grid or flex child will not shrink below the width of what is inside it
+   unless it is told it may. Without this a wide table in a panel pushed the
+   whole page sideways on a phone — the table had its own sideways scroll, but
+   the panel around it had stretched to fit the table anyway, so the page itself
+   scrolled and the layout ran off the right edge. */
+.grid>*,.stack>*{min-width:0}
+.stack{min-width:0}
 .panel>.ph{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--rule-soft)}
 .panel>.ph .spacer{flex:1}
 .panel>.pb{padding:14px}
@@ -676,10 +689,16 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
     background:rgba(19,32,45,.97);backdrop-filter:blur(12px);border-top:1px solid var(--rule);
     padding-bottom:env(safe-area-inset-bottom);
   }
+  #tabbar{min-width:0}
+  /* Five equal columns only divide evenly if they are allowed to be narrower
+     than their labels. Without this the bar stayed as wide as its words and
+     dragged the page along with it. */
   #tabbar button{
     background:none;border:0;padding:9px 2px 8px;color:var(--dim);cursor:pointer;
     display:flex;flex-direction:column;align-items:center;gap:3px;position:relative;
+    min-width:0;overflow:hidden;
   }
+  #tabbar button .lb{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #tabbar button .ic{font-size:17px;line-height:1}
   #tabbar button .lb{font:600 9.5px/1 var(--disp);letter-spacing:.1em;text-transform:uppercase}
   #tabbar button.on{color:var(--brass)}
@@ -688,14 +707,40 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   #sheet.on{display:flex}
   #sheet .sb{background:var(--ink-2);width:100%;border-top:1px solid var(--rule);border-radius:12px 12px 0 0;padding:6px 0 calc(14px + env(safe-area-inset-bottom));max-height:76vh;overflow:auto}
   #sheet .grab{width:36px;height:4px;background:var(--rule);border-radius:2px;margin:8px auto 4px}
+  /* A button keeps its words on one line, which is right on a desktop and
+     wrong on a phone: one long label was enough to push every screen it
+     appeared on off the side. On a phone the words wrap instead, and no button
+     may be wider than what it sits in. */
+  .btn{white-space:normal;max-width:100%}
   .capchip{padding:2px 8px}
   .capchip .v{font-size:13px}
   #modal .box{max-height:92vh}
   #toasts{right:10px;left:10px;bottom:78px;max-width:none}
   th,td{padding:7px 8px;font-size:12.5px}
 }
+/* The inbox on a phone. Stacked, the conversation list sat on top of the thread,
+   so reading a message meant scrolling past every conversation to reach it and
+   scrolling back up to leave. One at a time instead: the list until a
+   conversation is open, then the thread with a way back. */
+.dmback{display:none}
+@media (max-width:860px){
+  .dmgrid.reading .dmlist{display:none}
+  .dmgrid.reading .dmback{display:inline-flex}
+  /* Room for the thread now that it has the width to itself, and clear of the
+     tab bar along the bottom. */
+  .dmgrid .dmscroll{max-height:calc(100vh - 340px);min-height:180px}
+  .dmgrid .dmcompose{position:sticky;bottom:0;background:var(--ink-2);
+    border-top:1px solid var(--rule);padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+  .dmgrid .dmcompose input{font-size:16px}  /* under 16px iOS zooms the page in */
+}
 @media (max-width:420px){
   .hide-xs{display:none}
+}
+/* Narrower than an iPhone mini: the cap chips come off the bar altogether. They
+   are on the Cap screen, which is one tap away, and a bar that fits is worth
+   more than a figure that pushes the page off the side. */
+@media (max-width:370px){
+  #topbar .capchip{display:none}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation-duration:.001ms !important;transition-duration:.001ms !important}
@@ -902,7 +947,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-21m · tick boxes that actually tick';
+const APP_BUILD = '2026-08-21q · the book on every defense';
 
 /* ============================================================
    HOME LEAGUE
@@ -1331,7 +1376,8 @@ function defaultState(){
   const season = 2026;
   return {
     meta:{version:1, savedAt:0, created:Date.now()},
-    league:{name:'Dynasty Cap League', season, myTeamId:null, commishTeamId:null, coCommishIds:[], weekOfSeason:1},
+    league:{name:'Dynasty Cap League', season, myTeamId:null, commishTeamId:null, commishOwner:null,
+            coCommishIds:[], weekOfSeason:1},
     settings:{
       scoring: defaultScoring(),
       roster:{
@@ -2299,6 +2345,7 @@ function seedLeague(teamCount){
   }
   st.league.myTeamId = st.teams[0].id;
   st.league.commishTeamId = st.teams[0].id;
+  st.league.commishOwner = st.teams[0].owner || '';
 
   const rows = SEED_PLAYERS.trim().split(';').map(s=>s.trim()).filter(Boolean);
   const posBase = {QB:38, RB:52, WR:56, TE:32, K:4, DEF:5};
@@ -2404,6 +2451,60 @@ function isCommishTeam(teamId){
    Three tiers. The head commissioner runs the league and is the only one near
    the server and the league file. Co-commissioners do everything else. Everyone
    else can look but not touch. */
+/* ---- The head commissioner is pinned to a man, not to a slot ----------------
+   The commissioner used to be held as a team id alone, and a team id is a
+   fragile thing to hang a league on: a Sleeper pull rebuilds the teams in
+   Sleeper's order, and whoever happened to land first became head
+   commissioner. That is how it moved off Kyle without anyone touching it.
+   So the league now remembers the owner's handle as well. The handle is the
+   truth; the id is worked out from it on every load, every import and every
+   copy taken off the server. Only a deliberate change in Settings moves it. */
+/* The man this league was always meant to be run by. It is only ever consulted
+   once, on the first load after this build, to undo the drift — from then on
+   the pin stands on its own and Settings is the only thing that moves it. */
+const FOUNDING_COMMISH = 'ko1994';
+function commishOwnerPin(){ return (S.league.commishOwner||'').trim().toLowerCase() || null; }
+function teamByOwner(st, handle){
+  const h = (handle||'').trim().toLowerCase();
+  if(!h) return null;
+  const teams = (st && st.teams) || [];
+  return teams.find(t=> (t.owner||'').trim().toLowerCase() === h) || null;
+}
+/* Put the head commissioner back where the pin says, whatever the copy in hand
+   claims. Returns the handle it settled on. */
+function pinCommish(st){
+  if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
+  const pin = (st.league.commishOwner||'').trim().toLowerCase();
+  if(pin){
+    const t = teamByOwner(st, pin);
+    /* The pinned man is still in the league — his team is the commissioner's,
+       whatever id that team carries today. */
+    if(t){ st.league.commishTeamId = t.id; return pin; }
+    /* He is gone. Leave whoever holds it now, and let the pin follow so the
+       league is not left chasing a man who is not in it. */
+    const cur = st.teams.find(x=> x.id === st.league.commishTeamId);
+    st.league.commishOwner = cur ? (cur.owner||'') : '';
+    return (st.league.commishOwner||'').toLowerCase() || null;
+  }
+  /* No pin yet. Before taking one from whoever holds it now, put right the
+     drift that made the pin necessary: if the founding commissioner is still in
+     the league, the chair is his. Done once — the pin it writes is what every
+     later load reads. */
+  const founder = teamByOwner(st, FOUNDING_COMMISH);
+  if(founder){
+    const moved = st.league.commishTeamId !== founder.id;
+    st.league.commishTeamId = founder.id;
+    st.league.commishOwner = founder.owner;
+    if(moved && Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
+      text:'Head commissioner put back to '+founder.owner+' ('+founder.name+') and pinned there'});
+    return (founder.owner||'').toLowerCase();
+  }
+  /* Otherwise take one from whoever holds it now, so this is the last time it
+     can wander. */
+  const cur = st.teams.find(x=> x.id === st.league.commishTeamId) || null;
+  if(cur && cur.owner){ st.league.commishOwner = cur.owner; return cur.owner.toLowerCase(); }
+  return null;
+}
 function headCommishId(){ return S.league.commishTeamId || null; }
 function isHeadCommish(){
   if(viewAsTeam()) return false;
@@ -3234,6 +3335,22 @@ document.addEventListener('change', e=>{
 document.addEventListener('change', e=>{
   const t = e.target.closest('[data-set]');
   if(!t) return;
+  /* Handing over the league is the one thing that moves the pin, and only the
+     man already holding it may do it. */
+  if(t.dataset.set === 'league.commishTeamId'){
+    if(!isHeadCommish()){
+      toast('Only the head commissioner can hand the league over','bad');
+      render(); return;
+    }
+    const id = val(t), team = byId(S.teams, id);
+    if(!team){ render(); return; }
+    S.league.commishTeamId = team.id;
+    S.league.commishOwner = team.owner || '';
+    logIt('Head commissioner is now '+(team.owner||team.name)+' ('+team.name+')', {type:'admin'});
+    save(); render();
+    toast(team.owner ? (team.owner+' runs the league now') : 'Commissioner changed', 'good');
+    return;
+  }
   // comp overrides are keyed "round.index", which would otherwise be read as
   // two levels of nesting
   if(/^settings\.supa\.(url|anonKey|on)$/.test(t.dataset.set)){
@@ -3311,6 +3428,17 @@ document.addEventListener('input', e=>{
   if(!t) return;
   const fn = ACT[t.dataset.oninput];
   if(fn) fn(t.dataset, t, e);
+});
+/* The phone keyboard's send key is an Enter, and it has to do what the Send
+   button does — otherwise the only way to send is to reach up and tap, with the
+   keyboard covering half the thread. */
+document.addEventListener('keydown', e=>{
+  if(e.key !== 'Enter' || e.shiftKey) return;
+  const t = e.target;
+  if(!t || t.id !== 'dmText') return;
+  e.preventDefault();
+  ui.tmp.dmDraft = t.value || '';
+  ACT.dmSend();
 });
 $('#sheet').addEventListener('click', e=>{ if(e.target.id==='sheet') closeSheet(); });
 $('#modal').addEventListener('click', e=>{ if(e.target.id==='modal') closeModal(); });
@@ -5196,7 +5324,22 @@ ACT.dmSend = ()=>{
   dmSend(me, to, text);
   ui.tmp.dmDraft = '';
   render();
+  /* On a phone the keyboard drops away the moment Send is tapped, because the
+     tap moved the focus to the button and the redraw put a new box on screen.
+     Put the cursor back in it so a reply can be typed straight away, and drop
+     the thread to the newest line rather than leaving it where it was. */
+  dmToBottom(true);
 };
+/* Back to the list of conversations — a phone shows one or the other, never
+   both, so there has to be a way out of a thread. */
+ACT.dmClose = ()=>{ ui.tmp.dmWith = null; ui.tmp.dmDraft = ''; render(); };
+function dmToBottom(focus){
+  setTimeout(()=>{
+    const sc = $('#dmScroll');
+    if(sc) sc.scrollTop = sc.scrollHeight;
+    if(focus){ const b = $('#dmText'); if(b){ try{ b.focus(); }catch(e){} } }
+  }, 0);
+}
 /* Write to whoever holds a player, straight from his card or a roster. */
 ACT.messageAbout = (d)=>{
   const p = byId(S.players, d.id);
@@ -7000,7 +7143,7 @@ ACT.surClaimGo = (d)=>{
   notify('A '+r.pos+' has been claimed off you',
     teamName(me)+' wants one of your '+r.pos+'s. You have '+r.nameHours+
     ' hours to say which one is going.', 'warn', [from]);
-  popNotify('A '+r.pos+' has been claimed off you', 'Name the man within '+r.nameHours+' hours.', 'league');
+  popNotify('A '+r.pos+' has been claimed off you', 'Name the man within '+r.nameHours+' hours.', 'league', [from]);
   closeModal(); save(); render();
   toast('Claim is in','good');
 };
@@ -7031,7 +7174,7 @@ ACT.surNameGo = (d)=>{
   notify(p.name+' has been named',
     teamName(c.fromTeam)+' is offering '+p.name+'. You have '+surRules().rejectHours+
     ' hours to turn him down.', 'warn', [c.toTeam]);
-  popNotify(p.name+' has been named', 'Accept him or reject the claim.', 'league');
+  popNotify(p.name+' has been named', 'Accept him or reject the claim.', 'league', [c.toTeam]);
   closeModal(); save(); render();
   toast(p.name+' named','good');
 };
@@ -9786,31 +9929,38 @@ function ladderMode(){
 /* Where he sits at his position on season average, and what the ladder asks for
    that place — shown whether or not he may actually be extended. */
 function ladderLook(p){
-  if(!ladderMode()) return '';
+  /* One game is a place. The games threshold decides whether he may be
+     extended, never whether we can say where he stands — so as soon as he has
+     played once this season, that season is what he is ranked and priced on,
+     however thin it is. Only a man who has not played at all this year is
+     looked up in an earlier one. */
+  if(!(S.settings.contracts.ladder||{}).on) return '';
   const y = S.league.season;
-  let rk = positionRank(p, y);
-  let year = y;
-  /* If this season is too thin, fall back to the last one he played. */
+  const here = gamesIn(p.id, y);
+  let rk = here >= 1 ? positionRank(p, y) : null;
+  let year = y, thin = here >= 1 && here < minGames();
   if(!rk){
     for(let back=1; back<=3; back++){
       const r2 = positionRank(p, y-back);
-      if(r2){ rk = r2; year = y-back; break; }
+      if(r2){ rk = r2; year = y-back; thin = false; break; }
     }
   }
-  if(!rk) return '<div class="tiny dim">He has not played enough at '+esc(p.pos)+
-    ' for a place yet, so the ladder cannot price him.</div>';
-  const line = lineIn(p.id, rk.year != null ? rk.year : year);
+  if(!rk) return '<div class="tiny dim">He has not played a game at '+esc(p.pos)+
+    ' yet, so there is nothing to rank him on.</div>';
+  year = rk.year != null ? rk.year : year;
+  const line = lineIn(p.id, year);
   const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
   const price = ladderPrice(p.pos, rk.rank);
   const w = ladderWorking(p.pos, rk.rank);
+  const asks = ladderMode() ? 'The ladder asks' : 'The ladder would ask';
   return '<div class="row" style="gap:14px;align-items:baseline">'+
       '<div><div class="eyebrow">He is</div>'+
         '<div class="big">'+esc(p.pos)+rk.rank+'</div>'+
-        '<div class="tiny dim">of '+rk.of+' in '+(rk.year!=null?rk.year:year)+'</div></div>'+
+        '<div class="tiny dim">of '+rk.of+' in '+year+'</div></div>'+
       (ppg!=null ? '<div><div class="eyebrow">Averaging</div>'+
         '<div class="big">'+ppg.toFixed(2)+'</div>'+
-        '<div class="tiny dim">a game over '+line.gp+'</div></div>' : '')+
-      '<div><div class="eyebrow">The ladder asks</div>'+
+        '<div class="tiny dim">a game over '+line.gp+(line.gp===1?' game':'')+'</div></div>' : '')+
+      '<div><div class="eyebrow">'+asks+'</div>'+
         '<div class="big">'+money(price)+'</div>'+
         '<div class="tiny dim">a year</div></div>'+
     '</div>'+
@@ -9819,6 +9969,9 @@ function ladderLook(p){
       ? 'Ranked on what he scored for you a game and nothing else.'
       : 'Ranked on a blend of his real-life work and what he scored for you.')+
     (w && w.how ? ' The '+esc(p.pos)+' band for '+esc(w.band)+' is priced off '+esc(w.how)+'.' : '')+
+    (thin ? ' Off '+line.gp+' game'+(line.gp===1?'':'s')+
+      ', so it will move as he plays more.' : '')+
+    (!ladderMode() ? ' Players have a say here, so this is the ladder’s number, not the final one.' : '')+
     '</div>';
 }
 function ladderQuote(p){
@@ -9879,12 +10032,16 @@ function extModal(){
       const rk = (lq && lq.gate && lq.gate.rank) || gate.rank;
       const line = rk ? lineIn(p.id, rk.year) : null;
       const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
-      if(!lq || !rk) return '<div class="assetbox" style="margin-bottom:12px">'+
-        '<div class="flabel">The ladder</div><div class="tiny dim">'+
-        (rk ? 'He is '+esc(p.pos)+ordinal(rk.rank).replace(/^\d+/,'')+' — '+rk.rank+' of '+rk.of+
-              ', but the ladder has no price for him.'
-            : 'He has not played enough for a place at '+esc(p.pos)+' yet, so the ladder cannot price him.')+
-        '</div></div>';
+      if(!lq || !rk){
+        /* No quote off the gate's season — fall back to the plain look, which
+           ranks him off this season the moment he has a game in it. */
+        const look = ladderLook(p);
+        return '<div class="assetbox" style="margin-bottom:12px">'+
+          '<div class="flabel">The ladder</div>'+
+          (look || '<div class="tiny dim">He has not played a game at '+esc(p.pos)+
+            ' yet, so the ladder cannot price him.</div>')+
+          '</div>';
+      }
       return '<div class="assetbox" style="margin-bottom:12px;border-color:#2F5C3A">'+
         '<div class="row" style="gap:14px;align-items:baseline">'+
           '<div><div class="eyebrow">The ladder asks</div>'+
@@ -10376,7 +10533,7 @@ function moveAssets(fromTeam, toTeam, o){
         'eating '+money(owed.total)+' of his old salary. You have '+absorbHours()+
         ' hours to decide whether to fold it onto his deal.', 'warn', [toTeam]);
       popNotify('You have '+absorbHours()+' hours to decide',
-        p.name+' is back and you are still eating '+money(owed.total)+' of him.', 'league');
+        p.name+' is back and you are still eating '+money(owed.total)+' of him.', 'league', [toTeam]);
     }
     /* He joins the roster proper — a taxi or practice spot does not travel. */
     if(playerSlot(p)==='taxi' || playerSlot(p)==='practice'){
@@ -12692,8 +12849,8 @@ function inboxView(me){
       <button data-a="sub" data-s="room">The room</button>
       <button class="on" data-a="sub" data-s="inbox">Inbox${un?' <span class="badge">'+un+'</span>':''}</button>
     </div>
-    <div class="grid g2" style="align-items:start">
-      <div class="panel"><div class="ph"><h3>Conversations</h3><div class="spacer"></div>
+    <div class="grid g2 dmgrid${open?' reading':''}" style="align-items:start">
+      <div class="panel dmlist"><div class="ph"><h3>Conversations</h3><div class="spacer"></div>
         <select data-a="dmNew"><option value="">Start one with…</option>
           ${S.teams.filter(t2=> t2.id!==me).map(t2=>'<option value="'+t2.id+'">'+esc(t2.name)+'</option>').join('')}
         </select></div>
@@ -12712,10 +12869,12 @@ function inboxView(me){
               'or use the message link on any team or player.</p></div>'}
         </div></div>
 
-      <div class="panel">${open ? `
-        <div class="ph"><h3>${esc(teamName(open))}</h3><div class="spacer"></div>
+      <div class="panel dmthread">${open ? `
+        <div class="ph">
+          <button class="btn sm ghost dmback" data-a="dmClose" title="Back to conversations">‹ All</button>
+          <h3>${esc(teamName(open))}</h3><div class="spacer"></div>
           <button class="btn sm ghost" data-a="go" data-r="teams" data-t="${open}">Their roster</button></div>
-        <div class="pb tight" style="max-height:52vh;overflow:auto">
+        <div class="pb tight dmscroll" id="dmScroll" style="max-height:52vh;overflow:auto">
           ${dmWith(me, open).map(mm=>`
             <div class="chatrow ${mm.from===me?'me':''}">
               <div class="chatbub">
@@ -12725,10 +12884,11 @@ function inboxView(me){
               </div></div>`).join('')
             || '<div class="hint">No messages yet. Say something.</div>'}
         </div>
-        <div class="pb">
+        <div class="pb dmcompose">
           <div class="row" style="gap:6px">
             <input type="text" id="dmText" data-k="dmtext" placeholder="Write to ${esc(teamName(open))}…"
-              style="flex:1" data-oninput="dmType" value="${esc(ui.tmp.dmDraft||'')}">
+              style="flex:1" data-oninput="dmType" enterkeyhint="send"
+              autocomplete="off" autocapitalize="sentences" value="${esc(ui.tmp.dmDraft||'')}">
             <button class="btn pri" data-a="dmSend">Send</button>
           </div>
         </div>`
@@ -13166,31 +13326,126 @@ function foldWeekIntoSeason(){
     line.weeks[wk] = {fpts: Math.round(got*100)/100, stats: Object.assign({}, src)};
   });
 }
-/* Every week folded away also lands on the defense that gave it up, so the
-   book on each unit builds itself as the season runs. */
-function foldWeekIntoDvp(){
-  S.dvp = S.dvp || {};
-  (S.live.games||[]).forEach(g=>{
-    if(g.status==='pre') return;
-    [[g.home, g.away],[g.away, g.home]].forEach(pair=>{
-      const off = pair[0], def = pair[1];
-      const d = S.dvp[def] = S.dvp[def] || {games:0, pos:{}, rush_yd:0, rush_td:0, pass_yd:0, pass_td:0, rec_yd:0, rec_td:0};
-      d.games++;
-      S.players.filter(p=> p.nfl===off && p.pos!=='DEF').forEach(p=>{
-        const st = (S.live.stats||{})[p.id]; if(!st) return;
-        const f = fpts(p.id);
-        if(f){ const e = d.pos[p.pos] = d.pos[p.pos] || {f:0}; e.f = Math.round((e.f + f)*100)/100; }
-        d.rush_yd += +st.rush_yd||0; d.rush_td += +st.rush_td||0;
-        d.pass_yd += +st.pass_yd||0; d.pass_td += +st.pass_td||0;
-        d.rec_yd  += +st.rec_yd||0;  d.rec_td  += +st.rec_td||0;
-      });
+/* Club codes differ between the places they come from — the card may say WAS
+   where the players say WSH — and a defense split across two spellings has half
+   its book under each, which is how a unit ends up looking unranked. */
+const CLUB_SAME = {WAS:'WSH', LA:'LAR', JAC:'JAX', ARZ:'ARI', CLV:'CLE', HST:'HOU',
+                   BLT:'BAL', SD:'LAC', OAK:'LV', STL:'LAR'};
+function clubCode(c){
+  const u = String(c||'').trim().toUpperCase();
+  return CLUB_SAME[u] || u;
+}
+/* Who a club played in a given week, off the real card. */
+function clubOppIn(club, week){
+  const card = ((S.live.nfl||{})[week]) || [];
+  const c = clubCode(club);
+  const g = card.find(x=> clubCode(x.home)===c || clubCode(x.away)===c);
+  if(!g) return null;
+  return clubCode(clubCode(g.home)===c ? g.away : g.home);
+}
+/* ---- The book on each defense ----------------------------------------------
+   This used to be built only out of the live week, at the moment it was folded
+   away: whatever was in S.live.stats right then landed on the defense and that
+   was the only chance it ever got. Miss that moment — a week closed by a deploy,
+   a season imported after the fact, a phone that took a copy from the server
+   instead of closing the week itself — and the book stayed empty for good, with
+   nothing to rank and a row of dashes under Rank vs pos.
+
+   It is rebuilt from what is actually kept instead. Every player's week-by-week
+   line is stored with its points and its stats, and the real card says who each
+   club played that week, so the whole book can be worked out again from scratch
+   whenever it is wanted — and it comes out the same every time. */
+function rebuildDvp(){
+  const out = {};
+  const byPlayer = ((S.season||{}).byPlayer) || {};
+  /* Which weeks were actually played — a week somebody has a line in. */
+  const weeks = {};
+  Object.keys(byPlayer).forEach(pid=>{
+    const wk = (byPlayer[pid]||{}).weeks || {};
+    Object.keys(wk).forEach(w=>{ if(+w) weeks[+w] = 1; });
+  });
+  const played = Object.keys(weeks).map(Number).sort((a,b)=> a-b);
+  if(!played.length){ S.dvp = {}; return 0; }
+  const unit = (code)=> out[code] = out[code] ||
+    {games:0, pos:{}, rush_yd:0, rush_td:0, pass_yd:0, pass_td:0, rec_yd:0, rec_td:0};
+  /* A defense played one game in each week its club is on that week's card. */
+  played.forEach(w=>{
+    const card = ((S.live.nfl||{})[w]) || [];
+    card.forEach(g=>{
+      const h = clubCode(g.home), a = clubCode(g.away);
+      if(h) unit(h).games++;
+      if(a) unit(a).games++;
     });
   });
+  /* And everything scored against it lands on it. */
+  Object.keys(byPlayer).forEach(pid=>{
+    const p = byId(S.players, pid);
+    if(!p || p.pos==='DEF') return;
+    const club = clubCode(p.nfl);
+    if(!club) return;
+    const wk = (byPlayer[pid]||{}).weeks || {};
+    Object.keys(wk).forEach(wkey=>{
+      const w = +wkey; if(!w) return;
+      const opp = clubOppIn(club, w);
+      if(!opp || opp===club) return;
+      const rec = wk[wkey] || {}, st = rec.stats || {};
+      const d = unit(opp);
+      const f = +rec.fpts||0;
+      /* `n` counts the men faced, so a unit nobody has played at that position
+         can be told apart from one that genuinely held them to nothing. */
+      const e = d.pos[p.pos] = d.pos[p.pos] || {f:0, n:0};
+      e.f = Math.round((e.f + f)*100)/100; e.n++;
+      d.rush_yd += +st.rush_yd||0; d.rush_td += +st.rush_td||0;
+      d.pass_yd += +st.pass_yd||0; d.pass_td += +st.pass_td||0;
+      d.rec_yd  += +st.rec_yd||0;  d.rec_td  += +st.rec_td||0;
+    });
+  });
+  S.dvp = out;
+  return played.length;
+}
+/* Kept under its old name so every place that closed a week still works, but it
+   now rebuilds the whole book rather than adding one week to it — which means
+   it cannot drift, and running it twice does no harm. */
+function foldWeekIntoDvp(){ return rebuildDvp(); }
+/* Which weeks have been played but have no card stored against them. */
+function weeksMissingCard(){
+  const byPlayer = ((S.season||{}).byPlayer) || {};
+  const weeks = {};
+  Object.keys(byPlayer).forEach(pid=>{
+    const wk = (byPlayer[pid]||{}).weeks || {};
+    Object.keys(wk).forEach(w=>{ if(+w) weeks[+w] = 1; });
+  });
+  return Object.keys(weeks).map(Number)
+    .filter(w=> !(((S.live.nfl||{})[w]||[]).length))
+    .sort((a,b)=> a-b);
+}
+/* Fetch them, one at a time so the source is not hammered, then work the book
+   out again. Quiet: nothing is said unless it actually changes something. */
+let cardFillRan = false;
+async function fillMissingCards(){
+  if(cardFillRan) return 0;
+  const missing = weeksMissingCard();
+  if(!missing.length) return 0;
+  cardFillRan = true;
+  let got = 0;
+  for(const w of missing.slice(0, 20)){
+    try{ if(await pullKickoffs(w)) got++; }catch(e){}
+  }
+  if(got){
+    rebuildDvp();
+    save();
+    renderQuiet();
+  }
+  return got;
 }
 function dvpPerGame(code, pos){
   const d = (S.dvp||{})[code];
   if(!d || !d.games) return null;
-  return ((d.pos[pos]||{}).f || 0) / d.games;
+  const e = d.pos[pos];
+  /* Nothing on the book for that position is not the same as holding them to
+     nothing. Left as a zero it ranked as the hardest unit in the league. */
+  if(!e || !e.n) return null;
+  return (e.f || 0) / d.games;
 }
 function dvpSplit(code, kind){
   const d = (S.dvp||{})[code];
@@ -13611,8 +13866,13 @@ function canExtend(p){
   }
   const y = rankBasisYear(p);
   if(y==null) return {ok:false, basis:null, rank:null, games:here,
-    why: p.name+' has played '+here+' game'+(here===1?'':'s')+' and needs '+need+
-         '. There is no earlier season with '+need+' either, so there is nothing to price him off.'};
+    why: here >= 1
+      /* He has played. Where he stands and what he would cost are both known —
+         it is only the extension itself the threshold is holding up. */
+      ? p.name+' has played '+here+' game'+(here===1?'':'s')+' and needs '+need+
+        ' before he can be extended. Where he stands and what he would cost are below.'
+      : p.name+' has not played a game this season, and there is no earlier one with '+
+        need+' either, so there is nothing to rank him on yet.'};
   const r = positionRank(p, y);
   return {ok:true, basis:y, rank:r, games:here, current:false,
     note:'Priced off '+y+', the last season he played '+need+' games.'};
@@ -13698,8 +13958,9 @@ function dmSend(from, to, text){
   const mm = {id:uid('dm'), from, to, text:body.slice(0, 4000), at:Date.now(), read:false};
   dmStore().unshift(mm);
   if(S.dms.length > 2000) S.dms.length = 2000;
+  /* Both of these are for the man being written to, and nobody else. */
   notify('Message from '+teamName(from), body.slice(0,120), 'info', [to]);
-  popNotify('Message from '+teamName(from), body.slice(0,120), 'dm');
+  popNotify('Message from '+teamName(from), body.slice(0,120), 'dm', [to]);
   save();
   return mm;
 }
@@ -13791,8 +14052,18 @@ function popState(){
   return Notification.permission;            /* granted | denied | default */
 }
 /* Raise one, if the league member asked for that kind. */
-function popNotify(title, body, kind){
+/* `teams` names who the pop-up is for. Leave it out and it is league-wide.
+   Without it every notice fired on whatever device happened to run the code,
+   which meant a manager was buzzed by his own outgoing message — the one thing
+   he already knows about. You are told when something arrives, not when you
+   send it. */
+function popNotify(title, body, kind, teams){
   try{
+    const only = Array.isArray(teams) ? teams.filter(Boolean) : null;
+    if(only && only.length){
+      const seat = mySeatId();
+      if(!seat || only.indexOf(seat) < 0) return false;
+    }
     if(!popWants(kind || 'league')) return false;
     if(!popAllowed()) return false;
     const n2 = new Notification(String(title||'Front Office'), {
@@ -15312,7 +15583,10 @@ function payoutPost(year){
   const lines = pay.rows.map(r=>
     payMoney(r.amount)+' — '+r.what+': '+teamName(r.teamId)+(r.note? ' ('+r.note+')' : ''));
   S.chat = S.chat || [];
-  S.chat.unshift({id:uid('m'), at:Date.now(), teamId:null,
+  /* The room is kept oldest-first and turned round when it is drawn, so a post
+     put on the front lands at the very bottom of the whole history, months back.
+     That is why these never seemed to appear. They go on the end. */
+  S.chat.push({id:uid('m'), at:Date.now(), teamId:null,
     reporter:'The Front Office', outlet:y+' payouts', reporterWeek:null,
     text:'That is '+y+' done. Here is who gets paid:\n\n'+lines.join('\n')+
       '\n\nTotal out: '+payMoney(pay.total)+'.',
@@ -16225,7 +16499,7 @@ function injuryWatch(){
       notify(p.name+' '+word,
         'He is in your week '+w+' lineup'+((p.injury||{}).body? ' — '+p.injury.body : '')+'.',
         st==='out' ? 'bad' : 'warn', [t.id]);
-      popNotify(p.name+' '+word, 'In your week '+w+' lineup.', 'lineup');
+      popNotify(p.name+' '+word, 'In your week '+w+' lineup.', 'lineup', [t.id]);
       told++;
     });
   });
@@ -16454,7 +16728,7 @@ function subsRun(){
         {type:'admin', teams:[t.id], players:[p.id, sub.id]});
       notify(sub.name+' came on for '+p.name,
         p.name+' did not play, so the man you named took his place.', 'warn', [t.id]);
-      popNotify(sub.name+' came on for '+p.name, 'He did not play.', 'lineup');
+      popNotify(sub.name+' came on for '+p.name, 'He did not play.', 'lineup', [t.id]);
     });
   });
   if(on){ clearCapCache(); save(); }
@@ -16531,7 +16805,7 @@ function autoFillRun(){
       notify(sub.p.name+' is in for '+p.name,
         p.name+' was ruled out, so your best available man took his place — '+
         sub.p.name+' on '+sub.proj.toFixed(1)+' projected.', 'warn', [t.id]);
-      popNotify(sub.p.name+' is in for '+p.name, 'He was ruled out.', 'lineup');
+      popNotify(sub.p.name+' is in for '+p.name, 'He was ruled out.', 'lineup', [t.id]);
     });
   });
   if(swaps){ clearCapCache(); save(); }
@@ -17042,7 +17316,7 @@ function weeklyReportRun(){
   if(rep.worstManager) lines.push('Most left on the bench: '+nm(rep.worstManager.teamId)+
     ' on '+rep.worstManager.eff.toFixed(1)+'%');
   S.chat = S.chat || [];
-  S.chat.unshift({id:uid('m'), at:Date.now(), teamId:null,
+  S.chat.push({id:uid('m'), at:Date.now(), teamId:null,
     reporter:'The Monday Post', outlet:'week '+w+' in figures', reporterWeek:w,
     text: lines.join('\n'), media:null, notify:'none'});
   notify('Week '+w+' in figures', lines.slice(0,2).join(' \u00b7 '), 'info');
@@ -17083,10 +17357,10 @@ function duesWeeklyRun(){
       'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
       (d.dueDate? ', due '+dayOnly(d.dueDate) : '')+
       (d.payTo? '. Send to '+d.payTo : '')+'.', 'warn', [t.id]);
-    popNotify('Dues still owing', duesMoney(dueAmount(t, y))+' for '+y+'.', 'dues');
+    popNotify('Dues still owing', duesMoney(dueAmount(t, y))+' for '+y+'.', 'dues', [t.id]);
   });
   S.chat = S.chat || [];
-  S.chat.unshift({id:uid('c'), at:Date.now(), teamId:null,
+  S.chat.push({id:uid('c'), at:Date.now(), teamId:null,
     reporter:'The Front Office', outlet:'dues', reporterWeek:null,
     text:'Still owing for '+y+': '+owing.map(t=> t.name).join(', ')+'.'+
       (d.dueDate? ' Due '+dayOnly(d.dueDate)+'.' : '')+
@@ -17748,7 +18022,16 @@ ACT.sleeperGo = async ()=>{
       ui.tmp.slDepth = depthSet; ui.tmp.slFixtures = fixtures;
       S.league.name = league.name || S.league.name;
       S.league.season = season;
-      if(S.teams[0]){ S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
+      /* A pull from Sleeper brings teams back in Sleeper's order, and this line
+         used to hand the league to whoever came back first — both the seat and
+         the commissioner's chair. Neither is Sleeper's to decide. An import
+         fills them only when the league has nobody in them at all. */
+      if(S.teams[0]){
+        if(!S.league.myTeamId) S.league.myTeamId = S.teams[0].id;
+        if(!S.league.commishTeamId && !S.league.commishOwner)
+          S.league.commishTeamId = S.teams[0].id;
+      }
+      pinCommish(S);
       if(o.picks){
         /* Every pick for the next three seasons, then the ones Sleeper says have
            already changed hands. */
@@ -18683,7 +18966,10 @@ ACT.impCommit = ()=>{
     }
     S.players.push(p); added++;
   });
-  if(!S.league.myTeamId && S.teams[0]) { S.league.myTeamId = S.teams[0].id; S.league.commishTeamId = S.teams[0].id; }
+  if(!S.league.myTeamId && S.teams[0]) S.league.myTeamId = S.teams[0].id;
+  if(!S.league.commishTeamId && !S.league.commishOwner && S.teams[0])
+    S.league.commishTeamId = S.teams[0].id;
+  pinCommish(S);
   if(!S.picks.length) for(let y=S.league.season+1; y<=S.league.season+3; y++) for(let rd=1; rd<=4; rd++)
     S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:y, round:rd, ownerTeamId:t.id, originTeamId:t.id}));
   if(im.priceMode==='target') fitToCap(im.targetPct);
@@ -18900,6 +19186,18 @@ VIEWS.settings = function(){
         </div>
         <label class="f"><span>Your team</span>${teamSelect('league.myTeamId', S.league.myTeamId)}</label>
         <label class="f"><span>Commissioner</span>${teamSelect('league.commishTeamId', S.league.commishTeamId)}</label>
+        ${(()=>{
+          const pin = commishOwnerPin();
+          if(!pin) return '';
+          const t = byId(S.teams, S.league.commishTeamId);
+          const dbOff = (typeof Supa==='object' && Supa.ready() && !Supa.boss() && isHeadCommish());
+          return '<div class="hint">Pinned to <b>'+esc((t&&t.owner)||pin)+'</b>'+
+            (t?' ('+esc(t.name)+')':'')+'. A Sleeper pull or a copy off the server cannot move it — '+
+            'changing it here is the only way, and only he can do it.'+
+            (dbOff ? ' <span class="pill warn">Note</span> the server still has somebody else down as commissioner; '+
+              'whoever that is can put it right under Settings › Members.' : '')+
+            '</div>';
+        })()}
         <div class="flabel" style="margin-top:10px">Co-commissioners</div>
         <div class="stack">
           ${S.teams.filter(t=> t.id!==S.league.commishTeamId).map(t=>`<label class="check">
@@ -22229,6 +22527,56 @@ function keepClocksRunning(before, after){
     }
   });
 }
+/* ---- Joining the append-only streams ---------------------------------------
+   Messages, the room, the transaction log and the notices are only ever added
+   to. Everything else in the league is a value somebody edits, so the newest
+   copy winning is right for it — but for these it is plain loss: two phones
+   both writing means whichever pushed second wiped the other's entries, and the
+   sender watched his own message vanish a second after sending it.
+
+   So these four are joined rather than replaced. An entry is the same entry if
+   it carries the same id; entries written before ids existed fall back to the
+   time and the words, which is enough to spot the same line twice. */
+const STREAMS = [
+  {key:'dms',     cap:2000, at:m=> +m.at||0},
+  {key:'chat',    cap:1200, at:m=> +m.at||0},
+  {key:'notices', cap:200,  at:m=> +m.at||0},
+  {key:'log',     cap:600,  at:m=> +m.at||0}
+];
+function streamKey(m){
+  if(!m || typeof m!=='object') return null;
+  if(m.id) return 'id:'+m.id;
+  return 't:'+(+m.at||0)+'|'+String(m.text||m.title||'').slice(0,60);
+}
+/* Both lists in, one list out, newest first, nothing counted twice. */
+function joinStream(mine, theirs, cap, atOf){
+  const a = Array.isArray(mine) ? mine : [], b = Array.isArray(theirs) ? theirs : [];
+  const seen = {}, out = [];
+  /* Theirs first so the server's wording wins on a genuine duplicate, then
+     anything this device has that never made it up. */
+  b.concat(a).forEach(m=>{
+    const k = streamKey(m);
+    if(k==null || seen[k]) return;
+    seen[k] = 1; out.push(m);
+  });
+  out.sort((x,y)=> atOf(y) - atOf(x));
+  if(cap && out.length > cap) out.length = cap;
+  return out;
+}
+function mergeStreams(before, after){
+  if(!before || !after) return;
+  STREAMS.forEach(s=>{
+    const joined = joinStream(before[s.key], after[s.key], s.cap, s.at);
+    /* The room reads oldest-first everywhere it is shown, so it is put back
+       that way round; the rest are held newest-first. */
+    after[s.key] = (s.key==='chat') ? joined.slice().reverse() : joined;
+  });
+  /* A message read on this device stays read, and one read on another device
+     counts too — whoever saw it, it has been seen. */
+  const wasRead = {};
+  (Array.isArray(before.dms)?before.dms:[]).forEach(m=>{ if(m && m.read && m.id) wasRead[m.id]=1; });
+  (after.dms||[]).forEach(m=>{ if(m && m.id && wasRead[m.id]) m.read = true; });
+}
 function adoptRemote(state, rev, force){
   const before = S;                       /* what this device had a moment ago */
   /* A server copy that would wipe the contracts is never taken quietly, however
@@ -22282,6 +22630,14 @@ function adoptRemote(state, rev, force){
      that rebuilt a team, a copy that came back thin. If the incoming state has
      none for a team and the one on this device does, the local one wins. */
   keepTeamLedgers(before, S);
+  /* Messages, the room, the log and the notices are written to, never edited.
+     Taking the server's copy whole threw away everything this device had added
+     since it last pushed — which on a phone is the message just sent, gone the
+     moment it was sent. They are joined instead, so both sides keep what they
+     wrote. */
+  mergeStreams(before, S);
+  /* Weeks may have arrived with that copy, so the book is worked out again. */
+  try{ rebuildDvp(); }catch(e){}
   /* And if somebody is part-way through the settings page, the settings they are
      working on are theirs until they are done. Taking the server's copy out from
      under them is how a page full of tick boxes gets undone. */
@@ -22764,6 +23120,10 @@ function migrate(j){
     if(!t.mascot) t.mascot = mk[i%mk.length];
   });
   out.live.talk = Array.isArray(out.live.talk) ? out.live.talk : [];
+  /* Whatever this copy says, the pinned owner is the head commissioner. This
+     runs on every load, every import and every copy taken off the server, so a
+     stray edit on somebody else's device cannot carry the league away. */
+  pinCommish(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -23067,6 +23427,15 @@ async function init(){
     applyHomeLeague();
     notify('Welcome', 'A ten-team demo is on screen so nothing is blank. Nothing has been saved yet — import your league or make a change and it becomes yours.');
   }
+  /* The book on each defense is worked out from the weeks already recorded, so
+     it is right from the first screen rather than waiting for a week to be
+     closed out on this particular device. */
+  try{ rebuildDvp(); }catch(e){}
+  /* Working it out needs the real card for each week played, to know who a club
+     was up against. A week closed before the card was ever fetched leaves a
+     hole, so any missing card is fetched once in the background and the book is
+     worked out again. */
+  setTimeout(()=>{ try{ fillMissingCards(); }catch(e){} }, 1500);
   const h = location.hash.slice(1);
   route = VIEWS[h] ? h : 'dash';
   render();
