@@ -73,6 +73,12 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
 .dim{color:var(--dim)}
 .good{color:var(--sage)}
 .bad{color:var(--signal)}
+/* Weather beside a player — small, never wraps, coloured only when it matters. */
+.wx{display:inline-flex;align-items:center;gap:3px;font:500 11px/1.2 var(--mono);color:var(--mute);
+  white-space:nowrap;vertical-align:middle}
+.wx b{font-weight:600;letter-spacing:.02em}
+.wx.warn{color:var(--brass)}
+.wx.bad{color:var(--signal)}
 .tiny{font-size:12px}
 .center{text-align:center}
 .right{text-align:right}
@@ -947,7 +953,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-21q · the book on every defense';
+const APP_BUILD = '2026-08-21u · the phones tell the server the schedule';
 
 /* ============================================================
    HOME LEAGUE
@@ -2261,8 +2267,13 @@ function logIt(text, meta){
    business belongs to and only they will. */
 function notify(title, body, kind, teams){
   const only = Array.isArray(teams) ? teams.filter(Boolean) : null;
+  /* Written within a moment of a tap is written by whoever tapped. Anything the
+     app does on its own — a poll, a clock running out — belongs to nobody. */
+  const by = (Date.now() - (ui.lastActAt||0) < 2500) ? (mySeatId() || null) : null;
   S.notices.unshift({id:uid('n'), at:Date.now(), title, body, kind:kind||'info',
-    teams: (only && only.length) ? only : null, read:false});
+    teams: (only && only.length) ? only : null, read:false, by});
+  /* And on to any phone it concerns that is locked. */
+  try{ if(typeof Push==='object') Push.relay(S.notices[0]); }catch(e){}
   if(S.notices.length>200) S.notices.length=200;
 }
 /* Is this notice any of my business? */
@@ -3319,7 +3330,7 @@ document.addEventListener('click', e=>{
   // swallowing their click would stop a select from opening at all
   if(/^(SELECT|INPUT|TEXTAREA|OPTION)$/.test(t.tagName)) return;
   const fn = ACT[t.dataset.a];
-  if(fn){ e.preventDefault(); fn(t.dataset, t, e); }
+  if(fn){ ui.lastActAt = Date.now(); e.preventDefault(); fn(t.dataset, t, e); }
 });
 /* A tick box or a picker carrying data-a is driven by change, not click — the
    handler above steps over them so a select can still open. Without this they
@@ -3330,7 +3341,7 @@ document.addEventListener('change', e=>{
   if(!t || !t.dataset || !t.dataset.a) return;
   if(!/^(SELECT|INPUT|TEXTAREA)$/.test(t.tagName||'')) return;
   const fn = ACT[t.dataset.a];
-  if(fn) fn(t.dataset, t, e);
+  if(fn){ ui.lastActAt = Date.now(); fn(t.dataset, t, e); }
 });
 document.addEventListener('change', e=>{
   const t = e.target.closest('[data-set]');
@@ -4356,7 +4367,6 @@ async function pullCorrections(quiet){
         {type:'admin'});
       notify('Stat corrections', fixed+' score'+(fixed===1?'':'s')+
         ' changed after the NFL revised its figures. Records and results are up to date.', 'warn');
-      popNotify('Stat corrections', fixed+' score'+(fixed===1?'':'s')+' were revised.', 'league');
       save();
     }
     lastFixAt = Date.now();
@@ -4377,6 +4387,7 @@ async function pollSleeperStats(){
   try{
     const j = await getJSON(SLEEPER+'/stats/nfl/regular/'+season+'/'+week);
     if(j && typeof j==='object'){
+      const before = snapStarters();
       let n = 0;
       S.players.forEach(p=>{
         const line = p.sleeperId ? j[String(p.sleeperId)] : null;
@@ -4386,6 +4397,7 @@ async function pollSleeperStats(){
       });
       if(n){
         S.live.statsAt = Date.now();
+        try{ liveScoringEvents(before); }catch(e){}
         if(route==='live') render();
       }
     }
@@ -4999,7 +5011,7 @@ VIEWS.live = function(){
     const rz = (s.p && inRedZone(s.p.nfl)) || (o && o.p && inRedZone(o.p.nfl));
     return `<tr class="${rz?'rzrow':onAir?'liverow':''}">
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
-        ${injuryTag(s.p)} ${matchupChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
+        ${injuryTag(s.p)} ${matchupChip(s.p)} ${wxChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
       <td class="right num" style="width:10%">${s.p
         ? '<a href="#" data-a="scoreCard" data-id="'+s.p.id+'" data-w="'+(+S.live.week||1)+
           '" class="scorelink" title="how he scored it">'+s.pts.toFixed(2)+'</a>'
@@ -5017,7 +5029,7 @@ VIEWS.live = function(){
         ${o&&o.p? injMark(o.p) : ''}
         ${o&&o.p&&gameWhen(o.p.nfl)?'<div class="tiny '+(gameLive(o.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(o.p.nfl))+' '+ballTag(o.p)+'</div>':''}</td>
-      <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
+      <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${wxChip(o.p)} ${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -5124,7 +5136,7 @@ VIEWS.live = function(){
           const r = m.byPos, run = dvpRank(m.opp.code,null,'rush'), pass = dvpRank(m.opp.code,null,'pass');
           const strong = primaryKind(p.pos);
           return `<tr><td>${esc(p.name)}</td><td>${posTag(p.pos)}</td>
-            <td class="num">${m.opp.atHome?'vs':'@'} ${esc(m.opp.code)}</td>
+            <td class="num">${m.opp.atHome?'vs':'@'} ${esc(m.opp.code)}${wxChip(p)?'<div>'+wxChip(p)+'</div>':''}</td>
             <td class="right num">${r? r.rank+' <span class="dim">of '+r.of+'</span>' : '<span class="dim">—</span>'}</td>
             <td class="right num hide-xs ${strong==='rush'?'':'dim'}">${run? run.rank : '—'}</td>
             <td class="right num hide-xs ${strong==='pass'?'':'dim'}">${pass? pass.rank : '—'}</td>
@@ -5357,6 +5369,7 @@ ACT.popToggle = (d, el)=>{
   const p = popPrefs();
   p.on = el ? !!el.checked : !p.on;
   savePopPrefs(p);
+  Push.resync();            /* the server honours the same ticks */
   render();
 };
 ACT.popKind = (d, el)=>{
@@ -5364,30 +5377,55 @@ ACT.popKind = (d, el)=>{
   p.kinds = p.kinds || {};
   p.kinds[d.k] = el ? !!el.checked : !popWants(d.k);
   savePopPrefs(p);
+  Push.resync();
   render();
 };
 ACT.popAsk = async ()=>{
-  if(typeof Notification === 'undefined')
+  if(typeof Notification === 'undefined'){
+    if(isIOS() && !isStandalone())
+      return modal('One step first on iPhone',
+        '<p>An iPhone only lets a web app send notifications once it is on your Home Screen and opened from there.</p>'+
+        '<ol class="muted" style="margin:0 0 0 18px;padding:0"><li>Tap the Share button in Safari</li>'+
+        '<li>Choose <b>Add to Home Screen</b></li><li>Open Front Office from the new icon</li>'+
+        '<li>Come back here and turn notifications on</li></ol>',
+        '<button class="btn pri" data-a="closeModal">Got it</button>');
     return toast('This browser cannot show notifications','bad');
+  }
+  swRegister();
   try{
     const r = await Notification.requestPermission();
     if(r === 'granted'){
       const p2 = popPrefs(); p2.on = true; savePopPrefs(p2);
       render();
-      popNotify('Front Office', 'Notifications are on. This is what one looks like.', 'league');
-      return toast('Notifications are on','good');
+      /* Prove it, rather than saying so: the switch used to report "on" while
+         the phone quietly refused every one. */
+      Push.resync();
+      const how = await showNote('Front Office', 'Notifications are on. This is what one looks like.', 'fo-hello');
+      return how ? toast('Notifications are on','good') : noteFailed();
     }
     render();
     toast(r === 'denied'
-      ? 'Your browser is blocking them — turn them back on in the site settings'
+      ? 'Your phone is blocking them — turn them back on in the site settings'
       : 'Not granted', 'bad');
   }catch(e){ toast('Could not ask — '+e.message,'bad'); }
 };
-ACT.popTest = ()=>{
+ACT.popTest = async ()=>{
   if(!popAllowed()) return toast('Turn notifications on first','bad');
-  const ok2 = popNotify('Front Office', 'A test notification from your league.', 'league');
-  toast(ok2 ? 'Sent — look for it' : 'Nothing raised; check the kinds you have ticked','warn');
+  const how = await showNote('Front Office', 'A test notification from your league.', 'fo-test-'+Date.now());
+  if(how) return toast('Sent — look at the top of your screen','good');
+  noteFailed();
 };
+/* Say exactly why nothing appeared, because "check your settings" helps nobody. */
+function noteFailed(){
+  const why = swErr && /404|fetch|failed|not found|MIME|bad HTTP/i.test(swErr)
+    ? 'The notification helper file, <b>sw.js</b>, is not on the site. It has to be deployed beside index.html — drag the whole folder onto Netlify, not the single file.'
+    : swErr === 'needs the site served over https'
+    ? 'Notifications only work on the live https site, not a file opened from your phone or computer.'
+    : 'Your phone refused it'+(lastNoteErr ? ' — <span class="num">'+esc(lastNoteErr)+'</span>' : '')+'.';
+  modal('Nothing came through', '<p>'+why+'</p>'+
+    (isIOS() && !isStandalone() ? '<p class="muted">On iPhone the app also has to be opened from its Home Screen icon.</p>' : ''),
+    '<button class="btn pri" data-a="closeModal">Close</button>');
+}
 /* Put the books straight: every record worked out again from the results that
    are actually on the fixture list. Fixes any total that has drifted. */
 ACT.fixRecords = ()=>{
@@ -5679,7 +5717,6 @@ function autoCloseTick(){
   logIt('Week '+closed+' closed automatically', {type:'admin'});
   notify('Week '+closed+' is in the books',
     'Closed on its own, as the league is set to. Week '+(closed+1)+' is under way.', 'info');
-  popNotify('Week '+closed+' is in the books', 'Records and scoring are updated.', 'league');
   return 1;
 }
 ACT.closeWeek = ()=>{ doCloseWeek(false); };
@@ -7143,7 +7180,6 @@ ACT.surClaimGo = (d)=>{
   notify('A '+r.pos+' has been claimed off you',
     teamName(me)+' wants one of your '+r.pos+'s. You have '+r.nameHours+
     ' hours to say which one is going.', 'warn', [from]);
-  popNotify('A '+r.pos+' has been claimed off you', 'Name the man within '+r.nameHours+' hours.', 'league', [from]);
   closeModal(); save(); render();
   toast('Claim is in','good');
 };
@@ -7174,7 +7210,6 @@ ACT.surNameGo = (d)=>{
   notify(p.name+' has been named',
     teamName(c.fromTeam)+' is offering '+p.name+'. You have '+surRules().rejectHours+
     ' hours to turn him down.', 'warn', [c.toTeam]);
-  popNotify(p.name+' has been named', 'Accept him or reject the claim.', 'league', [c.toTeam]);
   closeModal(); save(); render();
   toast(p.name+' named','good');
 };
@@ -7461,7 +7496,7 @@ function lineupForm(teamId, week){
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
               (ko?' · '+ko:'')+
-              (mt?' · '+esc(mt):'')+tail+'</option>';
+              (mt?' · '+esc(mt):'')+(wxWord(p)?' · '+wxWord(p):'')+tail+'</option>';
           }).join('');
         return `<div style="border-bottom:1px solid var(--line);padding:6px 0">
           <div class="row" style="gap:8px">
@@ -7478,7 +7513,7 @@ function lineupForm(teamId, week){
               x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
           </span>
           </div>
-          ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+'</div>':''}
+          ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+' '+wxChip(x.p)+'</div>':''}
           ${x.p ? (()=>{
             /* Name somebody to come on if he does not play. */
             const cur = subFor(teamId, x.p.id, week);
@@ -8172,7 +8207,7 @@ ACT.projPull = async ()=>{
     impProgress('', 100);
     ui.tmp.projBusy = false;
     logIt('Projections pulled for week '+week+' — '+n+' players, scored on this league\u2019s settings', {type:'admin'});
-    save(); render();
+    saveLocal(); render();
     toast(n? n+' players projected for week '+week : 'Nothing matched — are the Sleeper ids in?', n?'good':'warn');
   }catch(e){
     ui.tmp.projBusy = false; ui.tmp.projErr = e.message; impProgress('', 0); render();
@@ -8366,11 +8401,20 @@ async function pullKickoffs(week){
         if(String(c.homeAway||'').toLowerCase()==='away'){ sides.away = key; sides.as = +c.score||0; }
         else { sides.home = key; sides.hs = +c.score||0; }
       });
+      /* Where it is played, and what ESPN says about the sky — kept for the
+         weather, which needs to know a dome from an open bowl and a game in
+         London from one at the home club's own ground. */
+      const ven = comp.venue || {};
+      const ew = ev.weather || comp.weather || null;
       if(sides.home && sides.away) fixtures.push({
         id:'nfl'+(ev.id||fixtures.length), home:sides.home, away:sides.away,
         hs:sides.hs, as:sides.as, at:t2,
         q:+st.period||0, clockText:st.displayClock||'',
-        status: ty.state==='in' ? 'live' : (ty.completed || ty.state==='post') ? 'final' : 'pre'
+        status: ty.state==='in' ? 'live' : (ty.completed || ty.state==='post') ? 'final' : 'pre',
+        venue: ven.fullName || '', indoor: ven.indoor===true ? true : (ven.indoor===false ? false : null),
+        neutral: !!comp.neutralSite,
+        espnWx: ew ? {text: ew.displayValue || ew.conditionText || '',
+                      temp: (ew.temperature!=null ? +ew.temperature : null)} : null
       });
     });
   }catch(e){ /* fall through to Sleeper */ }
@@ -8405,7 +8449,7 @@ async function pullKickoffs(week){
     S.live.nfl[w] = fixtures.sort((a,b)=> a.at - b.at);
   }
   S.live.kicksAt = Date.now(); S.live.kicksErr = null;
-  save();
+  saveLocal();
   return n2;
 }
 function sleeperLeague(){
@@ -8451,7 +8495,11 @@ async function pullSleeperLineups(week, quiet){
       const p = sid && sid!=='0' ? byId2[String(sid)] : null;
       return p && p.contract && p.contract.teamId===teamId ? p.id : '';
     });
-    if(arr.some(Boolean)){ S.lineups[w][teamId] = arr; n++; }
+    /* Only a lineup that is actually different counts. Every team with one
+       used to count, so this saved the whole league on every run. */
+    if(arr.some(Boolean) && JSON.stringify(S.lineups[w][teamId]||null) !== JSON.stringify(arr)){
+      S.lineups[w][teamId] = arr; n++;
+    }
   });
   if(n){ save(); if(!quiet) render(); }
   return n;
@@ -8464,6 +8512,8 @@ async function pullSleeperSlots(quiet){
   const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
   const tm = teamByRoster(rosters), byId2 = playersBySleeperId();
   let n = 0;
+  /* Where everybody was before, so only a real move counts as a change. */
+  const was = {}; S.players.forEach(p=>{ if(p.contract) was[p.id] = playerSlot(p); });
   (rosters||[]).forEach(r=>{
     const teamId = tm[r.roster_id]; if(!teamId) return;
     const taxi = cfg.pullTaxi ? (r.taxi||[]) : null;
@@ -8475,10 +8525,11 @@ async function pullSleeperSlots(quiet){
       if(ir   && playerSlot(p)==='ir')   p.slot = 'active';
     });
     (taxi||[]).forEach(sid=>{ const p = byId2[String(sid)];
-      if(p && p.contract && p.contract.teamId===teamId){ p.slot='taxi'; n++; } });
+      if(p && p.contract && p.contract.teamId===teamId){ p.slot='taxi'; } });
     (ir||[]).forEach(sid=>{ const p = byId2[String(sid)];
-      if(p && p.contract && p.contract.teamId===teamId){ p.slot='ir'; n++; } });
+      if(p && p.contract && p.contract.teamId===teamId){ p.slot='ir'; } });
   });
+  S.players.forEach(p=>{ if(p.contract && was[p.id] !== undefined && was[p.id] !== playerSlot(p)) n++; });
   if(n){ clearCapCache(); save(); if(!quiet) render(); }
   return n;
 }
@@ -8980,7 +9031,8 @@ ACT.trendPull = async (quiet)=>{
     t.ids = Object.keys(t.up).length + Object.keys(t.down).length;
     if(!t.ids){
       t.why = 'Sleeper returned no trending players just now.';
-      save(); render();
+      t.failAt = Date.now();
+      saveLocal(); render();
       if(!quiet) toast(t.why,'warn');
       return {hit:0};
     }
@@ -9024,14 +9076,20 @@ ACT.trendPull = async (quiet)=>{
           'where everybody worth adding is already on a roster.'
         : 'Nobody in this league carries a Sleeper id yet, and the player list could not be read to add them.';
     }
-    save(); render();
+    /* Sleeper ids stamped on players are league data and go up with the next
+       real save; the trending list itself is this phone's own. */
+    if(t.stamped) save(); else saveLocal();
+    render();
     if(!quiet) toast(hits
       ? hits+' matched'+(faHits? ', '+faHits+' of them free agents' : '')
       : (t.why || 'Nothing matched'), hits ? 'good' : 'warn');
     return {hit:hits};
   }catch(e){
     t.why = 'Could not reach Sleeper — '+(e.message||'no answer')+'.';
-    save(); render();
+    /* Try again in half an hour. With no time kept after a failure it tried
+       again two seconds later, for ever — and saved the whole league each time. */
+    t.failAt = Date.now();
+    saveLocal(); render();
     if(!quiet) toast(t.why,'bad');
     return {hit:0};
   }
@@ -10532,8 +10590,6 @@ function moveAssets(fromTeam, toTeam, o){
       notify('Salary you are still eating', teamName(toTeam)+' has taken '+p.name+' back while still '+
         'eating '+money(owed.total)+' of his old salary. You have '+absorbHours()+
         ' hours to decide whether to fold it onto his deal.', 'warn', [toTeam]);
-      popNotify('You have '+absorbHours()+' hours to decide',
-        p.name+' is back and you are still eating '+money(owed.total)+' of him.', 'league', [toTeam]);
     }
     /* He joins the roster proper — a taxi or practice spot does not travel. */
     if(playerSlot(p)==='taxi' || playerSlot(p)==='practice'){
@@ -13343,6 +13399,174 @@ function clubOppIn(club, week){
   if(!g) return null;
   return clubCode(clubCode(g.home)===c ? g.away : g.home);
 }
+/* ---- Weather at the ground --------------------------------------------------
+   Every NFL home ground, where it is and what is over it. A dome is weather-
+   proof; a retractable roof usually shuts when it matters, so it is shown but
+   never flagged; an open bowl is where wind and snow change a game.
+   The forecast comes from Open-Meteo — free, no key, and one request covers
+   every open-air ground on the week's card at once. */
+const STADIUMS = {
+  ARI:[33.5277,-112.2626,'retract','State Farm Stadium'], ATL:[33.7554,-84.4008,'retract','Mercedes-Benz Stadium'],
+  BAL:[39.2780,-76.6227,'open','M&T Bank Stadium'],        BUF:[42.7738,-78.7870,'open','Highmark Stadium'],
+  CAR:[35.2258,-80.8528,'open','Bank of America Stadium'], CHI:[41.8623,-87.6167,'open','Soldier Field'],
+  CIN:[39.0955,-84.5161,'open','Paycor Stadium'],          CLE:[41.5061,-81.6995,'open','Huntington Bank Field'],
+  DAL:[32.7473,-97.0945,'retract','AT&T Stadium'],         DEN:[39.7439,-105.0201,'open','Empower Field'],
+  DET:[42.3400,-83.0456,'dome','Ford Field'],              GB:[44.5013,-88.0622,'open','Lambeau Field'],
+  HOU:[29.6847,-95.4107,'retract','NRG Stadium'],          IND:[39.7601,-86.1639,'retract','Lucas Oil Stadium'],
+  JAX:[30.3239,-81.6373,'open','EverBank Stadium'],        KC:[39.0489,-94.4839,'open','Arrowhead Stadium'],
+  LV:[36.0908,-115.1833,'dome','Allegiant Stadium'],       LAC:[33.9535,-118.3392,'dome','SoFi Stadium'],
+  LAR:[33.9535,-118.3392,'dome','SoFi Stadium'],           MIA:[25.9580,-80.2389,'open','Hard Rock Stadium'],
+  MIN:[44.9738,-93.2581,'dome','U.S. Bank Stadium'],       NE:[42.0909,-71.2643,'open','Gillette Stadium'],
+  NO:[29.9511,-90.0812,'dome','Caesars Superdome'],        NYG:[40.8135,-74.0745,'open','MetLife Stadium'],
+  NYJ:[40.8135,-74.0745,'open','MetLife Stadium'],         PHI:[39.9008,-75.1675,'open','Lincoln Financial Field'],
+  PIT:[40.4468,-80.0158,'open','Acrisure Stadium'],        SF:[37.4030,-121.9700,'open',"Levi's Stadium"],
+  SEA:[47.5952,-122.3316,'open','Lumen Field'],            TB:[27.9759,-82.5033,'open','Raymond James Stadium'],
+  TEN:[36.1665,-86.7713,'open','Nissan Stadium'],          WSH:[38.9077,-76.8645,'open','Northwest Stadium']
+};
+/* The ground a game is played at. A neutral site — London, Munich, São Paulo —
+   is not the home club's ground, so it only gets what ESPN itself reports. */
+function groundFor(g){
+  if(!g) return null;
+  if(g.neutral) return {neutral:true, roof: g.indoor===true ? 'dome' : null, name: g.venue || 'Neutral site'};
+  const s = STADIUMS[clubCode(g.home)];
+  if(!s) return g.indoor===true ? {roof:'dome', name:g.venue||''} : null;
+  return {lat:s[0], lon:s[1], roof:s[2], name: g.venue || s[3]};
+}
+/* The game a player is in this week, off the real card. */
+function gameCardFor(p, week){
+  const w = +week || +S.live.week || 1;
+  const c = clubCode(p && p.nfl);
+  if(!c) return null;
+  return (((S.live.nfl||{})[w])||[]).find(g=> clubCode(g.home)===c || clubCode(g.away)===c) || null;
+}
+/* WMO weather codes, worst last, so a game window can be judged by its worst hour. */
+function wxSeverity(code){
+  const c = +code||0;
+  if(c>=95) return 9;                          /* thunder */
+  if((c>=71 && c<=77) || c===85 || c===86) return 8;   /* snow */
+  if(c===65 || c===67 || c===82) return 7;     /* heavy rain */
+  if((c>=61 && c<=66) || c===80 || c===81) return 6;   /* rain */
+  if(c>=51 && c<=57) return 5;                 /* drizzle */
+  if(c===45 || c===48) return 4;               /* fog */
+  return c;                                    /* 0 clear … 3 overcast */
+}
+function wxIcon(code){
+  const s = wxSeverity(code);
+  return s>=9?'⛈':s===8?'🌨':s>=6?'🌧':s===5?'🌦':s===4?'🌫':(+code===3?'☁️':(+code>=1?'🌤':'☀️'));
+}
+/* What, if anything, the weather does to a fantasy week. */
+function wxFlag(x, roof){
+  if(!x || roof==='dome' || roof==='retract') return null;
+  const s = wxSeverity(x.code);
+  if(s>=9) return {word:'Storms', cls:'bad', note:'thunderstorms — a lightning delay is possible'};
+  if(s===8 || (x.snow||0) >= 0.1) return {word:'Snow', cls:'bad', note:'snow — footing and kicking both suffer'};
+  if((x.wind||0) >= 20 || (x.gust||0) >= 32) return {word:'Very windy', cls:'bad', note:'strong wind — bad for kickers and the deep ball'};
+  if((x.wind||0) >= 14 || (x.gust||0) >= 24) return {word:'Windy', cls:'warn', note:'wind — kickers and long passes can suffer'};
+  if(s>=6 && (x.pop||0) >= 50) return {word:'Rain', cls:'warn', note:'rain — ball security and passing can suffer'};
+  if((x.temp!=null) && x.temp <= 20) return {word:'Frigid', cls:'warn', note:'very cold'};
+  return null;
+}
+/* Fetch the forecast for every open-air ground on the week's card, for the hours
+   the game is actually played, and keep it on the week. */
+async function pullWeather(week){
+  const w = +week || +S.live.week || 1;
+  const card = ((S.live.nfl||{})[w]) || [];
+  const outdoor = [];
+  card.forEach(g=>{
+    const s = groundFor(g);
+    if(s && s.lat!=null && s.roof!=='dome') outdoor.push({g, s});
+  });
+  S.live.wx = S.live.wx || {};
+  if(!outdoor.length){ S.live.wx[w] = {at:Date.now(), by:{}}; return 0; }
+  const url = 'https://api.open-meteo.com/v1/forecast'+
+    '?latitude='+outdoor.map(o=> o.s.lat).join(',')+
+    '&longitude='+outdoor.map(o=> o.s.lon).join(',')+
+    '&hourly=temperature_2m,precipitation_probability,precipitation,snowfall,wind_speed_10m,wind_gusts_10m,weather_code'+
+    '&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch'+
+    '&timezone=UTC&past_days=7&forecast_days=16';
+  let j;
+  try{ j = await getJSON(url); }catch(e){ S.live.wxErr = e.message || 'unreachable'; return 0; }
+  const arr = Array.isArray(j) ? j : [j];
+  const by = Object.assign({}, ((S.live.wx[w]||{}).by)||{});
+  outdoor.forEach((o, i)=>{
+    const h = (arr[i]||{}).hourly;
+    if(!h || !Array.isArray(h.time)) return;
+    /* The three and a half hours from kickoff — the worst of them is what counts. */
+    const start = Math.floor(o.g.at / 3600000) * 3600000;
+    const idx = [];
+    h.time.forEach((t, k)=>{
+      const ms = Date.parse(t + (/Z$/.test(t) ? '' : 'Z'));
+      if(ms >= start && ms <= start + 3*3600000) idx.push(k);
+    });
+    if(!idx.length) return;
+    const pick = (a)=> idx.map(k=> +((h[a]||[])[k])).filter(v=> !isNaN(v));
+    const max = (a)=> { const v = pick(a); return v.length ? Math.max.apply(null, v) : null; };
+    const sum = (a)=> { const v = pick(a); return v.reduce((x,y)=> x+y, 0); };
+    const codes = pick('weather_code');
+    const worst = codes.slice().sort((a,b)=> wxSeverity(b)-wxSeverity(a))[0];
+    const temps = pick('temperature_2m');
+    by[o.g.id] = {
+      temp: temps.length ? temps[0] : null,         /* at kickoff */
+      wind: max('wind_speed_10m'), gust: max('wind_gusts_10m'),
+      pop: max('precipitation_probability'), rain: Math.round(sum('precipitation')*100)/100,
+      snow: Math.round(sum('snowfall')*100)/100, code: worst!=null ? worst : 0
+    };
+  });
+  S.live.wx[w] = {at:Date.now(), by};
+  S.live.wxErr = null;
+  return Object.keys(by).length;
+}
+/* Fresh enough? Forecasts are worth pulling again every hour and a half up to
+   kickoff; once every game on the card is over there is nothing left to learn. */
+let wxBusy = false;
+async function keepWeatherFresh(){
+  if(wxBusy) return;
+  const w = +S.live.week || 1;
+  const card = ((S.live.nfl||{})[w]) || [];
+  if(!card.length) return;
+  const have = (S.live.wx||{})[w];
+  const allDone = card.every(g=> g.status==='final');
+  if(have && (allDone || Date.now() - (have.at||0) < 90*60000)) return;
+  wxBusy = true;
+  try{ if(await pullWeather(w)) renderQuiet(); }catch(e){}
+  wxBusy = false;
+}
+/* Everything the screens need about one man's weather this week. */
+function wxFor(p, week){
+  const g = gameCardFor(p, week);
+  if(!g) return null;
+  const s = groundFor(g);
+  const w = +week || +S.live.week || 1;
+  const x = (((S.live.wx||{})[w]||{}).by||{})[g.id] || null;
+  return {g, s, x, flag: s ? wxFlag(x, s.roof) : null};
+}
+/* The chip shown beside a player. Short, because it sits on a phone row. */
+function wxChip(p, week){
+  if(!p) return '';
+  const r = wxFor(p, week);
+  if(!r || !r.s) return '';
+  if(r.s.roof==='dome') return '<span class="wx" title="'+esc(r.s.name||'Indoors')+'">⌂ Dome</span>';
+  const x = r.x;
+  if(!x){
+    const ew = r.g.espnWx;
+    if(ew && ew.temp!=null) return '<span class="wx" title="'+esc(ew.text||'')+'">'+Math.round(ew.temp)+'°</span>';
+    return r.s.roof==='retract' ? '<span class="wx" title="Retractable roof">⌂ Roof</span>' : '';
+  }
+  const roof = r.s.roof==='retract' ? '⌂ ' : '';
+  const f = r.flag;
+  const tip = (r.s.name||'')+': '+(x.temp!=null?Math.round(x.temp)+'°F at kickoff, ':'')+
+    'wind '+Math.round(x.wind||0)+' mph'+(x.gust?' gusting '+Math.round(x.gust):'')+
+    (x.pop!=null?', '+Math.round(x.pop)+'% chance of rain':'')+
+    (r.s.roof==='retract'?' — retractable roof, likely shut if it is bad':'')+(f?' — '+f.note:'');
+  return '<span class="wx'+(f?' '+f.cls:'')+'" title="'+esc(tip)+'">'+roof+wxIcon(x.code)+' '+
+    (x.temp!=null?Math.round(x.temp)+'°':'')+' · '+Math.round(x.wind||0)+' mph'+
+    (f?' <b>'+esc(f.word)+'</b>':'')+'</span>';
+}
+/* Just the warning word, for places with no room for the chip — a dropdown. */
+function wxWord(p){
+  const r = wxFor(p);
+  return r && r.flag ? r.flag.word : '';
+}
 /* ---- The book on each defense ----------------------------------------------
    This used to be built only out of the live week, at the moment it was folded
    away: whatever was in S.live.stats right then landed on the defense and that
@@ -13433,7 +13657,7 @@ async function fillMissingCards(){
   }
   if(got){
     rebuildDvp();
-    save();
+    saveLocal();
     renderQuiet();
   }
   return got;
@@ -13960,7 +14184,6 @@ function dmSend(from, to, text){
   if(S.dms.length > 2000) S.dms.length = 2000;
   /* Both of these are for the man being written to, and nobody else. */
   notify('Message from '+teamName(from), body.slice(0,120), 'info', [to]);
-  popNotify('Message from '+teamName(from), body.slice(0,120), 'dm', [to]);
   save();
   return mm;
 }
@@ -13974,9 +14197,11 @@ function dmMarkRead(teamId, other){
    The browser's own notifications, so a message or a trade offer surfaces even
    when the app is in another tab. */
 const NOTIFY_KINDS = [
+  ['score',   'Touchdowns and field goals by your starters'],
+  ['final',   'Your matchup result when the last game ends'],
   ['dm',      'Direct messages'],
   ['trade',   'Trade offers and counters'],
-  ['waiver',  'Waivers won and lost'],
+  ['waiver',  'Waivers, claims and bidding'],
   ['lineup',  'Lineup reminders'],
   ['dues',    'Dues reminders'],
   ['chat',    'League chat when you are mentioned'],
@@ -14066,15 +14291,562 @@ function popNotify(title, body, kind, teams){
     }
     if(!popWants(kind || 'league')) return false;
     if(!popAllowed()) return false;
-    const n2 = new Notification(String(title||'Front Office'), {
-      body: String(body||''),
-      tag: 'fo-'+(kind||'league'),
-      icon: undefined
-    });
-    n2.onclick = ()=>{ try{ window.focus(); }catch(e){} try{ n2.close(); }catch(e){} };
+    showNote(title, body, 'fo-'+(kind||'league')+'-'+Date.now());
     return true;
   }catch(e){ return false; }
 }
+/* ---- Actually putting one on the screen -------------------------------------
+   Every notification used to be raised with `new Notification(...)`. A desktop
+   browser allows that. A phone does not: Chrome on Android throws ("use
+   ServiceWorkerRegistration.showNotification() instead") and an iPhone never
+   shows it. The error was caught and swallowed, so on a phone not one
+   notification ever appeared, while the switch in Settings still said "on".
+
+   A phone only shows a web app's notification through a service worker, so
+   there is one now — sw.js, sitting beside this page. It caches nothing and
+   answers no requests, so a deploy is never held back by an old copy; all it
+   does is show notifications and bring the app forward when one is tapped. */
+let swReg = null, swErr = null, swTried = false, lastNoteErr = null;
+function swRegister(){
+  if(swTried) return;
+  swTried = true;
+  try{
+    if(!('serviceWorker' in navigator)){ swErr = 'no service worker support'; return; }
+    if(location.protocol !== 'https:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)){
+      swErr = 'needs the site served over https'; return;
+    }
+    navigator.serviceWorker.register('sw.js').then(r=>{ swReg = r; swErr = null; },
+      e=>{ swErr = (e && e.message) || 'could not register'; });
+  }catch(e){ swErr = e.message; }
+}
+async function swReady(){
+  if(swReg) return swReg;
+  try{
+    if(!('serviceWorker' in navigator)) return null;
+    const r = await Promise.race([navigator.serviceWorker.ready,
+      new Promise(res=> setTimeout(()=> res(null), 4000))]);
+    if(r) swReg = r;
+    return r;
+  }catch(e){ return null; }
+}
+/* Show one. Resolves to how it went out ('sw' or 'page'), or null if the phone
+   refused — with the reason kept in lastNoteErr so the test can say why. */
+async function showNote(title, body, tag){
+  const t = String(title || 'Front Office');
+  const o = {body: String(body || ''), tag: tag || undefined,
+             data: {url: location.href.split('#')[0]}};
+  const reg = await swReady();
+  if(reg && reg.showNotification){
+    try{ await reg.showNotification(t, o); lastNoteErr = null; return 'sw'; }
+    catch(e){ lastNoteErr = e.message; }
+  }
+  try{
+    const n2 = new Notification(t, o);
+    n2.onclick = ()=>{ try{ window.focus(); }catch(e){} try{ n2.close(); }catch(e){} };
+    lastNoteErr = null;
+    return 'page';
+  }catch(e){ lastNoteErr = e.message; }
+  return null;
+}
+/* An iPhone only lets a web app raise notifications once it has been added to
+   the Home Screen and opened from there — in a Safari tab the feature does not
+   exist at all. */
+function isIOS(){
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function isStandalone(){
+  try{ return navigator.standalone === true ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); }
+  catch(e){ return false; }
+}
+
+/* ---- Delivering what was written ---------------------------------------------
+   A notice can be written on any device — an injury spotted on the
+   commissioner's laptop, a trade accepted on somebody's phone, a waiver run
+   settled wherever the app happened to be open. Each notice names who it is for,
+   and it syncs to everybody. Delivery happens here, on the phone of the man it
+   is addressed to, the moment his copy of the league has it. Before this, the
+   pop-up was raised only on the device that wrote the notice, which for most
+   things was never the phone it was meant for. */
+let noteSeenMem = null, noteHead = null;
+function noteSeen(){
+  if(noteSeenMem) return noteSeenMem;
+  try{
+    const v = JSON.parse(localStorage.getItem('fo-noteseen') || 'null');
+    if(v && Array.isArray(v.ids)) noteSeenMem = v;
+  }catch(e){}
+  if(!noteSeenMem) noteSeenMem = {ids:[], seeded:false};
+  return noteSeenMem;
+}
+function saveNoteSeen(){
+  try{ localStorage.setItem('fo-noteseen', JSON.stringify(noteSeenMem)); }catch(e){}
+}
+/* Which of the ticks in Settings a notice falls under. */
+function popKindFor(nt){
+  const t = String((nt && nt.title) || '');
+  if(/^Message from/i.test(t)) return 'dm';
+  if(/trade|counter|on the block/i.test(t)) return 'trade';
+  if(/waiver|picked up|claim|has been named|was accepted|nobody was named|redshirt|awarded|free agent|bidding|auction|clock|competing offer|^round \d/i.test(t)) return 'waiver';
+  if(/ is out| is doubtful| is questionable|came on for| is in for|lineup|over the roster limit/i.test(t)) return 'lineup';
+  if(/dues/i.test(t)) return 'dues';
+  return 'league';
+}
+function deliverNotices(){
+  try{
+    if(!S || !Array.isArray(S.notices) || !S.notices.length) return 0;
+    const head = (S.notices[0]||{}).id || null;
+    if(head && head === noteHead) return 0;          /* nothing new since last look */
+    noteHead = head;
+    const seen = noteSeen();
+    /* The first look on this device only takes note of what is already there,
+       so turning notifications on is not answered with two hundred old ones. */
+    if(!seen.seeded){
+      seen.ids = S.notices.map(n=> n && n.id).filter(Boolean).slice(0, 400);
+      seen.seeded = true; saveNoteSeen();
+      return 0;
+    }
+    const have = {}; seen.ids.forEach(id=> have[id] = 1);
+    const seat = mySeatId(), now = Date.now();
+    let changed = false, shown = 0;
+    /* Oldest first, so they land in the order they happened. */
+    S.notices.slice().reverse().forEach(nt=>{
+      if(!nt || !nt.id || have[nt.id]) return;
+      have[nt.id] = 1; seen.ids.unshift(nt.id); changed = true;
+      if(now - (+nt.at||0) > 30*60000) return;       /* too old to be news — it is in the list */
+      if(nt.teams && nt.teams.length && (!seat || nt.teams.indexOf(seat) < 0)) return;
+      if(nt.by && seat && nt.by === seat) return;    /* what you did yourself */
+      const kind = popKindFor(nt);
+      if(!popWants(kind) || !popAllowed()) return;
+      showNote(nt.title, nt.body, 'fo-n-'+nt.id);
+      shown++;
+    });
+    if(seen.ids.length > 400) seen.ids.length = 400;
+    if(changed) saveNoteSeen();
+    return shown;
+  }catch(e){ return 0; }
+}
+
+/* ---- Game day, as it happens -------------------------------------------------
+   The only game-time notification there was ran off the practice simulator's
+   play-by-play, so a real Sunday raised nothing at all. These come off the real
+   stats instead: each time Sleeper's numbers arrive, your starters' lines are
+   compared with the last ones seen, and a touchdown or a field goal is a
+   notification. They are worked out on your own phone, for your own team, so
+   nobody else's device has to be open for you to hear about it. */
+const SCORE_STATS = [
+  ['pass_td','passing TD'], ['rush_td','rushing TD'], ['rec_td','receiving TD'],
+  ['kr_td','kick return TD'], ['pr_td','punt return TD'], ['fum_rec_td','fumble return TD'],
+  ['def_td','defensive TD'], ['st_td','special teams TD'], ['int_ret_td','pick six'],
+  ['fgm_50p','50+ yard field goal'], ['fgm','field goal'], ['safe','safety'],
+  ['pass_2pt','two-point pass'], ['rush_2pt','two-point run'], ['rec_2pt','two-point catch']
+];
+let liveSnap = null;            /* {week, at, lines:{pid:{st, pts}}} — this session only */
+function myMatchupNow(){
+  const seat = mySeatId();
+  if(!seat) return null;
+  const mm = (S.live.matchups||[]).find(m=> m.home===seat || m.away===seat);
+  const opp = mm ? (mm.home===seat ? mm.away : mm.home) : null;
+  const A = lineupFor(seat), B = opp ? lineupFor(opp) : null;
+  return {seat, opp, A, B};
+}
+function scoreLineText(mu){
+  if(!mu || !mu.A) return '';
+  const a = (+mu.A.total||0).toFixed(1);
+  if(!mu.B) return 'You have '+a+'.';
+  const b = (+mu.B.total||0).toFixed(1);
+  const lead = +mu.A.total >= +mu.B.total;
+  return (lead ? 'You lead ' : 'You trail ')+a+' – '+b+' '+teamName(mu.opp)+'.';
+}
+function snapStarters(){
+  const mu = myMatchupNow();
+  const lines = {};
+  if(mu && mu.A) (mu.A.slots||[]).forEach(x=>{
+    if(x.p) lines[x.p.id] = {st: Object.assign({}, (S.live.stats||{})[x.p.id]||{}), pts: fpts(x.p.id)};
+  });
+  return lines;
+}
+/* Called straight after fresh stats land. */
+function liveScoringEvents(before){
+  const w = +S.live.week || 1, now = Date.now();
+  const mu = myMatchupNow();
+  if(!mu || !mu.A){ liveSnap = {week:w, at:now}; return 0; }
+  /* The first look this session, or a new week, only takes stock. */
+  if(!liveSnap || liveSnap.week !== w){ liveSnap = {week:w, at:now}; return 0; }
+  const away = now - (liveSnap.at||now) > 3*60000;    /* the phone was asleep */
+  liveSnap.at = now;
+  const events = [];
+  (mu.A.slots||[]).forEach(x=>{
+    const p = x.p; if(!p) return;
+    const was = before[p.id]; if(!was) return;
+    const cur = (S.live.stats||{})[p.id] || {};
+    let fg50 = 0;
+    SCORE_STATS.forEach(([k, label])=>{
+      let d = (+cur[k]||0) - (+was.st[k]||0);
+      if(k==='fgm_50p') fg50 = Math.max(0, d);
+      if(k==='fgm') d -= fg50;                          /* a 50-yarder is not two kicks */
+      const had = +was.st[k]||0;
+      for(let i=0; i<d; i++) events.push({p, label, k, n: had + (k==='fgm' ? fg50 : 0) + i + 1});
+    });
+    const gain = fpts(p.id) - (+was.pts||0);
+    events.filter(e=> e.p===p).forEach((e, i, all)=>{ e.pts = i===all.length-1 ? gain : null; });
+  });
+  if(!events.length || !popWants('score') || !popAllowed()) return 0;
+  const line = scoreLineText(myMatchupNow());
+  if(away || events.length > 3){
+    /* Woken up to a pile of them — one notification, not a stack. */
+    showNote('While you were away', events.map(e=> e.p.name+' '+e.label).join(', ')+'. '+line,
+             'fo-away-'+now);
+    return 1;
+  }
+  events.forEach((e, i)=>{
+    const td = /TD|pick six/.test(e.label);
+    showNote((td ? 'Touchdown — ' : /goal/.test(e.label) ? 'Field goal — ' : '')+e.p.name,
+      e.label.charAt(0).toUpperCase()+e.label.slice(1)+
+      (e.pts!=null && Math.abs(e.pts)>=0.05 ? ', '+(e.pts>=0?'+':'')+e.pts.toFixed(1) : '')+'. '+line,
+      /* The same tag the alert server uses, so a touchdown that arrives both
+         ways — from this phone and from the server — is shown once. */
+      'fo-sc-'+(e.p.sleeperId||e.p.id)+'-'+e.k+'-'+e.n);
+  });
+  return events.length;
+}
+/* Once every man in your matchup has finished, the result — once per week, per
+   phone. */
+function devFlag(k){ try{ return localStorage.getItem(k) === '1'; }catch(e){ return !!(devFlagMem[k]); } }
+function setDevFlag(k){ devFlagMem[k] = 1; try{ localStorage.setItem(k, '1'); }catch(e){} }
+const devFlagMem = {};
+function checkMatchupFinal(){
+  try{
+    const mu = myMatchupNow();
+    if(!mu || !mu.A || !mu.B) return 0;
+    const w = +S.live.week || 1;
+    const key = 'fo-final-'+S.league.season+'-'+w+'-'+mu.seat;
+    if(devFlag(key)) return 0;
+    const men = (mu.A.slots||[]).concat(mu.B.slots||[]).map(x=> x.p).filter(Boolean);
+    const games = men.map(p=> gameCardFor(p, w)).filter(Boolean);
+    if(!games.length) return 0;
+    if(!games.every(g=> g.status==='final')) return 0;
+    setDevFlag(key);
+    if(!popWants('final') || !popAllowed()) return 0;
+    const a = +mu.A.total||0, b = +mu.B.total||0;
+    const how = a > b ? 'You beat ' : a < b ? 'You lost to ' : 'You tied ';
+    showNote('Final — week '+w, how+teamName(mu.opp)+' '+a.toFixed(1)+' – '+b.toFixed(1)+'.', 'fo-final-'+w);
+    return 1;
+  }catch(e){ return 0; }
+}
+/* ---- Alerts on a locked phone -----------------------------------------------
+   A locked phone runs none of this code, so anything that has to reach one is
+   sent by the alert server on Supabase instead (the "push" function). This
+   side does three things for it:
+     • signs this phone up, once notifications are allowed — nothing to press
+     • tells the server each week who is starting for whom, and how the league
+       scores, so it can say whose touchdown is whose
+     • hands over every alert this phone writes (a message, a trade, a waiver
+       result) so the phones it is for hear about it, locked or not
+   Every alert carries the same tag whichever way it arrives, so a phone that
+   is awake and also gets the push shows it once. */
+const Push = {
+  key:null, keyAt:0, keyTried:0, sig:'', subAt:0, state:'', err:null,
+  watchSig:'', watchAt:0, q:[], qt:null, lastSend:null,
+  supported(){ return typeof navigator!=='undefined' && 'serviceWorker' in navigator && typeof window!=='undefined' && 'PushManager' in window; },
+  league(){ return (typeof Supa==='object' && Supa.ready && Supa.ready()) ? Supa.cfg().leagueId : null; },
+  async publicKey(force){
+    if(!force && this.key && Date.now()-this.keyAt < 10*60000) return this.key;
+    if(!force && Date.now()-this.keyTried < 60000) return this.key;
+    this.keyTried = Date.now();
+    const lg = this.league(); if(!lg) return null;
+    try{
+      const {data, error} = await Supa.client.rpc('fo_push_key', {p_league: lg});
+      if(error) throw error;
+      this.key = data || null; this.keyAt = Date.now();
+    }catch(e){ this.key = null; this.err = /fo_push_key|function|schema/i.test(e.message||'') ? 'not set up' : e.message; }
+    return this.key;
+  },
+  /* Sign this phone up — or bring its signup up to date. Cheap when nothing
+     has changed: it only talks to the server when the phone, the team or the
+     ticks are different from last time. */
+  async ensure(){
+    try{
+      if(!this.supported()){ this.state = 'unsupported'; return; }
+      if(!popAllowed()){ this.state = 'no-permission'; return; }
+      if(!Supa.ready() || !Supa.member){ this.state = 'signed-out'; return; }
+      const key = await this.publicKey();
+      if(!key){ this.state = 'no-server'; return; }
+      const reg = await swReady();
+      if(!reg || !reg.pushManager){ this.state = 'no-helper'; return; }
+      let sub = await reg.pushManager.getSubscription();
+      const want = pushKeyBytes(key);
+      if(sub && sub.options && sub.options.applicationServerKey &&
+         !sameBytes(new Uint8Array(sub.options.applicationServerKey), want)){
+        /* The commissioner made new keys — the old signup is no good now. */
+        try{ await sub.unsubscribe(); }catch(e){}
+        sub = null;
+      }
+      if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:want});
+      const j = sub.toJSON(), pp = popPrefs();
+      const row = {endpoint:j.endpoint, league_id:this.league(), user_id:Supa.user.id,
+        team_id:Supa.member.team_id || null, p256dh:j.keys.p256dh, auth:j.keys.auth,
+        prefs:{on: pp.on!==false, kinds: pp.kinds || {}},
+        ua:String(navigator.userAgent||'').slice(0,200), updated_at:new Date().toISOString()};
+      const sig = JSON.stringify([row.endpoint, row.team_id, row.prefs, row.league_id]);
+      if(sig === this.sig && Date.now()-this.subAt < 6*3600000){ this.state = 'on'; return; }
+      const {error} = await Supa.client.from('fo_push_subs').upsert(row, {onConflict:'endpoint'});
+      if(error) throw error;
+      this.sig = sig; this.subAt = Date.now(); this.state = 'on'; this.err = null;
+    }catch(e){ this.state = 'error'; this.err = e.message || String(e); }
+  },
+  /* The week's starters, for the server to watch. Any member's phone can send
+     it; it only goes when something in it has changed. */
+  async publishWatch(){
+    try{
+      if(!this.key || !Supa.ready() || !Supa.member) return;
+      const data = watchPayload();
+      if(!Object.keys(data.teams).length) return;
+      const sig = JSON.stringify(data);
+      if(sig === this.watchSig && Date.now()-this.watchAt < 6*3600000) return;
+      const {error} = await Supa.client.from('fo_push_watch').upsert({league_id:this.league(),
+        season:data.season, week:data.week, data, updated_at:new Date().toISOString()},
+        {onConflict:'league_id,season,week'});
+      if(error) throw error;
+      this.watchSig = sig; this.watchAt = Date.now();
+    }catch(e){ this.err = e.message || String(e); }
+  },
+  /* An alert this phone has just written goes to the server, gathered for a
+     moment so a burst of them is one call. */
+  relay(nt){
+    if(!nt || !this.league() || !this.key) return;
+    this.q.push({teams: nt.teams || null, title: nt.title, body: nt.body || '',
+                 kind: popKindFor(nt), tag: 'fo-n-'+nt.id});
+    clearTimeout(this.qt);
+    this.qt = setTimeout(()=> this.flush(), 1200);
+  },
+  async flush(){
+    const messages = this.q.splice(0, 12);
+    if(!messages.length || !this.league()) return;
+    try{
+      const {data, error} = await Supa.client.functions.invoke('push',
+        {body:{mode:'send', league:this.league(), messages}});
+      if(error) throw error;
+      this.lastSend = {at:Date.now(), ok:true, sent:(data||{}).sent||0};
+    }catch(e){ this.lastSend = {at:Date.now(), ok:false, err:e.message}; }
+    if(this.q.length) this.flush();
+  },
+  /* Run from the clock. Signup once a minute at most, the starters every two. */
+  tick(){
+    if(Date.now() - (this.tickAt||0) < 60000) return;
+    this.tickAt = Date.now();
+    this.ensure().then(()=>{
+      if(Date.now() - (this.watchTry||0) > 120000){ this.watchTry = Date.now(); this.publishWatch(); }
+    });
+  },
+  /* Something about this phone's choices changed — tell the server now. */
+  resync(){ this.sig = ''; this.tickAt = 0; this.tick(); }
+};
+/* What Settings shows about locked-phone alerts: where this phone stands, and
+   for a commissioner, the few steps that switch the server on. */
+function pushPanel(){
+  if(Push.state === '') Push.resync();
+  const st = Push.state, boss = typeof Supa==='object' && Supa.boss && Supa.boss();
+  const line = (cls, html)=> '<div class="hint '+cls+'">'+html+'</div>';
+  let top = '';
+  if(st === 'on')
+    top = '<div class="row" style="gap:8px;align-items:center"><span class="pill ok">on for this phone</span>'+
+      '<button class="btn sm" data-a="pushTest">Test it — then lock your phone</button></div>'+
+      '<div class="hint">Touchdowns and field goals by your starters, your result, starters ruled out before kickoff, '+
+      'and everything addressed to you — messages, trades, claims, waivers. The ticks above decide which, here too.</div>';
+  else if(st === 'no-permission')
+    top = line('', 'Turn notifications on above first. This phone signs itself up the moment they are.');
+  else if(st === 'unsupported')
+    top = (isIOS() && !isStandalone())
+      ? line('warn', '<b>On iPhone:</b> tap Share in Safari, choose <b>Add to Home Screen</b>, open Front Office from '+
+          'that icon, and turn notifications on. iPhones only deliver alerts to apps opened that way.')
+      : line('bad', 'This browser cannot receive alerts while it is closed.');
+  else if(st === 'signed-out')
+    top = line('', 'Sign in to your league first — alerts go to your team, so the server needs to know which it is.');
+  else if(st === 'no-server')
+    top = boss ? line('warn', 'The alert server is not switched on yet. The steps are below — about five minutes, once.')
+               : line('', 'Your commissioner has not switched the alert server on yet. Once he has, this phone signs up by itself.');
+  else if(st === 'no-helper')
+    top = line('bad', 'The notification helper (<b>sw.js</b>) is not on the site. It has to be deployed beside index.html.');
+  else if(st === 'error')
+    top = line('bad', 'This phone could not sign up: '+esc(Push.err||'no reason given')+'.');
+  else top = line('', 'Checking…');
+  if(!boss) return top;
+
+  const chk = ui.tmp.pushCheck;
+  const tick = (ok, text)=> '<div class="row" style="gap:8px;align-items:baseline"><span class="'+(ok?'good':'bad')+'">'+
+    (ok?'✓':'✗')+'</span><span>'+text+'</span></div>';
+  return top + `
+    <details ${Push.key ? '' : 'open'} style="margin-top:6px"><summary style="cursor:pointer" class="tiny muted">
+      <span class="flabel" style="display:inline">${Push.key ? 'The alert server is on — setup and checks' : 'Switching the alert server on — once, about five minutes'}</span></summary>
+    <div class="stack" style="margin-top:10px">
+      <div class="assetbox"><div class="flabel">1 · The database</div>
+        <p class="muted tiny" style="margin:4px 0 8px">Supabase › <b>SQL Editor</b> › New query › paste › <b>Run</b>.
+          Safe to run again later.</p>
+        <button class="btn sm" data-a="pushCopy" data-w="sql">Copy the database setup</button></div>
+      <div class="assetbox"><div class="flabel">2 · The alert server</div>
+        <p class="muted tiny" style="margin:4px 0 8px">Supabase › <b>Edge Functions</b> › Deploy a new function › <b>Via Editor</b>.
+          Name it <b class="num">push</b>, replace everything in the editor with what you copied, and <b>Deploy</b>.
+          Then, on the function's own page, open <b>Details</b> and turn <b>Verify JWT with legacy secret</b> off
+          (older dashboards call it <i>Enforce JWT Verification</i>) and save — the database's once-a-minute call has
+          no one to sign in as, so the function checks every call itself instead.</p>
+        <button class="btn sm" data-a="pushCopy" data-w="fn">Copy the alert server</button></div>
+      <div class="assetbox"><div class="flabel">3 · Switch it on</div>
+        <p class="muted tiny" style="margin:4px 0 8px">Makes the league's keys in this browser and stores them on your
+          server. The private one can only be read by the alert server — not by anyone in the app, you included.</p>
+        <button class="btn sm ${Push.key?'ghost':'pri'}" data-a="pushSetup">${Push.key ? 'Make new keys' : 'Switch it on'}</button></div>
+      <div class="assetbox"><div class="flabel">4 · Check it</div>
+        <button class="btn sm" data-a="pushCheck">Check everything</button>
+        ${chk ? '<div class="stack" style="margin-top:10px;gap:6px">'+chk.map(c=> tick(c[0], c[1])).join('')+'</div>' : ''}
+      </div>
+    </div></details>`;
+}
+ACT.pushCopy = async (d)=>{
+  const el = document.getElementById(d.w === 'sql' ? 'foPushSql' : 'foPushFn');
+  if(!el) return toast('That is missing from this build','bad');
+  const c = Supa.cfg();
+  let text = el.textContent.replace(/^\n/, '');
+  if(d.w === 'sql') text = text.split('{{URL}}').join(String(c.url||'').replace(/\/+$/,'')).split('{{ANON}}').join(c.anonKey||'');
+  try{ await navigator.clipboard.writeText(text); return toast(d.w==='sql' ? 'Database setup copied' : 'Alert server copied','good'); }
+  catch(e){
+    modal(d.w==='sql' ? 'The database setup' : 'The alert server',
+      '<p class="muted tiny">Copying was blocked, so here it is to select by hand.</p>'+
+      '<textarea readonly style="width:100%;height:50vh;font:12px/1.4 var(--mono)">'+esc(text)+'</textarea>',
+      '<button class="btn pri" data-a="closeModal">Done</button>');
+  }
+};
+ACT.pushSetup = async ()=>{
+  if(!(Supa.boss && Supa.boss())) return toast('Commissioners only','bad');
+  if(Push.key && !ui.tmp.pushRekey){
+    ui.tmp.pushRekey = true;
+    return modal('Make new keys?', '<p>Only needed if something has gone wrong. Every phone signs up again by itself '+
+      'the next time the app opens on it.</p>',
+      '<button class="btn ghost" data-a="closeModal">Keep these</button><button class="btn pri" data-a="pushSetup">Make new keys</button>');
+  }
+  ui.tmp.pushRekey = false; closeModal();
+  try{
+    const kp = await crypto.subtle.generateKey({name:'ECDSA', namedCurve:'P-256'}, true, ['sign','verify']);
+    const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+    const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+    const pub = btoa(String.fromCharCode.apply(null, raw)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    const secret = [...crypto.getRandomValues(new Uint8Array(24))].map(b=> b.toString(16).padStart(2,'0')).join('');
+    /* Apple and Google want a way to reach whoever runs the server: the site's
+       own address does, and needs no email address in it. */
+    const subject = location.protocol === 'https:' ? location.origin
+                  : 'mailto:' + ((Supa.user && Supa.user.email) || 'commissioner@example.com');
+    const {error} = await Supa.client.rpc('fo_push_setup', {p_league:Supa.cfg().leagueId, p_public:pub,
+      p_private:jwk.d, p_secret:secret, p_subject:subject});
+    if(error) throw error;
+    Push.key = pub; Push.keyAt = Date.now(); Push.resync();
+    toast('The alert server is on — every phone with notifications allowed signs up by itself','good');
+    render();
+  }catch(e){
+    toast(/fo_push_setup|function|schema cache/i.test(e.message||'') ? 'Run step 1 in Supabase first' : 'Could not switch it on — '+e.message,'bad');
+  }
+};
+/* Everything, end to end, in plain words. */
+ACT.pushCheck = async ()=>{
+  const out = [];
+  ui.tmp.pushCheck = [[true, 'Checking…']]; render();
+  const key = await Push.publicKey(true);
+  out.push([!!key, key ? 'The database is set up and the keys are made.'
+                       : (Push.err === 'not set up' ? 'The database is not set up yet — run step 1.' : 'No keys yet — run step 1, then step 3.')]);
+  let ping = null;
+  try{
+    const {data, error} = await Supa.client.functions.invoke('push', {body:{mode:'ping', league:Supa.cfg().leagueId}});
+    if(error){
+      const st = error.context && error.context.status;
+      let msg = error.message;
+      try{ const j = await error.context.json(); msg = j.error || j.message || msg; }catch(e){}
+      throw new Error(st === 404 ? 'The alert server is not deployed — or not named push. Step 2.' : msg);
+    }
+    ping = data;
+    out.push([true, 'The alert server answers.']);
+  }catch(e){ out.push([false, esc(e.message)]); }
+  if(ping){
+    out.push([!!ping.keyFrom, ping.keyFrom ? 'It can reach the database.' : 'It cannot find the server key — see the function’s logs.']);
+    const teams = (S.teams||[]).length;
+    out.push([ping.total > 0, ping.total + ' phone'+(ping.total===1?'':'s')+' signed up, covering '+ping.teams+' of '+teams+' teams'+
+      (ping.mine ? ' (yours included)' : ' — not yours yet; allow notifications above')+'.']);
+    const age = ping.lastWatch ? (Date.now() - Date.parse(ping.lastWatch))/60000 : null;
+    /* On a quiet day the server only leaves a mark every half hour — it does
+       not touch the database at all when no game is on. */
+    out.push([age != null && age < 35, age == null
+      ? 'The clock has not reached it yet. Give it up to half an hour; if this stays, turn <b>Verify JWT with legacy secret</b> off (step 2).'
+      : age < 35 ? 'The clock is running — last check '+Math.max(0,Math.round(age))+' min ago: '+esc(ping.lastNote||'')+'.'
+      : 'The clock last ran '+Math.round(age)+' minutes ago. Turn <b>Verify JWT with legacy secret</b> off (step 2) and run step 1 again.']);
+    out.push([ping.watchWeek != null, ping.watchWeek != null ? 'It has week '+ping.watchWeek+'’s lineups.'
+      : 'It has no lineups yet — they are sent up within two minutes of the app being open.']);
+  }
+  ui.tmp.pushCheck = out; render();
+};
+ACT.pushTest = async ()=>{
+  toast('Lock your phone now — the alert arrives in about ten seconds','good');
+  try{
+    const {data, error} = await Supa.client.functions.invoke('push',
+      {body:{mode:'test', league:Supa.cfg().leagueId, delay:10000}});
+    if(error) throw error;
+    if(!data || !data.ok) toast('The server could not reach this phone'+(data && data.error ? ' — '+data.error : ''),'bad');
+  }catch(e){ toast('Could not send the test — '+e.message,'bad'); }
+};
+/* How much this phone has pulled from the league server this month, and its
+   share of the allowance. The whole league's total is on Supabase's Usage page. */
+function dataPanel(){
+  const m = Net.get(), mb = (b)=> (b/1048576).toFixed(b < 10*1048576 ? 1 : 0);
+  const share = Net.shareMB(), used = m.down/1048576, pct = Math.min(100, Math.round(used/share*100));
+  const boss = typeof isHeadCommish==='function' && isHeadCommish();
+  return `
+    <div class="kv"><dt>This phone, downloaded</dt><dd class="num">${mb(m.down)} MB<div class="tiny dim">in ${m.pulls} update${m.pulls===1?'':'s'}</div></dd>
+      <dt>Its share of the league's allowance</dt><dd class="num">${share} MB</dd></div>
+    ${meter(used, share)}
+    ${Net.saver()
+      ? '<div class="hint warn"><b>This phone has used its share.</b> Until the month turns over it checks for changes every '+
+        'quarter of an hour instead of the moment they happen. Everything still saves straight away.</div>'
+      : '<div class="hint">A phone downloads the league only when something has actually changed, and then a packed copy '+
+        (Supa.packOk === false ? '— <span class="bad">not yet: the database setup under Alerts on a locked phone adds it</span>' :
+          'about a seventh of the full size'+(Supa.packSize ? ' ('+mb(Supa.packSize)+' MB)' : ''))+'.</div>'}
+    ${boss ? `<label class="f" style="max-width:260px"><span>League allowance a month (MB)</span>
+      <input type="number" min="500" step="500" data-set="settings.data.budgetMB" value="${Net.budgetMB()}"></label>
+      <div class="hint">Supabase's free plan allows 5,000 MB. Each team's phone gets an equal share of 80% of it, leaving room
+        to spare. Supabase › <b>Usage</b> shows the whole league's total — hover over a day to see which part used it.</div>` : ''}`;
+}
+function pushKeyBytes(b64){
+  const s = String(b64||'').replace(/-/g,'+').replace(/_/g,'/');
+  const bin = atob(s + '==='.slice((s.length+3)%4));
+  const out = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function sameBytes(a, b){
+  if(!a || !b || a.length !== b.length) return false;
+  for(let i=0;i<a.length;i++) if(a[i] !== b[i]) return false;
+  return true;
+}
+/* Who starts for whom this week, and how the league scores — everything the
+   server needs to call a touchdown and add up a matchup, and nothing else. */
+function watchPayload(){
+  const w = +S.live.week || 1, teams = {};
+  (S.teams||[]).forEach(t=>{
+    let L = null; try{ L = lineupFor(t.id); }catch(e){}
+    if(!L) return;
+    const mm = (S.live.matchups||[]).find(m=> m.home===t.id || m.away===t.id);
+    teams[t.id] = {name:t.name, opp: mm ? (mm.home===t.id ? mm.away : mm.home) : null,
+      starters: (L.slots||[]).filter(x=> x.p && x.p.sleeperId).map(x=>({
+        sid:String(x.p.sleeperId), name:x.p.name, pos:x.p.pos, club:x.p.nfl||''}))};
+  });
+  let tz = 'America/Chicago';
+  try{ tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; }catch(e){}
+  /* Kickoff times and whether each game is over, as this phone last saw them.
+     ESPN will not answer the alert server, but it answers phones, so the phones
+     pass it on. */
+  const card = {};
+  (((S.live.nfl||{})[w])||[]).forEach(g=>{
+    const st = g.status === 'final' ? 'final' : g.status === 'live' ? 'live' : 'pre';
+    [g.home, g.away].forEach(c=>{ if(c) card[clubCode(c)] = {at:+g.at||0, status:st}; });
+  });
+  return {v:1, season:+S.league.season, week:w, scoring:S.settings.scoring, tz, teams, card};
+}
+
 /* ---- FAAB and rolling waivers ---------------------------------------------
    A budget for the season, spent only on waiver claims. It never touches the
    salary cap — a team can be up against the cap and still have money to bid, and
@@ -15592,7 +16364,6 @@ function payoutPost(year){
       '\n\nTotal out: '+payMoney(pay.total)+'.',
     media:null, notify:'none'});
   notify(y+' payouts', teamName(pay.champ)+' takes '+payMoney(+payoutCfg().first||0)+'.', 'good');
-  popNotify(y+' payouts', 'The season is settled — see who gets paid.', 'league');
   logIt(y+' payouts posted — '+payMoney(pay.total)+' in total', {type:'admin'});
   save();
   return 1;
@@ -16348,7 +17119,7 @@ async function pullNews(loud){
 
       S.news = {at:Date.now(), items, from:t.what};
       S.meta.newsTrouble = null;
-      save(); render();
+      saveLocal(); render();
       if(loud) toast(items.length+' stories in','good');
       return;
     }catch(e){
@@ -16499,7 +17270,6 @@ function injuryWatch(){
       notify(p.name+' '+word,
         'He is in your week '+w+' lineup'+((p.injury||{}).body? ' — '+p.injury.body : '')+'.',
         st==='out' ? 'bad' : 'warn', [t.id]);
-      popNotify(p.name+' '+word, 'In your week '+w+' lineup.', 'lineup', [t.id]);
       told++;
     });
   });
@@ -16728,7 +17498,6 @@ function subsRun(){
         {type:'admin', teams:[t.id], players:[p.id, sub.id]});
       notify(sub.name+' came on for '+p.name,
         p.name+' did not play, so the man you named took his place.', 'warn', [t.id]);
-      popNotify(sub.name+' came on for '+p.name, 'He did not play.', 'lineup', [t.id]);
     });
   });
   if(on){ clearCapCache(); save(); }
@@ -16805,7 +17574,6 @@ function autoFillRun(){
       notify(sub.p.name+' is in for '+p.name,
         p.name+' was ruled out, so your best available man took his place — '+
         sub.p.name+' on '+sub.proj.toFixed(1)+' projected.', 'warn', [t.id]);
-      popNotify(sub.p.name+' is in for '+p.name, 'He was ruled out.', 'lineup', [t.id]);
     });
   });
   if(swaps){ clearCapCache(); save(); }
@@ -17357,7 +18125,6 @@ function duesWeeklyRun(){
       'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
       (d.dueDate? ', due '+dayOnly(d.dueDate) : '')+
       (d.payTo? '. Send to '+d.payTo : '')+'.', 'warn', [t.id]);
-    popNotify('Dues still owing', duesMoney(dueAmount(t, y))+' for '+y+'.', 'dues', [t.id]);
   });
   S.chat = S.chat || [];
   S.chat.push({id:uid('c'), at:Date.now(), teamId:null,
@@ -20388,7 +21155,10 @@ VIEWS.settings = function(){
         ${(()=>{
           const st = popState();
           if(st === 'unsupported')
-            return '<div class="hint bad">This browser cannot show notifications.</div>';
+            return (isIOS() && !isStandalone())
+              ? '<div class="hint warn"><b>On iPhone this needs one step first.</b> Tap Share in Safari, choose '+
+                '<b>Add to Home Screen</b>, then open Front Office from that icon and turn notifications on here.</div>'
+              : '<div class="hint bad">This browser cannot show notifications.</div>';
           if(st === 'denied')
             return '<div class="hint bad">Your browser is blocking notifications for this site. '+
               'Turn them back on in the padlock menu beside the address, then come back here.</div>';
@@ -20413,10 +21183,15 @@ VIEWS.settings = function(){
           'it to your home screen, and they will stick.</div>' : ''}
         <div class="hint">These are yours and this phone's — they are not part of the league, so a
           deploy, a sync, or anybody else's settings can never change them.
-          These come from the app itself, so they arrive whenever it is open in a tab —
-          including on a phone with it added to the home screen. There is no separate server sending them,
-          so a notification will not reach you with the app fully closed.</div>
+          <br><br><b>When they arrive.</b> They are raised by the app on this phone, so they come while it is open
+          — on screen, or put away in the last few minutes. Once a phone locks it puts web apps to sleep, and
+          when you open it again, anything from the last half hour is raised then — scoring as one catch-up.
+          ${swErr ? '<br><br><span class="bad">The notification helper is not running: '+esc(swErr)+'.</span>' : ''}</div>
       </div></div>
+      <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Data this month</h3></div>
+        <div class="pb stack">${dataPanel()}</div></div>
+      <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Alerts on a locked phone</h3></div>
+        <div class="pb stack">${pushPanel()}</div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>League chat</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.chat.weekReport" ${(S.settings.chat||{}).weekReport!==false?'checked':''}>
           <span>Post the week in figures on a Tuesday morning
@@ -22402,7 +23177,7 @@ const Sync = {
     if(this.busy){ this.pending=true; return; }
     this.busy=true;
     try{
-      const body = JSON.stringify({rev:+S.rev||0, state:S});
+      const body = JSON.stringify({rev:+S.rev||0, state:syncCopy(S)});
       const r = await fetch(this.url(), {method:'PUT', headers:this.head(), body});
       const j = await r.json().catch(()=>({}));
       if(r.status===409){
@@ -22527,6 +23302,91 @@ function keepClocksRunning(before, after){
     }
   });
 }
+/* ---- Keeping the monthly data down ---------------------------------------------
+   Supabase's free plan allows 5 GB a month of data sent out to devices. The
+   league is a single 1.7 MB copy (and grows through the season), so what
+   matters is how often a phone has to download it. These keep that to the
+   times something genuinely changed.
+
+   What each phone fetches for itself — news, trending players, projections,
+   the book on each defense (worked out from the weeks), the weather — never
+   travels with the league at all. */
+const LOCAL_ONLY = ['news', 'trend', 'proj', 'dvp'];
+const LOCAL_ONLY_LIVE = ['wx', 'wxErr', 'feed'];
+function syncCopy(st){
+  const out = Object.assign({}, st);
+  LOCAL_ONLY.forEach(k=> delete out[k]);
+  if(st.live){ out.live = Object.assign({}, st.live); LOCAL_ONLY_LIVE.forEach(k=> delete out.live[k]); }
+  return out;
+}
+function keepLocalOnly(before, after){
+  if(!before || !after) return;
+  LOCAL_ONLY.forEach(k=>{
+    const mine = before[k], theirs = after[k];
+    const empty = theirs==null || (typeof theirs==='object' && !Object.keys(theirs).length) ||
+                  (k==='news' && !((theirs||{}).items||[]).length);
+    if(mine != null && empty) after[k] = mine;
+  });
+  if(before.live && after.live) LOCAL_ONLY_LIVE.forEach(k=>{
+    if(before.live[k] != null && after.live[k] == null) after.live[k] = before.live[k];
+  });
+}
+/* Enough to tell whether joining two copies added anything of this phone's. */
+function mergeSig(st){
+  const n = (k)=> Array.isArray(st && st[k]) ? st[k].length : 0;
+  const led = ((st && st.teams) || []).map(t=> (t.dead||[]).length+'/'+(t.adj||[]).length+'/'+(t.faab?1:0)).join(',');
+  return [n('dms'), n('chat'), n('log'), n('notices'), led].join('|');
+}
+/* A save to this phone only. For the things that change here without anybody
+   doing anything — a countdown ticking, a fixture list refreshed — which every
+   other phone works out for itself. */
+function saveLocal(){ clearTimeout(saveT); saveT = setTimeout(()=> Store.set(KEY, S), 400); }
+
+/* The packed copy. The league is still saved in full exactly as before; this
+   is a gzipped copy beside it, and it is what phones download — about a
+   seventh of the size. Falls back to the full copy whenever the packed one is
+   missing, older, or the phone cannot unpack it. */
+const Pack = {
+  ok(){ return typeof CompressionStream === 'function' && typeof DecompressionStream === 'function'; },
+  async pack(json){
+    const cs = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = new Uint8Array(await new Response(cs).arrayBuffer());
+    let bin = ''; for(let i=0;i<buf.length;i+=0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i+0x8000));
+    return btoa(bin);
+  },
+  async unpack(b64){
+    const bin = atob(b64), buf = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) buf[i] = bin.charCodeAt(i);
+    const ds = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return JSON.parse(await new Response(ds).text());
+  }
+};
+
+/* What this phone has moved this month, so the budget can be kept to. The
+   league's allowance is shared out between the teams; a phone that has used
+   its share stops listening live and checks every quarter of an hour instead,
+   until the month turns over. */
+const Net = {
+  key(){ const d = new Date(); return 'fo-net-'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); },
+  mem:null,
+  get(){
+    const k = this.key();
+    if(this.mem && this.mem.k === k) return this.mem;
+    let v = null; try{ v = JSON.parse(localStorage.getItem(k)||'null'); }catch(e){}
+    this.mem = Object.assign({k, down:0, up:0, pulls:0, skipped:0}, v||{}, {k});
+    return this.mem;
+  },
+  add(kind, bytes){
+    const m = this.get(); m[kind] = (m[kind]||0) + (+bytes||0);
+    if(kind==='down') m.pulls++;
+    try{ localStorage.setItem(m.k, JSON.stringify(m)); }catch(e){}
+  },
+  skip(){ const m = this.get(); m.skipped++; try{ localStorage.setItem(m.k, JSON.stringify(m)); }catch(e){} },
+  budgetMB(){ return Math.max(500, +((S.settings.data||{}).budgetMB) || 5000); },
+  shareMB(){ return Math.max(150, Math.round(this.budgetMB() * 0.8 / Math.max(1, (S.teams||[]).length))); },
+  saver(){ return this.get().down / 1048576 >= this.shareMB(); }
+};
+
 /* ---- Joining the append-only streams ---------------------------------------
    Messages, the room, the transaction log and the notices are only ever added
    to. Everything else in the league is a value somebody edits, so the newest
@@ -22578,6 +23438,12 @@ function mergeStreams(before, after){
   (after.dms||[]).forEach(m=>{ if(m && m.id && wasRead[m.id]) m.read = true; });
 }
 function adoptRemote(state, rev, force){
+  /* A copy with no league in it is not a copy. Once the league passed 1 MB,
+     Realtime started sending updates with the league stripped out (its limit),
+     every phone read that as "the server has lost the contracts", and every
+     phone uploaded its own copy — which was itself an update, so round it went.
+     That storm is most of where the monthly data went. */
+  if(!state || typeof state !== 'object' || !Array.isArray(state.teams) || !state.teams.length) return false;
   const before = S;                       /* what this device had a moment ago */
   /* A server copy that would wipe the contracts is never taken quietly, however
      it arrived — a pull, the live feed, or a clash while saving. */
@@ -22629,13 +23495,19 @@ function adoptRemote(state, rev, force){
   /* Dead cap and manual adjustments are hard-won and easy to lose — an import
      that rebuilt a team, a copy that came back thin. If the incoming state has
      none for a team and the one on this device does, the local one wins. */
+  const sigIn = mergeSig(S);
   keepTeamLedgers(before, S);
+  /* What each phone fetches for itself never travels, so it is kept from here. */
+  keepLocalOnly(before, S);
   /* Messages, the room, the log and the notices are written to, never edited.
      Taking the server's copy whole threw away everything this device had added
      since it last pushed — which on a phone is the message just sent, gone the
      moment it was sent. They are joined instead, so both sides keep what they
      wrote. */
   mergeStreams(before, S);
+  /* Only if this phone had something the server copy lacked does anything need
+     to go back up. It used to send the whole league back regardless. */
+  const needsPush = mergeSig(S) !== sigIn;
   /* Weeks may have arrived with that copy, so the book is worked out again. */
   try{ rebuildDvp(); }catch(e){}
   /* And if somebody is part-way through the settings page, the settings they are
@@ -22658,6 +23530,7 @@ function adoptRemote(state, rev, force){
     });
   }catch(e){}
   Store.set(KEY, S);
+  return needsPush;
 }
 let pushT=null;
 function syncPush(){
@@ -22926,6 +23799,73 @@ const Supa = {
     if(!this.ready() || this.busy) return;
     this.busy = true;
     try{
+      /* The revision number first — a few bytes. The league itself only comes
+         down when it is actually newer than what this phone already has. It
+         used to download all of it every time and only then look. */
+      const head = await this.serverRev();
+      if(head === null){ this.busy = false; return this.pullFull(loud); }
+      this.lastPullAt = Date.now();
+      if(head > (+S.rev||0)){
+        const needs = await this.fetchAndAdopt(head);
+        this.set('ok','Up to date at revision '+head);
+        renderQuiet();
+        if(needs) setTimeout(()=> this.push(), 300);
+      } else {
+        this.set('ok','Up to date');
+        if(loud) toast('Already up to date');
+      }
+    }catch(e){ this.set('bad', e.message); if(loud) toast('Pull failed — '+e.message,'bad'); }
+    this.busy = false;
+  },
+  /* The revision on the server, or null if the league cannot be seen. */
+  async serverRev(){
+    const {data, error} = await this.client.from('leagues').select('rev').eq('id', this.cfg().leagueId).maybeSingle();
+    if(error) throw error;
+    return data ? (+data.rev||0) : null;
+  },
+  /* Bring the league down at a given revision: the packed copy if it matches,
+     otherwise the full one. Returns whether this phone has anything to add. */
+  async fetchAndAdopt(head){
+    if(Pack.ok() && this.packOk !== false){
+      try{
+        const {data, error} = await this.client.from('fo_league_z').select('rev,z').eq('league_id', this.cfg().leagueId).maybeSingle();
+        if(error){ if(/fo_league_z|schema cache|relation|does not exist/i.test(error.message||'')) this.packOk = false; throw error; }
+        if(data && (+data.rev||0) === head && data.z){
+          Net.add('down', data.z.length);
+          const st = await Pack.unpack(data.z);
+          const needs = adoptRemote(st, head);
+          if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
+          this.packUsed = (this.packUsed||0) + 1;
+          return !!needs;
+        }
+      }catch(e){ /* fall through to the full copy */ }
+    }
+    const {data, error} = await this.client.from('leagues').select('rev,state').eq('id', this.cfg().leagueId).maybeSingle();
+    if(error) throw error;
+    if(!data) return false;
+    try{ Net.add('down', JSON.stringify(data.state||'').length); }catch(e){}
+    const needs = adoptRemote(data.state, +data.rev||0);
+    if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
+    /* Whoever brings the full copy down leaves a packed one behind for everyone else. */
+    if(Pack.ok() && this.packOk !== false && data.state && Array.isArray(data.state.teams))
+      this.writePack(JSON.stringify(data.state), +data.rev||0);
+    return !!needs;
+  },
+  async writePack(json, rev){
+    if(!Pack.ok() || this.packOk === false) return;
+    try{
+      const z = await Pack.pack(json);
+      const {error} = await this.client.from('fo_league_z').upsert({league_id:this.cfg().leagueId, rev, z,
+        updated_at:new Date().toISOString()}, {onConflict:'league_id'});
+      if(error){ if(/fo_league_z|schema cache|relation|does not exist/i.test(error.message||'')) this.packOk = false; }
+      else this.packSize = z.length;
+    }catch(e){}
+  },
+  /* The old way, kept for the cases it handled: a league not visible yet. */
+  async pullFull(loud){
+    if(!this.ready() || this.busy) return;
+    this.busy = true;
+    try{
       const {data, error} = await this.client.from('leagues')
         .select('rev,state').eq('id', this.cfg().leagueId).maybeSingle();
       if(error) throw error;
@@ -22966,12 +23906,27 @@ const Supa = {
     if(this.busy){ this.pending = true; return; }
     this.busy = true;
     try{
+      /* Somebody else saved since this phone last looked? Take theirs first —
+         packed, and small — rather than pushing into a clash, which sends the
+         whole league straight back. */
+      const head = await this.serverRev();
+      if(head !== null && head > (+S.rev||0)){
+        const needs = await this.fetchAndAdopt(head);
+        renderQuiet();
+        /* Taking theirs is what a clash did anyway; only send if joining the two
+           left this phone with something theirs lacked. */
+        if(!needs){ this.busy = false; this.set('ok','Up to date at revision '+head); return; }
+      }
+      /* The league as it travels: without what each phone fetches for itself. */
+      const json = JSON.stringify(syncCopy(S));
+      Net.add('up', json.length);
       const {data, error} = await this.client.rpc('push_league', {
-        p_id:this.cfg().leagueId, p_rev:+S.rev||0, p_state:S, p_note: note || null
+        p_id:this.cfg().leagueId, p_rev:+S.rev||0, p_state:JSON.parse(json), p_note: note || null
       });
       if(error) throw error;
       if(data && data.conflict){
         const theirs = data.state, theirRev = +data.rev||0;
+        try{ Net.add('down', JSON.stringify(theirs||'').length); }catch(e){}
         if(adoptWouldLose(theirs)){
           /* Their copy has lost most of the contracts — keep ours and save over
              it. Theirs goes into the saved copies either way. */
@@ -22992,11 +23947,13 @@ const Supa = {
            the saved copies first, so nothing is ever actually lost, and Settings
            → Data can put it back. */
         /* adoptRemote keeps a copy of what was here before taking theirs. */
-        adoptRemote(theirs, theirRev);
+        const needs = adoptRemote(theirs, theirRev);
         this.set('ok','Synced');
         this.busy = false;
-        /* Whatever this device had that the newer copy does not, goes back up. */
-        setTimeout(()=> this.push(), 300);
+        /* Whatever this device had that the newer copy does not, goes back up —
+           but only if there is something. It used to send the whole league back
+           every time, which was itself another save for everyone to fetch. */
+        if(needs) setTimeout(()=> this.push(), 300);
         renderQuiet();
         return;
       } else {
@@ -23004,6 +23961,8 @@ const Supa = {
         this.lastPush = Date.now();
         this.set('ok','Saved revision '+S.rev);
         if(loud) toast('Saved','good');
+        /* A packed copy for the others to fetch, and a word to them that it is there. */
+        this.writePack(json, S.rev).then(()=> this.announce(S.rev));
       }
     }catch(e){
       this.set('bad', e.message);
@@ -23016,26 +23975,48 @@ const Supa = {
   listen(){
     if(!this.client || this.channel) return;
     const id = this.cfg().leagueId;
-    this.channel = this.client.channel('league:'+id)
-      .on('postgres_changes',
-        {event:'UPDATE', schema:'public', table:'leagues', filter:'id=eq.'+id},
-        (payload)=>{
-          const row = payload.new;
-          if(!row || (+row.rev||0) <= (+S.rev||0)) return;
-          adoptRemote(row.state, +row.rev||0);
-          if(this.member && this.member.team_id) S.league.myTeamId = this.member.team_id;
-          this.set('ok','Updated live to revision '+row.rev);
-          renderQuiet();
-          /* Quiet — see above. */
-        })
+    /* A save used to reach every open phone as the whole league row, through
+       Realtime — and once the league passed Realtime's 1 MB limit, as the row
+       with the league stripped out, which set off the upload storm. Now the
+       phone that saved sends everybody a few bytes: "revision N is up". Each
+       phone then fetches the packed copy once, if it is newer than its own. */
+    this.channel = this.client.channel('fo-rev:'+id, {config:{broadcast:{self:false}}})
+      .on('broadcast', {event:'rev'}, (m)=>{
+        const r = +(((m||{}).payload)||{}).rev || 0;
+        if(r > (+S.rev||0)) this.soon();
+      })
       .subscribe();
+    /* In case the signal is missed: a look at the revision number now and then
+       while the app is on screen, and whenever it comes back to the screen. */
+    if(!this.revTimer){
+      this.revTimer = setInterval(()=>{
+        if(document.visibilityState === 'visible') this.soon(Net.saver() ? 15*60000 : 0);
+      }, 3*60000);
+      document.addEventListener('visibilitychange', ()=>{
+        if(document.visibilityState === 'visible' &&
+           Date.now() - (this.lastPullAt||0) > (Net.saver() ? 5*60000 : 20000)) this.soon();
+      });
+    }
+  },
+  /* Gathered: several saves in a row are one download, not several. A phone
+     that has used its share of the month waits a quarter of an hour. */
+  soon(wait){
+    if(this.soonT) return;
+    const ms = wait != null ? wait : (Net.saver() ? 15*60000 : 2500);
+    if(Net.saver()) Net.skip();
+    this.soonT = setTimeout(()=>{ this.soonT = null; this.pull(); }, ms);
+  },
+  announce(rev){
+    try{ if(this.channel) this.channel.send({type:'broadcast', event:'rev', payload:{rev}}); }catch(e){}
   }
 };
 let supaT = null;
 function supaPush(){
   if(!Supa.ready()) return;
   clearTimeout(supaT);
-  supaT = setTimeout(()=> Supa.push(), 1200);
+  /* A few seconds' grace, so a burst of changes — a trade touches a dozen
+     things — goes up as one save rather than a dozen. */
+  supaT = setTimeout(()=> Supa.push(), 3000);
 }
 
 /* ============================================================
@@ -23152,7 +24133,7 @@ function migrateScoring(old){
 }
 let lastPoll = 0, liveBeat = 0;
 function tickAll(){
-  let dirty = false, needsRender = false;
+  let dirty = false, needsRender = false, settled = false;
   /* Remember who owned each player when his game kicked off. */
   try{ stampLockedTeams(); }catch(e){}
 
@@ -23161,48 +24142,48 @@ function tickAll(){
     const before = a.clock.remain;
     tickClock(a.clock);
     if(a.clock.remain !== before) dirty = true;
-    if(a.clock.remain<=0){ settleAuction(a); needsRender = true; }
+    if(a.clock.remain<=0){ settleAuction(a); needsRender = true; settled = true; }
   });
   (S.tagOffers||[]).forEach(o=>{
     if(o.status!=='open' || !o.clock) return;
     const before = o.clock.remain;
     tickClock(o.clock);
     if(o.clock.remain !== before) dirty = true;
-    if(o.clock.remain<=0){ settleTagOffer(o); needsRender = true; }
+    if(o.clock.remain<=0){ settleTagOffer(o); needsRender = true; settled = true; }
   });
   (S.pending||[]).forEach(q=>{
     if(q.status!=='open' || !q.clock) return;
     const before = q.clock.remain;
     tickClock(q.clock);
     if(q.clock.remain !== before) dirty = true;
-    if(q.clock.remain<=0){ settlePending(q); needsRender = true; }
+    if(q.clock.remain<=0){ settlePending(q); needsRender = true; settled = true; }
   });
   (S.taxiClaims||[]).forEach(c=>{
     if(c.status!=='open' || !c.clock) return;
     const before = c.clock.remain;
     tickClock(c.clock);
     if(c.clock.remain !== before) dirty = true;
-    if(c.clock.remain<=0){ settleTaxiClaim(c); needsRender = true; }
+    if(c.clock.remain<=0){ settleTaxiClaim(c); needsRender = true; settled = true; }
   });
   if(S.bbd && S.bbd.status==='open' && S.bbd.clock){
     const before = S.bbd.clock.remain;
     tickClock(S.bbd.clock);
     if(S.bbd.clock.remain !== before) dirty = true;
-    if(S.bbd.clock.remain<=0){ resolveRound(); needsRender = true; }
+    if(S.bbd.clock.remain<=0){ resolveRound(); needsRender = true; settled = true; }
   }
   (S.faAuctions||[]).forEach(a=>{
     if(a.status!=='open' || !a.clock) return;
     const before = a.clock.remain;
     tickClock(a.clock);
     if(a.clock.remain !== before) dirty = true;
-    if(a.clock.remain<=0){ settleFA(a); needsRender = true; }
+    if(a.clock.remain<=0){ settleFA(a); needsRender = true; settled = true; }
   });
   S.trades.forEach(t=>{
     if(t.status!=='review' || !t.clock) return;
     const before = t.clock.remain;
     tickClock(t.clock);
     if(t.clock.remain !== before) dirty = true;
-    if(t.clock.remain<=0){ processTrade(t); needsRender = true; }
+    if(t.clock.remain<=0){ processTrade(t); needsRender = true; settled = true; }
   });
 
   liveBeat++;
@@ -23217,7 +24198,8 @@ function tickAll(){
   }
   /* Who the rest of the world is picking up. Refreshed on its own every couple
      of hours — the list only moves slowly. */
-  if((Date.now() - ((S.trend||{}).at||0)) > 2*60*60*1000 && !ui.tmp.trendBusy){
+  if((Date.now() - ((S.trend||{}).at||0)) > 2*60*60*1000 &&
+     (Date.now() - ((S.trend||{}).failAt||0)) > 30*60*1000 && !ui.tmp.trendBusy){
     ui.tmp.trendBusy = true;
     setTimeout(()=>{ ACT.trendPull(true).then(()=>{ ui.tmp.trendBusy=false; }, ()=>{ ui.tmp.trendBusy=false; }); }, 1500);
   }
@@ -23279,8 +24261,18 @@ function tickAll(){
      (Date.now() - (ui.tmp.lastSlotSync||0)) > gap){
     ui.tmp.lastSlotSync = Date.now();
     ui.tmp.syncBusy = true; ui.tmp.syncStartedAt = Date.now();
-    setTimeout(()=> runSleeperSync(true), 400);
+    /* A missed pull on a patchy signal is recorded on the page, not thrown. */
+    setTimeout(()=> runSleeperSync(true).catch(()=>{}), 400);
   }
+  /* Weather for the week's open-air grounds — it keeps itself fresh and costs
+     nothing between refreshes. */
+  if(haveCard) keepWeatherFresh();
+  /* Anything addressed to this phone that arrived since the last look. */
+  deliverNotices();
+  /* This phone's signup with the alert server, and the week's starters. */
+  try{ Push.tick(); }catch(e){}
+  /* And once a minute, whether your matchup is over. */
+  if(Date.now() - (ui.tmp.finalAt||0) > 60000){ ui.tmp.finalAt = Date.now(); checkMatchupFinal(); }
   /* Real scores straight from Sleeper, on the same timer. */
   if(S.settings.live.mode==='sleeper'){
     const gap = Math.max(15, +S.settings.live.pollSec||30)*1000;
@@ -23305,8 +24297,14 @@ function tickAll(){
     el.className = 'clock ' + (isQuietNow() ? 'paused' : near ? '' : 'calm');
   });
 
+  /* A countdown ticking is not a change to the league — every phone counts it
+     down for itself from the same starting point, so it is kept on this phone.
+     It used to send the whole league to the server every eight seconds while
+     any clock ran, which in a dynasty league is nearly always. What does go up
+     is a clock running out: an auction settled, a trade processed. */
+  if(settled) save();
+  else if(dirty && Date.now()-(ui.tmp.localSaveAt||0) > 15000){ ui.tmp.localSaveAt = Date.now(); saveLocal(); }
   if(needsRender) render();
-  else if(dirty && Date.now()-(S.meta.savedAt||0) > 8000) save();
 }
 /* A copy every half hour, but only when something has actually changed since
    the last one — so the list is real saves, not the same league twenty times. */
@@ -23431,6 +24429,8 @@ async function init(){
      it is right from the first screen rather than waiting for a week to be
      closed out on this particular device. */
   try{ rebuildDvp(); }catch(e){}
+  /* The notification helper — without it a phone shows nothing at all. */
+  swRegister();
   /* Working it out needs the real card for each week played, to know who a club
      was up against. A week closed before the card was ever fetched leaves a
      hole, so any missing card is fetched once in the background and the book is
@@ -23513,6 +24513,773 @@ function greetInvites(){
   }
 }
 init();
+</script>
+<script type="text/plain" id="foPushFn">
+// Front Office — the alert server. Supabase Edge Function, name it "push".
+//
+// A locked phone runs none of the app's code, so anything that has to reach it
+// is sent from here instead, through the phone's own push service (Apple's or
+// Google's). This one function does all of it:
+//
+//   send      the app hands over an alert it has just written (a message, a
+//             trade offer, a waiver result) for the teams it concerns
+//   watch     run every minute by the database: reads Sleeper's live stats,
+//             and tells each manager when one of his starters scores, and how
+//             his matchup finished
+//   injuries  run every half hour: tells a manager when a starter who has not
+//             played yet is ruled out, doubtful or questionable
+//   test      sends a test alert to the caller's own phones
+//   ping      reports whether everything is wired up
+//
+// It imports nothing. The encryption and signing web push needs are done with
+// the Web Crypto that is built into the runtime, so there is no package to
+// fetch and nothing to go missing when it is deployed.
+//
+// Deploy with "Verify JWT with legacy secret" turned OFF (older dashboards:
+// "Enforce JWT Verification") — the database's once-a-
+// minute call has no user to sign in as. Every request is checked in here
+// instead: app calls must carry a signed-in league member, and the database's
+// calls must carry the league's own secret.
+//
+// Built from the app's own code: the scoring below is lifted from index.html at
+// build time, so a touchdown is worth exactly what the app says it is.
+
+/* ------------------------------------------------------------------ setup */
+const env = (k) => {
+  try { if (typeof Deno !== 'undefined') return Deno.env.get(k) || ''; } catch (e) {}
+  try { return (globalThis.process && process.env[k]) || ''; } catch (e) { return ''; }
+};
+let SB_URL = '', SB_KEY = '', KEY_FROM = '';
+function loadEnv() {
+  SB_URL = env('SUPABASE_URL').replace(/\/+$/, '');
+  const tries = [['FO_SERVICE_KEY', env('FO_SERVICE_KEY')],
+                 ['SUPABASE_SERVICE_ROLE_KEY', env('SUPABASE_SERVICE_ROLE_KEY')],
+                 ['SUPABASE_SECRET_KEY', env('SUPABASE_SECRET_KEY')]];
+  const many = env('SUPABASE_SECRET_KEYS');
+  if (many) { try { const o = JSON.parse(many); const v = Object.values(o || {})[0]; if (v) tries.push(['SUPABASE_SECRET_KEYS', v]); } catch (e) {} }
+  const hit = tries.find(([, v]) => v);
+  SB_KEY = hit ? hit[1] : ''; KEY_FROM = hit ? hit[0] : '';
+}
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+};
+const json = (o, status = 200) => new Response(JSON.stringify(o),
+  { status, headers: Object.assign({ 'Content-Type': 'application/json' }, CORS) });
+
+/* ------------------------------------------------------------------ base64url */
+const enc = new TextEncoder();
+function b64u(buf) {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let s = ''; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function unb64u(str) {
+  const s = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(s + '==='.slice((s.length + 3) % 4));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function cat(...parts) {
+  const n = parts.reduce((a, p) => a + p.length, 0), out = new Uint8Array(n);
+  let o = 0; parts.forEach(p => { out.set(p, o); o += p.length; });
+  return out;
+}
+
+/* ------------------------------------------------------------------ VAPID (RFC 8292)
+   Proves to Apple and Google that the alert comes from this league's server.
+   The key pair is made in the commissioner's browser and stored in the
+   database, where only this function can read the private half. */
+async function vapidHeader(endpoint, cfg) {
+  const pub = unb64u(cfg.public_key);                 /* 65 bytes: 04 || x || y */
+  const key = await crypto.subtle.importKey('jwk', {
+    kty: 'EC', crv: 'P-256', ext: true,
+    x: b64u(pub.slice(1, 33)), y: b64u(pub.slice(33, 65)), d: cfg.private_key
+  }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const aud = new URL(endpoint).origin;
+  const head = b64u(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const body = b64u(enc.encode(JSON.stringify({
+    aud, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: cfg.subject || 'mailto:commissioner@example.com'
+  })));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(head + '.' + body));
+  return 'vapid t=' + head + '.' + body + '.' + b64u(sig) + ', k=' + cfg.public_key;
+}
+
+/* ------------------------------------------------------------------ payload encryption (RFC 8291)
+   Only the phone the alert is for can read it — not the push service carrying
+   it. "fixed" is for testing against known values and is never passed live. */
+async function hkdf(salt, ikm, info, bytes) {
+  const k = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, k, bytes * 8));
+}
+async function encryptPayload(sub, plaintext, fixed) {
+  const uaPublic = unb64u(sub.p256dh), authSecret = unb64u(sub.auth);
+  let asPair;
+  if (fixed && fixed.asPrivateJwk) {
+    asPair = {
+      privateKey: await crypto.subtle.importKey('jwk', fixed.asPrivateJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']),
+      publicRaw: unb64u(fixed.asPublic)
+    };
+  } else {
+    const kp = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    asPair = { privateKey: kp.privateKey, publicRaw: new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey)) };
+  }
+  const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, asPair.privateKey, 256));
+  const ikm = await hkdf(authSecret, ecdh,
+    cat(enc.encode('WebPush: info'), new Uint8Array([0]), uaPublic, asPair.publicRaw), 32);
+  const salt = fixed && fixed.salt ? unb64u(fixed.salt) : crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, cat(enc.encode('Content-Encoding: aes128gcm'), new Uint8Array([0])), 16);
+  const nonce = await hkdf(salt, ikm, cat(enc.encode('Content-Encoding: nonce'), new Uint8Array([0])), 12);
+  const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+  const data = typeof plaintext === 'string' ? enc.encode(plaintext) : plaintext;
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key,
+    cat(data, new Uint8Array([2]))));                  /* 0x02: the last (and only) record */
+  const rs = new Uint8Array([0, 0, 16, 0]);            /* record size 4096 */
+  return cat(salt, rs, new Uint8Array([asPair.publicRaw.length]), asPair.publicRaw, ct);
+}
+
+/* Send one. Resolves to {ok, gone, status}. "gone" means the phone has thrown
+   the subscription away and it should be deleted. */
+async function sendPush(sub, message, cfg, fetchImpl) {
+  const f = fetchImpl || fetch;
+  const payload = JSON.stringify({
+    title: String(message.title || 'Front Office').slice(0, 120),
+    body: String(message.body || '').slice(0, 480),
+    tag: message.tag || undefined, url: message.url || undefined
+  });
+  const bodyBytes = await encryptPayload(sub, payload);
+  const r = await f(sub.endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream',
+      TTL: String(message.ttl || 3600), Urgency: 'high',
+      Authorization: await vapidHeader(sub.endpoint, cfg)
+    },
+    body: bodyBytes
+  });
+  return { ok: r.status >= 200 && r.status < 300, gone: r.status === 404 || r.status === 410, status: r.status };
+}
+
+/* ------------------------------------------------------------------ the database
+   Straight to Supabase's REST endpoint with the server key. */
+function dbHeaders(extra) {
+  const h = Object.assign({ apikey: SB_KEY, 'Content-Type': 'application/json' }, extra || {});
+  /* A new-style secret key (sb_secret_…) goes in apikey only; an old JWT key
+     is also sent as the bearer. */
+  if (!/^sb_/.test(SB_KEY)) h.Authorization = 'Bearer ' + SB_KEY;
+  return h;
+}
+let dbFetch = (url, init) => fetch(url, init);
+async function dbGet(table, query) {
+  const r = await dbFetch(SB_URL + '/rest/v1/' + table + '?' + query, { headers: dbHeaders() });
+  if (!r.ok) throw new Error(table + ': ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  return r.json();
+}
+async function dbUpsert(table, rows, conflict) {
+  const r = await dbFetch(SB_URL + '/rest/v1/' + table + (conflict ? '?on_conflict=' + conflict : ''), {
+    method: 'POST', headers: dbHeaders({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify(rows)
+  });
+  if (!r.ok) throw new Error(table + ': ' + r.status + ' ' + (await r.text()).slice(0, 200));
+}
+async function dbPatch(table, query, row) {
+  const r = await dbFetch(SB_URL + '/rest/v1/' + table + '?' + query, {
+    method: 'PATCH', headers: dbHeaders({ Prefer: 'return=minimal' }), body: JSON.stringify(row)
+  });
+  if (!r.ok) throw new Error(table + ': ' + r.status + ' ' + (await r.text()).slice(0, 200));
+}
+async function dbDelete(table, query) {
+  await dbFetch(SB_URL + '/rest/v1/' + table + '?' + query, { method: 'DELETE', headers: dbHeaders() });
+}
+const q = (v) => encodeURIComponent(String(v));
+
+/* Who is calling, from the app's sign-in token — and whether they are in the league. */
+async function caller(req, league) {
+  const tok = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!tok || /^sb_/.test(tok)) return null;
+  const r = await dbFetch(SB_URL + '/auth/v1/user', { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + tok } });
+  if (!r.ok) return null;
+  const u = await r.json();
+  if (!u || !u.id) return null;
+  const m = await dbGet('league_members', 'select=user_id,team_id,role&league_id=eq.' + q(league) + '&user_id=eq.' + q(u.id));
+  return m[0] ? { id: u.id, team: m[0].team_id, role: m[0].role } : null;
+}
+
+/* ------------------------------------------------------------------ fanning out
+   Every phone subscribed in the league that the message is for, has that kind
+   switched on, and did not do the thing itself. */
+function wants(sub, kind) {
+  const p = sub.prefs || {};
+  if (p.on === false) return false;
+  return !(p.kinds && p.kinds[kind] === false);
+}
+async function fanOut(league, cfg, messages, opts) {
+  const subs = opts && opts.subs ? opts.subs
+    : await dbGet('fo_push_subs', 'select=*&league_id=eq.' + q(league));
+  let sent = 0, gone = 0, failed = 0;
+  const seen = {};
+  for (const m of messages) {
+    const teams = Array.isArray(m.teams) && m.teams.length ? m.teams : null;
+    for (const s of subs) {
+      if (teams && teams.indexOf(s.team_id) < 0) continue;
+      if (m.except && s.team_id === m.except) continue;
+      if (!(opts && opts.ignorePrefs) && !wants(s, m.kind || 'league')) continue;
+      const key = s.endpoint + '|' + (m.tag || m.title);
+      if (seen[key]) continue; seen[key] = 1;
+      if (sent + failed > 400) break;
+      try {
+        const r = await sendPush(s, m, cfg);
+        if (r.ok) { sent++; }
+        else if (r.gone) { gone++; await dbDelete('fo_push_subs', 'endpoint=eq.' + q(s.endpoint)); }
+        else { failed++; }
+      } catch (e) { failed++; }
+    }
+  }
+  return { sent, gone, failed };
+}
+
+/* ------------------------------------------------------------------ scoring, lifted from the app */
+let S = { settings: { scoring: {} } };
+/* ---- lifted from index.html, 2026-08-21u · the phones tell the server the schedule ---- */
+const BAND_KEYS = {};
+['pts_allow_0','pts_allow_1_6','pts_allow_7_13','pts_allow_14_20','pts_allow_21_27','pts_allow_28_34','pts_allow_35p',
+ 'yds_allow_0_100','yds_allow_100_199','yds_allow_200_299','yds_allow_300_349','yds_allow_350_399',
+ 'yds_allow_400_449','yds_allow_450_499','yds_allow_500_549','yds_allow_550p',
+ 'bonus_pass_yd_300','bonus_pass_yd_400','bonus_rush_yd_100','bonus_rush_yd_200','bonus_rec_yd_100','bonus_rec_yd_200',
+ 'bonus_rush_rec_yd_100','bonus_rush_rec_yd_200','bonus_pass_cmp_25','bonus_rush_att_20',
+ 'bonus_rec_rb','bonus_rec_wr','bonus_rec_te'].forEach(k=> BAND_KEYS[k]=1);
+function ptsAllowKey(pa){
+  return pa<=0?'pts_allow_0' : pa<=6?'pts_allow_1_6' : pa<=13?'pts_allow_7_13' : pa<=20?'pts_allow_14_20'
+       : pa<=27?'pts_allow_21_27' : pa<=34?'pts_allow_28_34' : 'pts_allow_35p';
+}
+function ydsAllowKey(y){
+  return y<100?'yds_allow_0_100' : y<200?'yds_allow_100_199' : y<300?'yds_allow_200_299'
+       : y<350?'yds_allow_300_349' : y<400?'yds_allow_350_399' : y<450?'yds_allow_400_449'
+       : y<500?'yds_allow_450_499' : y<550?'yds_allow_500_549' : 'yds_allow_550p';
+}
+function scoreLine(s, p){
+  if(!s) return 0;
+  const c = S.settings.scoring;
+  let t = 0;
+  /* Straight rate categories: the stat and the setting share a name. */
+  for(const k in c){
+    if(BAND_KEYS[k]) continue;
+    const rate = +c[k]||0; if(!rate) continue;
+    const n = +s[k]||0; if(n) t += n*rate;
+  }
+  const has = (k)=> s[k]!=null;
+  if(p && p.pos==='DEF'){
+    if(has('pts_allow')) t += +c[ptsAllowKey(+s.pts_allow||0)]||0;
+    if(has('yds_allow')) t += +c[ydsAllowKey(+s.yds_allow||0)]||0;
+  }
+  const py=+s.pass_yd||0, ry=+s.rush_yd||0, rey=+s.rec_yd||0;
+  if(py>=400) t += +c.bonus_pass_yd_400||0; else if(py>=300) t += +c.bonus_pass_yd_300||0;
+  if(ry>=200) t += +c.bonus_rush_yd_200||0; else if(ry>=100) t += +c.bonus_rush_yd_100||0;
+  if(rey>=200) t += +c.bonus_rec_yd_200||0; else if(rey>=100) t += +c.bonus_rec_yd_100||0;
+  if(ry+rey>=200) t += +c.bonus_rush_rec_yd_200||0; else if(ry+rey>=100) t += +c.bonus_rush_rec_yd_100||0;
+  if((+s.pass_cmp||0)>=25) t += +c.bonus_pass_cmp_25||0;
+  if((+s.rush_att||0)>=20) t += +c.bonus_rush_att_20||0;
+  /* A first down counts once, whoever got it, at that man's position rate. */
+  const fds = (+s.pass_fd||0) + (+s.rush_fd||0) + (+s.rec_fd||0);
+  if(fds && p){
+    const key = p.pos==='QB' ? 'bonus_fd_qb' : p.pos==='RB' ? 'bonus_fd_rb'
+              : p.pos==='WR' ? 'bonus_fd_wr' : p.pos==='TE' ? 'bonus_fd_te' : null;
+    if(key) t += fds * (+c[key]||0);
+  }
+  const recs = +s.rec||0;
+  if(recs && p){
+    if(p.pos==='RB') t += recs*(+c.bonus_rec_rb||0);
+    else if(p.pos==='WR') t += recs*(+c.bonus_rec_wr||0);
+    else if(p.pos==='TE') t += recs*(+c.bonus_rec_te||0);
+  }
+  return Math.round(t*100)/100;
+}
+const SCORE_STATS = [
+  ['pass_td','passing TD'], ['rush_td','rushing TD'], ['rec_td','receiving TD'],
+  ['kr_td','kick return TD'], ['pr_td','punt return TD'], ['fum_rec_td','fumble return TD'],
+  ['def_td','defensive TD'], ['st_td','special teams TD'], ['int_ret_td','pick six'],
+  ['fgm_50p','50+ yard field goal'], ['fgm','field goal'], ['safe','safety'],
+  ['pass_2pt','two-point pass'], ['rush_2pt','two-point run'], ['rec_2pt','two-point catch']
+];
+const CLUB_SAME = {WAS:'WSH', LA:'LAR', JAC:'JAX', ARZ:'ARI', CLV:'CLE', HST:'HOU',
+                   BLT:'BAL', SD:'LAC', OAK:'LV', STL:'LAR'};
+function clubCode(c){
+  const u = String(c||'').trim().toUpperCase();
+  return CLUB_SAME[u] || u;
+}
+/* ---- end of lifted code ---- */
+
+/* ------------------------------------------------------------------ the week in play */
+const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+const SLEEPER = 'https://api.sleeper.app/v1';
+/* ESPN turns away requests that do not look like a browser, which is what the
+   server's own runtime looks like by default. */
+const ASK = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*', 'Accept-Language': 'en-US,en;q=0.9' };
+let getJSON = async (u) => { const r = await fetch(u, { headers: ASK }); if (!r.ok) throw new Error(u.split('?')[0] + ' ' + r.status); return r.json(); };
+/* If ESPN will not answer at all, the league still hears about touchdowns:
+   the server falls back on the hours NFL games are actually played (Central
+   time) and reads Sleeper's stats through them. Only the final-result alert
+   needs ESPN, because only ESPN says when a game is over. */
+let espnDown = null;
+function gameHours(now) {
+  const ct = new Date(new Date(now || Date.now()).toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  const d = ct.getDay(), h = ct.getHours() + ct.getMinutes() / 60;
+  if (d === 0) return h >= 8 && h < 24;          /* Sunday, London games included */
+  if (d === 1 || d === 4) return h >= 18.5;      /* Monday and Thursday nights */
+  if (d === 6) return h >= 11;                   /* Saturdays late in the season */
+  if (d === 5 || d === 3 || d === 2) return h >= 11 && ct.getMonth() >= 10;  /* holiday games, Nov–Jan */
+  return false;
+}
+async function latestWatch(league) {
+  const rows = await dbGet('fo_push_watch', 'select=*&league_id=eq.' + q(league) + '&order=season.desc,week.desc&limit=1');
+  return rows[0] || null;
+}
+/* Every club on the week's card: whether it has kicked off, and when. */
+/* The week's card as the league's phones last saw it — they reach ESPN when
+   the server cannot. A game counts as over once a phone saw it end, or four
+   hours after kickoff if every phone was asleep. */
+function statesFromCard(card) {
+  if (!card || !Object.keys(card).length) return null;
+  const now = Date.now(), out = {};
+  Object.keys(card).forEach(c => {
+    const g = card[c] || {}, at = +g.at || 0;
+    const state = g.status === 'final' ? 'post' : !at ? 'pre' : now >= at + 4 * 3600000 ? 'post' : now >= at ? 'in' : 'pre';
+    out[clubCode(c)] = { state, at };
+  });
+  return out;
+}
+async function clubStates(season, week, card) {
+  let j;
+  try { j = await getJSON(ESPN + '?seasontype=2&week=' + week + '&dates=' + season); espnDown = null; }
+  catch (e) { espnDown = e.message; return statesFromCard(card); }
+  const out = {};
+  (j.events || []).forEach(ev => {
+    const comp = (ev.competitions || [])[0] || {};
+    const ty = ((comp.status || ev.status || {}).type) || {};
+    const state = ty.completed ? 'post' : (ty.state || 'pre');
+    (comp.competitors || []).forEach(c => {
+      const ab = c && c.team && c.team.abbreviation;
+      if (ab) out[clubCode(ab)] = { state, at: Date.parse(ev.date || '') || 0 };
+    });
+  });
+  return out;
+}
+async function loadState(league, season, week) {
+  const rows = await dbGet('fo_push_state', 'select=*&league_id=eq.' + q(league) + '&season=eq.' + season + '&week=eq.' + week);
+  return rows[0] || { league_id: league, season, week, snap: {}, sent: {}, inj: {}, fresh: true };
+}
+async function saveState(st) {
+  await dbUpsert('fo_push_state', [{ league_id: st.league_id, season: st.season, week: st.week,
+    snap: st.snap || {}, sent: st.sent || {}, inj: st.inj || {}, updated_at: new Date().toISOString() }],
+    'league_id,season,week');
+}
+async function note(league, text) {
+  try { await dbPatch('fo_push_config', 'league_id=eq.' + q(league), { last_watch: new Date().toISOString(), last_note: text }); } catch (e) {}
+}
+function totalFor(team, stats) {
+  let t = 0;
+  (team.starters || []).forEach(p => { t += scoreLine(stats[p.sid] || null, p); });
+  return Math.round(t * 100) / 100;
+}
+function scoreText(data, tid, stats) {
+  const me = data.teams[tid]; if (!me) return '';
+  const a = totalFor(me, stats);
+  const opp = me.opp && data.teams[me.opp];
+  if (!opp) return 'You have ' + a.toFixed(1) + '.';
+  const b = totalFor(opp, stats);
+  return (a >= b ? 'You lead ' : 'You trail ') + a.toFixed(1) + ' – ' + b.toFixed(1) + ' ' + (opp.name || '') + '.';
+}
+
+/* Is anything on, or just finished? Asked of ESPN, which costs the league's
+   Supabase allowance nothing — so a quiet minute, which is most of them, never
+   touches the database at all. */
+async function anythingOn() {
+  let j;
+  try { j = await getJSON(ESPN); espnDown = null; } catch (e) { espnDown = e.message; return gameHours(); }
+  const now = Date.now();
+  return (j.events || []).some(ev => {
+    const comp = (ev.competitions || [])[0] || {};
+    const ty = ((comp.status || ev.status || {}).type) || {};
+    const at = Date.parse(ev.date || '') || 0;
+    return ty.state === 'in' || ((ty.completed || ty.state === 'post') && now - at < 6 * 3600000);
+  });
+}
+async function kickoffSoon() {
+  let j;
+  /* Without ESPN, any day games are played on counts as "maybe soon"; the
+     lineups the app sends up carry the real kickoff times. */
+  try { j = await getJSON(ESPN); espnDown = null; }
+  catch (e) { espnDown = e.message; return [0, 1, 4, 5, 6].indexOf(new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })).getDay()) >= 0; }
+  const now = Date.now();
+  return (j.events || []).some(ev => {
+    const at = Date.parse(ev.date || '') || 0;
+    const ty = ((((ev.competitions || [])[0] || {}).status || ev.status || {}).type) || {};
+    return (ty.state || 'pre') === 'pre' && at > now && at - now < 36 * 3600000;
+  });
+}
+
+/* Once a minute: touchdowns, field goals, and finished matchups. */
+async function watchLeague(cfg) {
+  const league = cfg.league_id;
+  const w = await latestWatch(league);
+  if (!w) { await note(league, 'waiting for the app to publish a lineup'); return { note: 'no lineups yet' }; }
+  if (Date.now() - Date.parse(w.updated_at) > 10 * 86400000) { await note(league, 'lineups are over ten days old'); return { note: 'stale' }; }
+  const data = w.data || {};
+  S.settings.scoring = data.scoring || {};
+  const teams = data.teams || {};
+  const got = await clubStates(w.season, w.week, (w.data || {}).card);
+  const states = got || {};
+  const clubOf = {}; Object.keys(teams).forEach(tid => (teams[tid].starters || []).forEach(p => { clubOf[p.sid] = clubCode(p.club); }));
+  const watched = Object.keys(clubOf);
+  /* Without ESPN, game-day hours stand in for "a game is on". */
+  const on = got ? watched.some(sid => (states[clubOf[sid]] || {}).state === 'in') : gameHours();
+  const st = await loadState(league, w.season, w.week);
+  st.sent = st.sent || {}; st.snap = st.snap || {};
+  /* A matchup is over when every man in it has finished — or had no game. */
+  const pendingFinal = !got ? [] : Object.keys(teams).filter(tid => {
+    if (st.sent['final-' + tid]) return false;
+    const men = (teams[tid].starters || []).concat(((teams[teams[tid].opp] || {}).starters) || []);
+    const games = men.map(p => states[clubCode(p.club)]).filter(Boolean);
+    return games.length && games.every(g => g.state === 'post');
+  });
+  if (!on && !pendingFinal.length) { await note(league, 'no games on for week ' + w.week); return { note: 'quiet' }; }
+
+  const stats = await getJSON(SLEEPER + '/stats/nfl/regular/' + w.season + '/' + w.week) || {};
+  const messages = [];
+  const firstLook = !!st.fresh || !Object.keys(st.snap).length;
+  Object.keys(teams).forEach(tid => {
+    (teams[tid].starters || []).forEach(p => {
+      const cur = stats[p.sid] || {};
+      const was = st.snap[p.sid];
+      const counts = {}; SCORE_STATS.forEach(([k]) => { if (+cur[k]) counts[k] = +cur[k]; });
+      const pts = scoreLine(cur, p);
+      if (was && !firstLook) {
+        let fg50 = 0;
+        const hits = [];
+        SCORE_STATS.forEach(([k, label]) => {
+          const before = +(was.c || {})[k] || 0, now = counts[k] || 0;
+          let d = now - before;
+          if (k === 'fgm_50p') fg50 = Math.max(0, d);
+          if (k === 'fgm') d -= fg50;
+          for (let i = 0; i < d; i++) hits.push({ k, label, n: before + i + 1 });
+        });
+        const gain = pts - (+was.pts || 0);
+        hits.forEach((h, i) => {
+          const td = /TD|pick six/.test(h.label);
+          messages.push({
+            teams: [tid], kind: 'score', ttl: 1800,
+            title: (td ? 'Touchdown — ' : /goal/.test(h.label) ? 'Field goal — ' : '') + p.name,
+            body: h.label.charAt(0).toUpperCase() + h.label.slice(1) +
+              (i === hits.length - 1 && Math.abs(gain) >= 0.05 ? ', ' + (gain >= 0 ? '+' : '') + gain.toFixed(1) : '') +
+              '. ' + scoreText(data, tid, stats),
+            tag: 'fo-sc-' + p.sid + '-' + h.k + '-' + h.n
+          });
+        });
+      }
+      st.snap[p.sid] = { c: counts, pts };
+    });
+  });
+  pendingFinal.forEach(tid => {
+    const me = teams[tid], opp = teams[me.opp];
+    const a = totalFor(me, stats), b = opp ? totalFor(opp, stats) : 0;
+    const how = a > b ? 'You beat ' : a < b ? 'You lost to ' : 'You tied ';
+    messages.push({ teams: [tid], kind: 'final', ttl: 86400, tag: 'fo-final-' + w.week,
+      title: 'Final — week ' + w.week, body: how + ((opp && opp.name) || 'your opponent') + ' ' + a.toFixed(1) + ' – ' + b.toFixed(1) + '.' });
+    st.sent['final-' + tid] = Date.now();
+  });
+  /* Kept in order: the state is saved before anything goes out, so a slow send
+     cannot lead to the same touchdown being announced twice next minute. */
+  delete st.fresh;
+  await saveState(st);
+  const r = messages.length ? await fanOut(league, cfg, messages) : { sent: 0 };
+  await note(league, (espnDown ? 'ESPN unreachable, using game-day hours · ' : '') + (on ? 'games on' : 'finals') + ' · week ' + w.week + ' · ' + messages.length + ' alert' + (messages.length === 1 ? '' : 's') +
+    (firstLook ? ' (first look — took stock)' : ''));
+  return { messages: messages.length, sent: r.sent };
+}
+
+/* Every half hour: a starter who has not played yet and whose status changed. */
+const INJ_WORD = { out: 'is out', doubtful: 'is doubtful', questionable: 'is questionable', ir: 'is on IR', sus: 'is suspended', pup: 'is on the PUP list' };
+async function injuriesLeague(cfg) {
+  const league = cfg.league_id;
+  const w = await latestWatch(league);
+  if (!w) return { note: 'no lineups yet' };
+  const data = w.data || {}, teams = data.teams || {};
+  const states = await clubStates(w.season, w.week, data.card);
+  if (!states) return { note: 'no kickoff times yet — they arrive with the lineups from the app' };
+  const soon = [];
+  Object.keys(teams).forEach(tid => (teams[tid].starters || []).forEach(p => {
+    const g = states[clubCode(p.club)];
+    if (g && g.state === 'pre' && g.at && g.at - Date.now() < 36 * 3600000) soon.push({ tid, p, at: g.at });
+  }));
+  if (!soon.length) return { note: 'nobody kicking off soon' };
+  const players = await getJSON(SLEEPER + '/players/nfl') || {};
+  const st = await loadState(league, w.season, w.week);
+  st.inj = st.inj || {};
+  const messages = [];
+  soon.forEach(({ tid, p, at }) => {
+    const raw = String(((players[p.sid] || {}).injury_status) || '').toLowerCase();
+    const s = raw === 'injured reserve' ? 'ir' : raw;
+    const was = st.inj[p.sid] || '';
+    if (s === was) return;
+    st.inj[p.sid] = s;
+    if (!INJ_WORD[s]) return;
+    const when = new Date(at).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: data.tz || 'America/Chicago' });
+    messages.push({ teams: [tid], kind: 'lineup', ttl: 21600, tag: 'fo-inj-' + p.sid + '-' + s,
+      title: p.name + ' ' + INJ_WORD[s], body: 'He is in your week ' + w.week + ' lineup — kickoff ' + when + '.' });
+  });
+  await saveState(st);
+  const r = messages.length ? await fanOut(league, cfg, messages) : { sent: 0 };
+  return { messages: messages.length, sent: r.sent };
+}
+
+/* ------------------------------------------------------------------ the door */
+async function handle(req) {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  loadEnv();
+  if (!SB_URL || !SB_KEY) return json({ ok: false, error: 'The function cannot find the server key. Add a secret named FO_SERVICE_KEY holding your service role (or secret) key.' }, 500);
+  let body = {};
+  try { body = await req.json(); } catch (e) {}
+  const mode = body.mode || 'ping';
+  try {
+    /* The database's own calls: once a minute, and every half hour. */
+    if (mode === 'watch' || mode === 'injuries') {
+      if (!body.secret) return json({ ok: false, error: 'no secret' }, 401);
+      /* Nothing on? Then nothing to read. A heartbeat is still left every half
+         hour, so the setup screen can see the clock is running. */
+      const quiet = mode === 'watch' ? !(await anythingOn()) : !(await kickoffSoon());
+      const beat = new Date().getUTCMinutes() % 30 === 0;
+      if (quiet && !beat) return json({ ok: true, mode, quiet: true, espn: espnDown ? 'unreachable' : 'ok' });
+      const cfgs = await dbGet('fo_push_config', (quiet ? 'select=league_id' : 'select=*') + '&watch_secret=eq.' + q(body.secret));
+      if (!cfgs.length) return json({ ok: false, error: 'unknown secret' }, 401);
+      if (quiet) { for (const c of cfgs) await note(c.league_id, espnDown ? 'no games on (ESPN unreachable: ' + espnDown + ')' : 'no games on'); return json({ ok: true, mode, quiet: true }); }
+      const out = {};
+      for (const c of cfgs) {
+        try { out[c.league_id] = mode === 'watch' ? await watchLeague(c) : await injuriesLeague(c); }
+        catch (e) { out[c.league_id] = { error: e.message }; await note(c.league_id, 'error: ' + e.message); }
+      }
+      return json({ ok: true, mode, leagues: out });
+    }
+    /* Everything else comes from the app, from a signed-in member. */
+    const league = String(body.league || '');
+    const who = await caller(req, league);
+    if (!who) return json({ ok: false, error: 'Sign in as a member of this league first.' }, 401);
+    const cfgs = await dbGet('fo_push_config', 'select=*&league_id=eq.' + q(league));
+    const cfg = cfgs[0];
+    if (mode === 'ping') {
+      const subs = cfg ? await dbGet('fo_push_subs', 'select=user_id,team_id&league_id=eq.' + q(league)) : [];
+      const wrow = cfg ? await latestWatch(league) : null;
+      return json({ ok: true, configured: !!cfg, keyFrom: KEY_FROM,
+        mine: subs.filter(s => s.user_id === who.id).length, total: subs.length,
+        teams: [...new Set(subs.map(s => s.team_id).filter(Boolean))].length,
+        lastWatch: cfg ? cfg.last_watch : null, lastNote: cfg ? cfg.last_note : null,
+        watchWeek: wrow ? wrow.week : null, watchAt: wrow ? wrow.updated_at : null });
+    }
+    if (!cfg) return json({ ok: false, error: 'Alerts are not set up for this league yet.' }, 400);
+    if (mode === 'test') {
+      /* Time to lock the phone first — that is the whole point of the test. */
+      if (+body.delay > 0) await new Promise(r => setTimeout(r, Math.min(15000, +body.delay)));
+      const subs = await dbGet('fo_push_subs', 'select=*&league_id=eq.' + q(league) + '&user_id=eq.' + q(who.id));
+      if (!subs.length) return json({ ok: false, error: 'This account has no phone signed up for alerts yet.' }, 400);
+      const r = await fanOut(league, cfg, [{ title: 'Front Office', body: 'Locked-phone alerts are working.', tag: 'fo-test-' + Date.now(), kind: 'league' }],
+        { subs, ignorePrefs: true });
+      return json({ ok: r.sent > 0, ...r });
+    }
+    if (mode === 'send') {
+      const msgs = (Array.isArray(body.messages) ? body.messages : []).slice(0, 12).map(m => ({
+        teams: Array.isArray(m.teams) ? m.teams.slice(0, 16).map(String) : null,
+        except: who.team || null,          /* never your own doing */
+        title: String(m.title || ''), body: String(m.body || ''),
+        tag: String(m.tag || '').slice(0, 64) || undefined, kind: String(m.kind || 'league'),
+        ttl: Math.min(86400, Math.max(60, +m.ttl || 86400))
+      })).filter(m => m.title);
+      if (!msgs.length) return json({ ok: true, sent: 0 });
+      return json({ ok: true, ...(await fanOut(league, cfg, msgs)) });
+    }
+    return json({ ok: false, error: 'unknown mode' }, 400);
+  } catch (e) {
+    return json({ ok: false, error: e.message }, 500);
+  }
+}
+
+if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(handle);
+
+/* For the tests that shipped with it. */
+globalThis.__foPush = { handle, gameHours: (t) => gameHours(t), encryptPayload, vapidHeader, sendPush, fanOut, watchLeague, injuriesLeague,
+  scoreLine: (...a) => scoreLine(...a), setScoring: (c) => { S.settings.scoring = c; },
+  _set: (o) => { if (o.getJSON) getJSON = o.getJSON; if (o.dbFetch) dbFetch = o.dbFetch; } };
+
+</script>
+<script type="text/plain" id="foPushSql">
+-- Front Office — keeping the monthly data down, and alerts on a locked phone.
+-- Paste all of this into Supabase › SQL Editor and press Run. Safe to run again.
+
+-- ---------------------------------------------------------------- data use
+-- Realtime used to send the whole league to every open phone on every save.
+-- Once the league passed Realtime's 1 MB limit it sent the update with the
+-- league stripped out; every phone read that as a damaged copy and uploaded its
+-- own, which was itself an update — round and round. Phones now hear about a
+-- save through a few-byte signal instead, so the league table comes out of
+-- Realtime. This alone stops the storm, even on phones still on an old build.
+do $$
+begin
+  if exists (select 1 from pg_publication_tables
+             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'leagues') then
+    alter publication supabase_realtime drop table public.leagues;
+  end if;
+end $$;
+
+-- A packed (gzipped) copy of the league, beside the full one. The league is
+-- still saved in full exactly as before; this is what phones download — about
+-- a seventh of the size. Members of the league only.
+create table if not exists public.fo_league_z (
+  league_id  text primary key references public.leagues(id) on delete cascade,
+  rev        bigint not null,
+  z          text   not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.fo_league_z enable row level security;
+drop policy if exists fo_league_z_members on public.fo_league_z;
+create policy fo_league_z_members on public.fo_league_z for all to authenticated
+  using (exists (select 1 from public.league_members m
+                 where m.league_id = fo_league_z.league_id and m.user_id = auth.uid()))
+  with check (exists (select 1 from public.league_members m
+                 where m.league_id = fo_league_z.league_id and m.user_id = auth.uid()));
+
+-- ---------------------------------------------------------------- alerts
+
+create extension if not exists pg_net;
+create extension if not exists pg_cron;
+
+-- The league's push keys. Made in the commissioner's browser; the private half
+-- is readable by the alert server only — there is deliberately no policy on
+-- this table, so nobody signed in to the app can read it.
+create table if not exists public.fo_push_config (
+  league_id    text primary key references public.leagues(id) on delete cascade,
+  public_key   text not null,
+  private_key  text not null,
+  watch_secret text not null,
+  subject      text,
+  last_watch   timestamptz,
+  last_note    text,
+  updated_at   timestamptz not null default now()
+);
+alter table public.fo_push_config enable row level security;
+
+-- One row per phone that has said yes to alerts.
+create table if not exists public.fo_push_subs (
+  endpoint   text primary key,
+  league_id  text not null references public.leagues(id) on delete cascade,
+  user_id    uuid not null references auth.users(id) on delete cascade,
+  team_id    text,
+  p256dh     text not null,
+  auth       text not null,
+  prefs      jsonb not null default '{}'::jsonb,
+  ua         text,
+  updated_at timestamptz not null default now()
+);
+create index if not exists fo_push_subs_league on public.fo_push_subs(league_id);
+alter table public.fo_push_subs enable row level security;
+drop policy if exists fo_push_subs_own on public.fo_push_subs;
+create policy fo_push_subs_own on public.fo_push_subs for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid() and exists (
+    select 1 from public.league_members m
+    where m.league_id = fo_push_subs.league_id and m.user_id = auth.uid()));
+
+-- Each week's starters and scoring, published by the app so the server knows
+-- whose touchdown is whose.
+create table if not exists public.fo_push_watch (
+  league_id  text not null references public.leagues(id) on delete cascade,
+  season     int  not null,
+  week       int  not null,
+  data       jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (league_id, season, week)
+);
+alter table public.fo_push_watch enable row level security;
+drop policy if exists fo_push_watch_members on public.fo_push_watch;
+create policy fo_push_watch_members on public.fo_push_watch for all to authenticated
+  using (exists (select 1 from public.league_members m
+                 where m.league_id = fo_push_watch.league_id and m.user_id = auth.uid()))
+  with check (exists (select 1 from public.league_members m
+                 where m.league_id = fo_push_watch.league_id and m.user_id = auth.uid()));
+
+-- What the server has already seen and said, so nothing is announced twice.
+create table if not exists public.fo_push_state (
+  league_id  text not null references public.leagues(id) on delete cascade,
+  season     int  not null,
+  week       int  not null,
+  snap       jsonb not null default '{}'::jsonb,
+  sent       jsonb not null default '{}'::jsonb,
+  inj        jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (league_id, season, week)
+);
+alter table public.fo_push_state enable row level security;
+
+-- The public half of the key, for phones signing up. Members only.
+create or replace function public.fo_push_key(p_league text)
+returns text language sql stable security definer set search_path = public as $$
+  select c.public_key from public.fo_push_config c
+  where c.league_id = p_league
+    and exists (select 1 from public.league_members m
+                where m.league_id = p_league and m.user_id = auth.uid());
+$$;
+revoke all on function public.fo_push_key(text) from public;
+grant execute on function public.fo_push_key(text) to authenticated;
+
+-- Storing the keys the commissioner's browser made. Commissioners only. New
+-- keys make every old signup useless, so those are cleared and phones sign up
+-- again on their own the next time the app opens.
+create or replace function public.fo_push_setup(p_league text, p_public text, p_private text,
+                                                p_secret text, p_subject text)
+returns boolean language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.league_members m
+                 where m.league_id = p_league and m.user_id = auth.uid() and m.role = 'commish') then
+    raise exception 'Only a commissioner can set up alerts';
+  end if;
+  insert into public.fo_push_config (league_id, public_key, private_key, watch_secret, subject, updated_at)
+  values (p_league, p_public, p_private, p_secret, p_subject, now())
+  on conflict (league_id) do update
+    set public_key = excluded.public_key, private_key = excluded.private_key,
+        watch_secret = excluded.watch_secret, subject = excluded.subject, updated_at = now();
+  delete from public.fo_push_subs where league_id = p_league;
+  return true;
+end $$;
+revoke all on function public.fo_push_setup(text, text, text, text, text) from public;
+grant execute on function public.fo_push_setup(text, text, text, text, text) to authenticated;
+
+-- The two clocks: game day every minute, injuries every half hour. Each call
+-- carries the league's own secret, which is how the server knows it is real.
+do $$
+begin
+  perform cron.unschedule('fo-push-watch')    where exists (select 1 from cron.job where jobname = 'fo-push-watch');
+  perform cron.unschedule('fo-push-injuries') where exists (select 1 from cron.job where jobname = 'fo-push-injuries');
+end $$;
+
+select cron.schedule('fo-push-watch', '* * * * *', $job$
+  select net.http_post(
+    url     := '{{URL}}/functions/v1/push',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', '{{ANON}}'),
+    body    := jsonb_build_object('mode', 'watch', 'secret', c.watch_secret),
+    timeout_milliseconds := 55000)
+  from public.fo_push_config c;
+$job$);
+
+select cron.schedule('fo-push-injuries', '*/30 * * * *', $job$
+  select net.http_post(
+    url     := '{{URL}}/functions/v1/push',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'apikey', '{{ANON}}'),
+    body    := jsonb_build_object('mode', 'injuries', 'secret', c.watch_secret),
+    timeout_milliseconds := 55000)
+  from public.fo_push_config c;
+$job$);
+
 </script>
 </body>
 </html>
