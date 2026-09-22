@@ -79,6 +79,12 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
 .wx b{font-weight:600;letter-spacing:.02em}
 .wx.warn{color:var(--brass)}
 .wx.bad{color:var(--signal)}
+/* Who came on, and how. Two colours so the two ways can never be mistaken. */
+.swapline{font-size:11.5px;color:var(--mute);margin-top:3px;line-height:1.35}
+.swapline b{color:var(--bone);font-weight:500}
+.swapline.bad{color:var(--signal)}
+.pill.swapsub{background:rgba(127,178,217,.14);color:#7FB2D9;border-color:rgba(127,178,217,.35);font-size:9.5px;padding:1px 6px}
+.pill.swapfill{background:rgba(229,161,60,.14);color:var(--brass);border-color:rgba(229,161,60,.35);font-size:9.5px;padding:1px 6px}
 .tiny{font-size:12px}
 .center{text-align:center}
 .right{text-align:right}
@@ -953,7 +959,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-21u · the phones tell the server the schedule';
+const APP_BUILD = '2026-08-22b · charter settings';
 
 /* ============================================================
    HOME LEAGUE
@@ -2483,6 +2489,34 @@ function teamByOwner(st, handle){
 }
 /* Put the head commissioner back where the pin says, whatever the copy in hand
    claims. Returns the handle it settled on. */
+/* The commissioner went through the charter against the app on 22 Sep 2026 and
+   settled each difference. Written into the league once — after that these are
+   ordinary settings, free to change in Settings like any other. */
+const CHARTER_SET = '2026-09-22';
+function charterSettings(st){
+  if(!st || !st.settings || !st.league) return;
+  if(st.league.charterSet === CHARTER_SET) return;
+  const sup = (st.settings.supa||{}).leagueId, sl = (st.settings.live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  const g = st.settings;
+  /* Rollover: up to 20% of the prior year's cap. */
+  g.cap.rollover = Object.assign({}, g.cap.rollover, {on:true, mode:'pct', value:20});
+  /* Extensions close at the first kickoff of week 16. */
+  g.contracts.extendDeadlineWeek = 16;
+  /* Six-team playoffs: 1 and 2 on a bye, the sixth place to the most points. */
+  g.playoffs = Object.assign({}, g.playoffs, {teams:6, byes:2, pointsSpot:true});
+  /* Consolation: all six who missed, the worst two (12 and 11) on a bye. */
+  g.loser = Object.assign({}, g.loser, {on:true, who:'missed', teams:6, seedBy:'worst', byes:2});
+  /* Counter-trades: a move in the last 3 hours adds 3 hours. Quiet hours stay. */
+  g.trades = Object.assign({}, g.trades, {antiSnipeOn:true, antiSnipeWithinMin:180, antiSnipeExtendMin:180, antiSnipeUnit:'min'});
+  /* Comp picks: 7 across the whole league, and one team could take all 7. */
+  g.comp = Object.assign({}, g.comp, {maxTotal:7, maxPerTeam:7});
+  st.league.charterSet = CHARTER_SET;
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
+    text:'Settings brought in line with the league charter: rollover up to 20%, extensions close at week 16, '+
+      'playoff byes for 1 and 2 with the 6th spot on points, consolation byes for 12 and 11, '+
+      'counter-trades extended 3 hours inside the last 3, comp picks capped at 7 league-wide'});
+}
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
   const pin = (st.league.commishOwner||'').trim().toLowerCase();
@@ -4397,6 +4431,8 @@ async function pollSleeperStats(){
       });
       if(n){
         S.live.statsAt = Date.now();
+        /* Averages and ranks move with every update. */
+        clearCapCache();
         try{ liveScoringEvents(before); }catch(e){}
         if(route==='live') render();
       }
@@ -4430,6 +4466,7 @@ function applyFeed(j){
       const p = byId(S.players,k) || S.players.find(x=> x.name.toLowerCase()===String(k).toLowerCase());
       if(p) S.live.stats[p.id] = Object.assign({}, S.live.stats[p.id], j.stats[k]);
     });
+    clearCapCache();
   }
   S.live.lastTick = Date.now(); save(); render();
 }
@@ -5011,7 +5048,7 @@ VIEWS.live = function(){
     const rz = (s.p && inRedZone(s.p.nfl)) || (o && o.p && inRedZone(o.p.nfl));
     return `<tr class="${rz?'rzrow':onAir?'liverow':''}">
       <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
-        ${injuryTag(s.p)} ${matchupChip(s.p)} ${wxChip(s.p)}</div>${statLine(s.p)}`:'<span class="dim">empty</span>'}</td>
+        ${injuryTag(s.p)} ${matchupChip(s.p)} ${wxChip(s.p)}</div>${statLine(s.p)}${swapLine(meId, s.p)}${pendingSwapLine(meId, s.p)}`:'<span class="dim">empty</span>'}</td>
       <td class="right num" style="width:10%">${s.p
         ? '<a href="#" data-a="scoreCard" data-id="'+s.p.id+'" data-w="'+(+S.live.week||1)+
           '" class="scorelink" title="how he scored it">'+s.pts.toFixed(2)+'</a>'
@@ -5029,7 +5066,7 @@ VIEWS.live = function(){
         ${o&&o.p? injMark(o.p) : ''}
         ${o&&o.p&&gameWhen(o.p.nfl)?'<div class="tiny '+(gameLive(o.p.nfl)?'onnow':'dim')+'">'+
           esc(gameWhen(o.p.nfl))+' '+ballTag(o.p)+'</div>':''}</td>
-      <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${wxChip(o.p)} ${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}`:'<span class="dim">empty</span>'}</td>
+      <td class="right" style="width:38%">${o&&o.p?`<div style="font-weight:500">${wxChip(o.p)} ${matchupChip(o.p)} ${esc(o.p.name)}</div>${statLine(o.p)}${oppId?swapLine(oppId, o.p)+pendingSwapLine(oppId, o.p):''}`:'<span class="dim">empty</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -5109,15 +5146,15 @@ VIEWS.live = function(){
     })()}
 
     ${mine ? `<div class="panel" style="margin-bottom:14px">
-      <div class="ph"><div style="flex:1"><div class="eyebrow">Your matchup</div>
-        <div style="font:700 19px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(t.name)} <span class="money" style="font-family:var(--mono)">${A.total.toFixed(2)}</span>
+      <div class="ph"><div style="flex:1"><div class="eyebrow">${away ? 'Matchup' : 'Your matchup'}</div>
+        <div style="font:700 19px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(teamName(meId))} <span class="money" style="font-family:var(--mono)">${A.total.toFixed(2)}</span>
         <span class="dim" style="font-size:14px"> vs </span> ${esc(teamName(oppId))} <span class="num">${B?B.total.toFixed(2):'0.0'}</span></div></div></div>
       <div class="pb tight scrollx"><table><tbody>${lineupRows}</tbody>
         <tfoot><tr class="tot"><td class="right">Total</td><td class="right money">${A.total.toFixed(2)}</td><td></td>
           <td class="right num">${B?B.total.toFixed(2):'0.0'}</td><td></td></tr></tfoot></table></div>
     </div>`:''}
 
-    ${mine ? brawlPanel(t.id, oppId, A.total, B?B.total:0) : soloMascotPanel(t)}
+    ${mine ? brawlPanel(meId, oppId, A.total, B?B.total:0) : soloMascotPanel(t)}
 
     ${(()=>{
       const mine = teamPlayers(t.id).filter(p=> p.pos!=='DEF' && thisWeekOpponent(p.nfl));
@@ -7513,7 +7550,7 @@ function lineupForm(teamId, week){
               x.p && projFor(x.p)!=null ? '<span class="dim"> / '+projFor(x.p).toFixed(1)+'</span>' : ''}</span>
           </span>
           </div>
-          ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+' '+wxChip(x.p)+'</div>':''}
+          ${x.p?'<div style="margin:3px 0 0 64px">'+matchupLine(x.p)+' '+wxChip(x.p)+swapLine(teamId, x.p, week)+pendingSwapLine(teamId, x.p, week)+'</div>':''}
           ${x.p ? (()=>{
             /* Name somebody to come on if he does not play. */
             const cur = subFor(teamId, x.p.id, week);
@@ -9590,6 +9627,7 @@ ACT.editContract = (d)=>{
                 years: c? c.years : 1, structId: c? c.structId : S.settings.contracts.defaultStruct,
                 startYear: c? c.startYear : S.league.season,
                 waiver: !!(c && c.waiver),
+                base: (c && c.base != null && c.base !== '') ? c.base : '',
                 byYear: (c && c.byYear) ? c.salaries.slice() : null };
   const cc = S.settings.contracts;
   modal((c?'Edit contract — ':'Sign — ')+p.name, `
@@ -9600,9 +9638,13 @@ ACT.editContract = (d)=>{
       <label class="f"><span>Each year <span class="dim">— same every year</span></span>
         <input type="number" step="0.01" min="0" value="${fixCents(ui.tmp.cd.total/Math.max(1,ui.tmp.cd.years))}"
           data-oninput="cdField" data-f="perYear" data-k="cdper"></label>
-      <label class="f"><span>Length (${cc.minYears}–${cc.maxYears} years)</span>
+      <label class="f"><span>Length (${cc.minYears}–${cc.maxYears} years) <span class="dim">— keeps the figure a year</span></span>
         <input type="number" min="${cc.minYears}" max="${cc.maxYears}" value="${ui.tmp.cd.years}" data-oninput="cdField" data-f="years" data-k="cdyears"></label>
       <label class="f"><span>First year</span><input type="number" value="${ui.tmp.cd.startYear}" data-oninput="cdField" data-f="startYear" data-k="cdstart"></label>
+      ${isCommish() ? `<label class="f" style="grid-column:1/-1"><span>Base salary as signed <span class="dim">— what the ladder and tags price off</span></span>
+        <input type="number" step="0.01" min="0" value="${ui.tmp.cd.base}" placeholder="blank = total ÷ years (${money(fixCents(ui.tmp.cd.total/Math.max(1,ui.tmp.cd.years)))})"
+          data-oninput="cdField" data-f="base" data-k="cdbase">
+        <span class="tiny dim">Only needed for a deal signed before this season: the years left to run are not what he signed for. Leave it blank for a new deal.</span></label>` : ''}
       <label class="f" style="grid-column:1/-1"><span>Structure</span>
         <select data-oninput="cdField" data-f="structId" ${ui.tmp.cd.byYear?'disabled':''}>${cc.structures.map(s=>'<option value="'+s.id+'"'+(s.id===ui.tmp.cd.structId?' selected':'')+'>'+esc(s.name)+'</option>').join('')}</select></label>
     </div>
@@ -9685,6 +9727,20 @@ ACT.cdField = (d, el)=>{
     }
   }
   if(f==='startYear') v = +v || S.league.season;
+  /* Every price in this league is a figure a year, so a longer deal is more
+     years at the same money — not the same money spread thinner. Changing a
+     rookie's length from one year to three kept his total, and his $20 a year
+     became $6.67. */
+  if(f==='years' && !cd.byYear){
+    const per = (+cd.total||0) / Math.max(1, +cd.years||1);
+    cd.years = v;
+    cd.total = fixCents(per * v);
+    const t0 = $('[data-k="cdtotal"]'); if(t0) t0.value = cd.total;
+    const pv0 = $('[data-k="cdper"]'); if(pv0) pv0.value = fixCents(per);
+    const el0 = $('#cdPreview'); if(el0) el0.innerHTML = contractPreview();
+    return;
+  }
+  if(f==='base'){ cd.base = String(v).trim() === '' ? '' : Math.max(0, +v||0); return; }
   cd[f] = v;
   if(f==='years' && cd.byYear){
     /* Grow the row when the deal gets longer, but never cut it short —
@@ -9915,6 +9971,11 @@ ACT.saveContract = ()=>{
     c.total = fixInc(sum(c.salaries));
     c.byYear = true;
   }
+  /* The base he signed at, which only a commissioner sets, and the extensions
+     already on the deal, whose years carry their own base. */
+  if(isCommish()){ if(cd.base !== '' && cd.base != null) c.base = +cd.base; }
+  else if(p.contract && p.contract.base != null) c.base = p.contract.base;
+  if(p.contract && (p.contract.extensions||[]).length) c.extensions = p.contract.extensions.slice();
   /* The waiver tag, which only a commissioner can set or clear. */
   if(isCommish() && cd.waiver) c.waiver = true;
   else if(!isCommish() && p.contract && p.contract.waiver) c.waiver = true;
@@ -9937,11 +9998,7 @@ ACT.saveContract = ()=>{
 };
 /* What a man is on if his deal were spread evenly — the figure an extension is
    measured against. */
-function dealBase(c){
-  if(!c) return 0;
-  const years = Math.max(1, +c.years||1);
-  return Math.round(((+c.total||0) / years) * 100) / 100;
-}
+function dealBase(c){ return contractBase(c); }
 /* The last year of the deal as written. */
 function finalYearPay(c){
   if(!c || !c.salaries || !c.salaries.length) return dealBase(c);
@@ -9963,6 +10020,9 @@ function extReplacesFinal(c){ return yearsLeft(c) >= 2; }
 function applyExtension(p, addYears, aav, structId){
   const c = p.contract;
   const replace = extReplacesFinal(c);
+  /* Keep the base he signed at, and start the new one where the new years do. */
+  if(c.base == null || c.base === '') c.base = contractBase(c);
+  const extFrom = replace ? (c.startYear + c.years - 1) : (c.startYear + c.years);
   /* A backloaded deal has been underpaying him all along. The difference
      between his base and that last year goes on the first year of the new one. */
   const owed = replace ? extBackloadGap(c) : 0;
@@ -9978,7 +10038,7 @@ function applyExtension(p, addYears, aav, structId){
   }
   c.total = fixInc(sum(c.salaries));
   c.extensions = (c.extensions||[]).concat([{at:Date.now(), years:addYears, aav:fixInc(aav),
-    structId, replaced:replace, backload:owed}]);
+    structId, replaced:replace, backload:owed, from:extFrom}]);
 }
 /* With players not given a say, the ladder sets the number outright. */
 function ladderMode(){
@@ -10006,7 +10066,7 @@ function ladderLook(p){
   if(!rk) return '<div class="tiny dim">He has not played a game at '+esc(p.pos)+
     ' yet, so there is nothing to rank him on.</div>';
   year = rk.year != null ? rk.year : year;
-  const line = lineIn(p.id, year);
+  const line = seasonLine(p.id, year);
   const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
   const price = ladderPrice(p.pos, rk.rank);
   const w = ladderWorking(p.pos, rk.rank);
@@ -10032,6 +10092,87 @@ function ladderLook(p){
     (!ladderMode() ? ' Players have a say here, so this is the ladder’s number, not the final one.' : '')+
     '</div>';
 }
+/* ---- The extension panel -----------------------------------------------------
+   Everything that decides an extension, in one place, the same in every dialog:
+   where he ranks on season average at his position right now, what the ladder
+   asks for that rank and exactly how it got there, how many games he has played
+   against how many are needed, and whether extensions are open at all. */
+function ladderDetail(pos, rank){
+  const b = bandFor(pos, rank);
+  const label = b.to == null ? b.from+' and below' : (b.from === b.to ? String(b.from) : b.from+'–'+b.to);
+  /* The same list the price is taken from: every deal at the position, by base
+     salary — the total over the years, as if it were paid evenly. */
+  const rows = S.players.filter(x=> x.pos === pos && x.contract && !x.contract.waiver && baseSalary(x) > 0)
+    .map(x=>{ const years = Math.max(1, +x.contract.years || 1), base = baseSalary(x); return {p:x, base, total:Math.round(base*years*100)/100, years}; })
+    .sort((a,b2)=> b2.base - a.base);
+  const lead = b.leader && rank === b.from;
+  const used = lead ? rows.slice(Math.max(0, b.from-1), b.from)
+                    : rows.slice(Math.max(0, b.from-1), b.to == null ? rows.length : b.to);
+  const w = ladderWorking(pos, rank);
+  return {band:label, from:b.from, to:b.to, lead, top:lead && b.from === 1,
+          mult: clamp(+S.settings.contracts.ladder.topMult||100, 1, 400)/100,
+          used, avg:w.avg, med:w.med, how:w.how, price:ladderPrice(pos, rank),
+          floor:+S.settings.contracts.minSalary||1};
+}
+function extInfoPanel(p){
+  const y = S.league.season, need = minGames(), here = gamesIn(p.id, y);
+  const line = seasonLine(p.id, y), ppg = line && +line.gp ? line.fpts / line.gp : null;
+  const rk = here >= 1 ? positionRank(p, y) : null;
+  const ladderOn = !!((S.settings.contracts.ladder||{}).on);
+  const d = rk && ladderOn ? ladderDetail(p.pos, rk.rank) : null;
+  const g = canExtend(p), fz = extFreeze();
+  const head = '<div class="row" style="gap:16px;align-items:baseline;flex-wrap:wrap">'+
+    '<div><div class="eyebrow">Season average rank</div><div class="big">'+(rk ? esc(p.pos)+rk.rank : '—')+'</div>'+
+      '<div class="tiny dim">'+(rk ? 'of '+rk.of+' '+esc(p.pos)+'s'+(ladderByFpts() ? ', by fantasy points per game played' : ', blend of fantasy and real-life per game') : 'no games yet')+'</div></div>'+
+    '<div><div class="eyebrow">Season average</div><div class="big">'+(ppg != null ? ppg.toFixed(2) : '—')+'</div>'+
+      '<div class="tiny dim">fantasy points per game played</div></div>'+
+    '<div><div class="eyebrow">Extension ladder price</div><div class="big money">'+(d ? money(d.price) : '—')+'</div>'+
+      '<div class="tiny dim">a year</div></div>'+
+  '</div>';
+  const live = rk && rk.live ? '<div class="tiny" style="margin-top:6px"><span class="pill live">LIVE</span> '+
+    'Includes week '+(+S.live.week||1)+' so far — the rank and the price move as the games go.</div>' : '';
+  /* How the price was reached, with the actual contracts, so it can be checked. */
+  let work = '';
+  if(d){
+    const list = d.used.map((r,i)=> '<div class="row" style="gap:6px;justify-content:space-between">'+
+      '<span><span class="dim">'+(d.from + i)+'.</span> '+esc(r.p.name)+' <span class="dim tiny">'+esc(teamName(r.p.contract.teamId))+'</span></span>'+
+      '<span class="num">'+money(r.base)+' <span class="dim tiny">'+esc(baseHow(r.p.contract))+'</span></span></div>').join('');
+    const rule = d.top
+      ? 'He is the top '+esc(p.pos)+', so the price is the biggest '+esc(p.pos)+' base salary × '+d.mult+'.'
+      : d.lead ? 'The price is the '+ord(d.from)+'-biggest '+esc(p.pos)+' base salary.'
+      : 'Rank '+rk.rank+' falls in the <b>'+esc(p.pos)+' '+esc(d.band)+'</b> band. The price is the greater of the average ('+
+        money(d.avg||0)+') and the median ('+money(d.med||0)+') of the base salaries ranked '+esc(d.band)+' at '+esc(p.pos)+':';
+    work = '<details style="margin-top:8px"><summary class="tiny" style="cursor:pointer">How '+money(d.price)+' is worked out</summary>'+
+      '<div class="tiny" style="margin:6px 0 4px">'+rule+'</div>'+
+      '<div class="stack tiny" style="gap:3px">'+list+'</div>'+
+      '<div class="tiny dim" style="margin-top:6px">Base salary is what a deal is worth a year as it was signed — its total over its years, '+
+        'as if paid evenly — so a front- or back-loaded deal counts at its even rate. A deal signed before this season keeps the base '+
+        'recorded when it was signed, and an extension starts a new base from its first year. '+
+        (d.price <= d.floor ? 'It cannot go below the league minimum of '+money(d.floor)+'. ' : '')+
+        'Waiver pick-ups on the minimum are left out.</div></details>';
+  } else if(!ladderOn){
+    work = '<div class="hint">The extension ladder is switched off (Settings › Contracts), so there is no ladder price.</div>';
+  }
+  /* Games, and where the number comes from. */
+  const met = need <= 0 || here >= need;
+  const games = '<div class="kv" style="margin-top:10px"><dt>Games played this season</dt><dd class="num">'+here+
+      (rk && rk.live ? ' <span class="dim tiny">incl. this week</span>' : '')+'</dd>'+
+    '<dt>Games needed to extend</dt><dd class="num">'+need+' '+(met ? '<span class="good">✓</span>' :
+      '<span class="bad">'+(need-here)+' more</span>')+'</dd></div>'+
+    (g.ok && g.basis != null && g.basis !== y && g.rank
+      ? '<div class="hint warn">He has not played '+need+' games this season yet, so the extension itself is priced off '+g.basis+
+        ', the last season he did: '+esc(p.pos)+g.rank.rank+', '+money(ladderPrice(p.pos, g.rank.rank))+' a year.</div>' : '')+
+    '<div class="tiny dim" style="margin-top:4px">The games needed is set in <b>Settings › Contracts</b> — '+
+      '“Games he must play before you can extend him”.'+
+      (isCommish() ? ' <a href="#" data-a="goContracts">Change it</a>' : ' Your commissioner sets it.')+'</div>';
+  /* Open or not. */
+  const open = fz.frozen
+    ? '<div class="hint bad" style="margin-top:10px"><b>Extensions are closed.</b> '+esc(fz.why)+' They open again '+esc(fz.back)+'.</div>'
+    : '<div class="hint" style="margin-top:10px">Extensions are open'+(fz.until ? ' until week '+fz.week+'’s first kickoff, '+esc(dayTime(fz.until)) : '')+
+      '. They close for each week’s games, from the first kickoff until the last game is final.</div>';
+  return '<div class="assetbox" style="margin-bottom:12px">'+head+live+work+games+open+'</div>';
+}
+ACT.goContracts = ()=>{ closeModal(); route = 'settings'; ui.sub = 'contracts'; go('settings'); ui.sub = 'contracts'; render(); };
 function ladderQuote(p){
   const g = canExtend(p);
   if(!g.ok || !g.rank) return null;
@@ -10048,16 +10189,19 @@ ACT.extend = (d)=>{
   { const w = extWindowOpen();
     if(!w.ok && !isCommish()) return toast(w.why,'bad'); }
   const g = canExtend(p);
+  /* During the week's games the panel still opens — the rank and the price are
+     worth seeing — but it cannot be signed. */
+  const fz = extFreeze();
+  if(fz.frozen){
+    return modal('Not until the games are done — '+p.name,
+      '<p>'+esc(fz.why)+' Extensions open again '+esc(fz.back)+'.</p>'+extInfoPanel(p),
+      '<button class="btn ghost" data-a="closeModal">Close</button>');
+  }
   if(!g.ok){
     /* He cannot be extended yet, but what he would cost is still worth knowing —
        where he sits at his position and what the ladder asks for that place. */
-    const look = ladderLook(p);
     return modal('Not yet — '+p.name,
-      '<p>'+esc(g.why)+'</p>'+
-      '<div class="kv" style="margin-top:12px"><dt>Played this season</dt><dd>'+(g.games||0)+'</dd>'+
-      '<dt>Needed</dt><dd>'+minGames()+'</dd></div>'+
-      (look ? '<div class="hr"></div><div class="flabel">What he would cost</div>'+look : '')+
-      '<div class="hint">Change the threshold under Settings › Contracts, or wait until he has played.</div>',
+      '<p>'+esc(g.why)+'</p>'+extInfoPanel(p),
       '<button class="btn ghost" data-a="closeModal">Close</button>');
   }
   const offset = Math.max(0, c.startYear + c.years - S.league.season);
@@ -10080,48 +10224,7 @@ function extModal(){
   const owed = replaces ? extBackloadGap(c) : 0;
   const firstYear = replaces ? (c.startYear + c.years - 1) : (c.startYear + c.years);
   modal('Extend '+p.name, `
-    ${(()=>{
-      /* Where he finished and what the ladder asks for him, in plain terms —
-         the figure the extension is actually priced off. */
-      if(!ladderMode()) return '';
-      /* canExtend has already worked out which season counts — this one if he
-         has played enough of it, otherwise the last one he did. */
-      const gate = canExtend(p);
-      const rk = (lq && lq.gate && lq.gate.rank) || gate.rank;
-      const line = rk ? lineIn(p.id, rk.year) : null;
-      const ppg = (line && line.gp) ? (line.fpts / line.gp) : null;
-      if(!lq || !rk){
-        /* No quote off the gate's season — fall back to the plain look, which
-           ranks him off this season the moment he has a game in it. */
-        const look = ladderLook(p);
-        return '<div class="assetbox" style="margin-bottom:12px">'+
-          '<div class="flabel">The ladder</div>'+
-          (look || '<div class="tiny dim">He has not played a game at '+esc(p.pos)+
-            ' yet, so the ladder cannot price him.</div>')+
-          '</div>';
-      }
-      return '<div class="assetbox" style="margin-bottom:12px;border-color:#2F5C3A">'+
-        '<div class="row" style="gap:14px;align-items:baseline">'+
-          '<div><div class="eyebrow">The ladder asks</div>'+
-            '<div class="big">'+money(lq.price)+'</div>'+
-            '<div class="tiny dim">a year</div></div>'+
-          '<div><div class="eyebrow">He finished</div>'+
-            '<div class="big">'+esc(p.pos)+rk.rank+'</div>'+
-            '<div class="tiny dim">of '+rk.of+' in '+rk.year+'</div></div>'+
-          (ppg!=null ? '<div><div class="eyebrow">Which is</div>'+
-            '<div class="big">'+ppg.toFixed(2)+'</div>'+
-            '<div class="tiny dim">a game over '+line.gp+'</div></div>' : '')+
-        '</div>'+
-        '<div class="tiny dim" style="margin-top:6px">'+
-        (ladderByFpts()
-          ? 'Ranked on what he scored for you a game and nothing else, which is how this league has it set.'
-          : 'Ranked on a blend of his real-life work and what he scored for you.')+
-        /* ladderWorking hands back an object, not a sentence — read it out. */
-        (lq.work && lq.work.how
-          ? ' The '+esc(p.pos)+' band for '+esc(lq.work.band)+' is priced off '+esc(lq.work.how)+'.'
-          : '')+'</div>'+
-      '</div>';
-    })()}
+    ${extInfoPanel(p)}
     ${replaces ? `<div class="assetbox" style="margin-bottom:12px;border-color:#5C4526">
       <div class="flabel">What this replaces</div>
       <div class="tiny">He has ${yearsLeft(c)} years left. The new deal takes over from <b>${firstYear}</b> —
@@ -10162,7 +10265,7 @@ function extModal(){
     <div class="grid g3">
       <label class="f"><span>Extra years (up to ${roomYears})</span>
         <input type="number" min="1" max="${Math.max(1,roomYears)}" value="${e.years}" data-oninput="extField" data-f="years" data-k="exty"></label>
-      <label class="f"><span>Average per year</span>
+      <label class="f"><span>Base salary a year (total ÷ years)</span>
         <input type="number" step="${S.settings.cap.increment}" value="${e.aav}" data-oninput="extField" data-f="aav" data-k="extaav"></label>
       <label class="f"><span>Structure for the new years</span>
         <select data-oninput="extField" data-f="structId">${S.settings.contracts.structures.map(x=>
@@ -10178,6 +10281,7 @@ function extModal(){
         <tr><td class="dim">Projected worth</td>${q.perYear.map(v=>'<td class="right num dim">'+money(v)+'</td>').join('')}</tr>
         <tr><td class="dim">You would pay</td>${salariesFor(roundInc(e.aav*e.years), e.years, e.structId).map(v=>'<td class="right money">'+money(v)+'</td>').join('')}</tr>
       </tbody></table></div>
+    <div class="tiny dim" style="margin:4px 0 8px">${e.years} year${e.years===1?'':'s'} × ${money(e.aav)} base = <b>${money(roundInc(e.aav*e.years))}</b> in total. The structure only moves money between the years — the base salary, and the ladder price, stay ${money(e.aav)} a year.</div>
     ${(()=>{ if(!S.settings.players.on) return '';
       const w = willAccept(p, c.teamId, e.aav, e.years);
       return w.ok
@@ -10201,7 +10305,10 @@ ACT.extField = (d,el)=>{
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   if(d.f==='years'){
     e.years = clamp(+el.value||1, 1, Math.max(1, maxTotal - c.years));
-    e.aav = extensionQuote(byId(S.players,e.pid), e.years, e.offset).aav;
+    /* On the ladder the price is a base salary — the same every year whatever
+       the length — so changing the years does not change it. */
+    const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
+    e.aav = lq ? lq.price : extensionQuote(byId(S.players,e.pid), e.years, e.offset).aav;
   }
   else if(d.f==='aav') e.aav = Math.max(0, +el.value||0);
   else e.structId = el.value;
@@ -10224,6 +10331,11 @@ ACT.extMeetAsk = ()=>{
 };
 ACT.extGo = ()=>{
   const e = ui.tmp.ext, p = byId(S.players,e.pid), c = p.contract;
+  /* Checked again here, at the moment of signing — a dialog left open over
+     Thursday's kickoff must not get round the freeze. */
+  { const fz = extFreeze(); if(fz.frozen) { closeModal(); render(); return toast(fz.why+' Extensions open again '+fz.back+'.','bad'); } }
+  { const w = extWindowOpen(); if(!w.ok && !isCommish()) { closeModal(); return toast(w.why,'bad'); } }
+  { const g = canExtend(p); if(!g.ok) { closeModal(); return toast(g.why || 'He cannot be extended yet','bad'); } }
   if(limitProblemFor('extensions', c.teamId, c.years + e.years, p.id)) return toast('That breaks the length limits','bad');
   const w = willAccept(p, c.teamId, e.aav, e.years);
   if(!w.ok){
@@ -13356,7 +13468,7 @@ VIEWS.trades = function(){
 /* ============================================================
    VALUATION — what a player is worth, on the field and on the box score
    ============================================================ */
-function seasonLine(pid){ return ((S.season||{}).byPlayer||{})[pid] || null; }
+function seasonRaw(pid){ return ((S.season||{}).byPlayer||{})[pid] || null; }
 function foldWeekIntoSeason(){
   if(!S.season || S.season.year!==S.league.season){
     /* Put the season that just finished into the record before starting a new
@@ -13369,9 +13481,9 @@ function foldWeekIntoSeason(){
   }
   const stats = S.live.stats||{};
   Object.keys(stats).forEach(pid=>{
-    const src = stats[pid]; let any=false;
-    Object.keys(src).forEach(k=>{ if(+src[k]) any=true; });
-    if(!any) return;
+    const src = stats[pid];
+    /* A game he played, by the same rule the averages use. */
+    if(!countsAsGame(src)) return;
     const line = S.season.byPlayer[pid] = S.season.byPlayer[pid] || {gp:0, fpts:0, stats:{}};
     Object.keys(src).forEach(k=>{ if(+src[k]) line.stats[k] = Math.round(((line.stats[k]||0) + +src[k])*100)/100; });
     line.gp++;
@@ -13743,7 +13855,7 @@ function matchupChip(p, opts){
 /* Fantasy side: points per game under this league's own scoring. */
 function fantasyPPG(p){
   if(p.projPPG!=null) return +p.projPPG;
-  const l = seasonLine(p.id);
+  const l = seasonRaw(p.id);
   if(l && l.gp) return l.fpts / l.gp;
   const live = fpts(p.id);
   return live ? live : null;
@@ -13761,7 +13873,7 @@ function realFromStats(s, gp){
   return (yds + tds*38 + vol + def + kick - neg) / gp;
 }
 function realPPG(p){
-  const l = seasonLine(p.id);
+  const l = seasonRaw(p.id);
   const src = (l && l.gp) ? l.stats : (S.live.stats||{})[p.id];
   const gp = (l && l.gp) ? l.gp : ((S.live.stats||{})[p.id] ? 1 : 0);
   return realFromStats(src, gp);
@@ -13840,7 +13952,7 @@ function valueBreakdownRaw(p){
     fantasy: fantasyPPG(p), real: realPPG(p),
     fRank: pctRank(fantasyPPG(p), peers.map(fantasyPPG).filter(v=>v!=null)),
     rRank: pctRank(realPPG(p), peers.map(realPPG).filter(v=>v!=null)),
-    index: formIndex(p), gp: (seasonLine(p.id)||{}).gp||0
+    index: formIndex(p), gp: (seasonRaw(p.id)||{}).gp||0
   };
 }
 
@@ -14028,7 +14140,7 @@ function lineIn(pid, year){
   if(year === (S.season||{}).year) return (S.season.byPlayer||{})[pid] || null;
   return ((S.history||{})[year] || {})[pid] || null;
 }
-function gamesIn(pid, year){ const l = lineIn(pid, year); return l ? (+l.gp||0) : 0; }
+function gamesIn(pid, year){ const l = seasonLine(pid, year); return l ? (+l.gp||0) : 0; }
 /* This season if he has played enough, otherwise the most recent one he did. */
 function rankBasisYear(p){
   const need = minGames();
@@ -14051,30 +14163,76 @@ function scoreIn(p, year){
    else — part what he did on the field, part what he scored for you. */
 /* Is the ladder ranking on fantasy points per game alone? */
 function ladderByFpts(){ return !!((S.settings.contracts.ladder||{}).byFpts); }
-function positionRank(p, year){ return memo('pr|'+(p&&p.id)+'|'+year, ()=> positionRankRaw(p, year)); }
-function positionRankRaw(p, year){
-  if(year==null) return null;
+/* ---- Season average, as it stands this minute --------------------------------
+   A season's line only took in weeks that had been closed, so during a game —
+   and for the whole week until it closed — a man's average stood still. This
+   adds the week being played to it: what he has scored so far this week counts
+   as a game from the moment he has any stats, and the average moves with every
+   update. Once the week closes it is part of the season line and this steps
+   aside, so nothing is ever counted twice. */
+/* Did he actually play? Sleeper's own games-played figure when it gives one;
+   otherwise his own numbers — never the team's, which Sleeper also hangs on
+   men who sat the game out (snap counts for the whole side, and the like). */
+const NOT_HIS = /^(tm_|pts_|rank_|pos_rank_|gms_active$|gs$)/;
+function countsAsGame(st){
+  if(!st) return false;
+  if(st.gp != null) return +st.gp > 0;
+  return Object.keys(st).some(k=> !NOT_HIS.test(k) && +st[k]);
+}
+function playedThisWeek(pid){ return countsAsGame((S.live.stats||{})[pid]); }
+function seasonLine(pid, year){
+  const y = year == null ? S.league.season : year;
+  const base = lineIn(pid, y);
+  if(y !== S.league.season || !playedThisWeek(pid)) return fixGp(base);
+  const w = +S.live.week || 1;
+  if(base && base.weeks && base.weeks[w]) return fixGp(base);    /* already folded in */
+  const st = (S.live.stats||{})[pid], p = byId(S.players, pid);
+  const stats = Object.assign({}, (base && base.stats) || {});
+  Object.keys(st).forEach(k=>{ if(+st[k]) stats[k] = Math.round(((+stats[k]||0) + +st[k])*100)/100; });
+  const b2 = fixGp(base);
+  return {gp:((b2 && +b2.gp) || 0) + 1, fpts:((base && +base.fpts) || 0) + scoreLine(st, p), stats, live:true};
+}
+/* Games counted from the weeks themselves, by the rule above — a closed week
+   where he only carried the team's numbers is not a game he played. */
+function fixGp(line){
+  if(!line || !line.weeks) return line;
+  const ws = Object.keys(line.weeks);
+  if(!ws.length) return line;
+  const gp = ws.filter(k=> countsAsGame((line.weeks[k]||{}).stats) || (+(line.weeks[k]||{}).fpts)).length;
+  return gp === +line.gp ? line : Object.assign({}, line, {gp});
+}
+/* Every man at a position who has played this season, in order, best first —
+   worked out once per position and kept until the numbers next change. */
+function positionTable(pos, year){ return memo('ptab|'+pos+'|'+year, ()=> positionTableRaw(pos, year)); }
+function positionTableRaw(pos, year){
   /* Ranking on his scoring alone means the real-life side carries no weight. */
   const w = ladderByFpts() ? 0 : clamp(+S.settings.value.realWeight||0, 0, 100)/100;
-  const peers = S.players.filter(x=> x.pos===p.pos && lineIn(x.id, year) && lineIn(x.id, year).gp);
-  if(!peers.length) return null;
+  const peers = [];
+  S.players.forEach(x=>{
+    if(x.pos !== pos) return;
+    const l = seasonLine(x.id, year);
+    if(l && +l.gp > 0) peers.push({id:x.id, l});
+  });
+  if(!peers.length) return {order:[], at:{}, of:0};
   const reals = [], fants = [];
   peers.forEach(x=>{
-    const l = lineIn(x.id, year);
-    const r = realFromStats(l.stats, l.gp);
-    if(r!=null) reals.push(r);
-    fants.push(l.fpts / l.gp);
+    const r = realFromStats(x.l.stats, x.l.gp);
+    if(r != null) reals.push(r);
+    fants.push(x.l.fpts / x.l.gp);
   });
   const scored = peers.map(x=>{
-    const l = lineIn(x.id, year);
-    const r = realFromStats(l.stats, l.gp);
-    const f = l.fpts / l.gp;
-    const ri = r==null ? 0.5 : pctRank(r, reals);
-    const fi = pctRank(f, fants);
-    return {id:x.id, v: w*ri + (1-w)*fi};
-  }).sort((a,b)=> b.v - a.v);
-  const i = scored.findIndex(x=> x.id===p.id);
-  return i<0 ? null : {rank:i+1, of:scored.length, year};
+    const r = realFromStats(x.l.stats, x.l.gp), f = x.l.fpts / x.l.gp;
+    const ri = r == null ? 0.5 : pctRank(r, reals);
+    return {id:x.id, v: w*ri + (1-w)*pctRank(f, fants), ppg:f};
+  }).sort((a,b)=> (b.v - a.v) || (b.ppg - a.ppg));
+  const at = {}; scored.forEach((x,i)=> at[x.id] = i+1);
+  return {order:scored, at, of:scored.length};
+}
+function positionRank(p, year){
+  if(year == null || !p) return null;
+  const t = positionTable(p.pos, year);
+  const n = t.at[p.id];
+  return n ? {rank:n, of:t.of, year, live: year === S.league.season && playedThisWeek(p.id)} : null;
 }
 function canExtend(p){
   /* Nobody is extended with years still to run beyond the next one. */
@@ -14113,12 +14271,125 @@ function canExtend(p){
    Kept exact rather than snapped to the cap increment, because rounding every
    player before averaging them drags the whole ladder off. Only the quote at
    the end is rounded. */
-function baseSalary(p){
-  const c = p && p.contract;
+const SHEET_BASES = {from:"The League Contract Info", season:2026, rows:[{"s":"PIT","n":"Steelers D/ST","p":"DEF","b":5.0,"y":[0.5,0.5,0.25]},{"s":"9758","n":"C.J. Stroud","p":"QB","b":28.0,"y":[76.5,4.25,1.7,1.7,0.85]},{"s":"11560","n":"Caleb Williams","p":"QB","b":21.0,"y":[1.26]},{"s":"12522","n":"Cam Ward","p":"QB","b":21.5,"y":[1.94,1.29]},{"s":"11564","n":"Drake Maye","p":"QB","b":19.0,"y":[1.14]},{"s":"12510","n":"Jalen Milroe","p":"QB","b":11.9,"y":[7.14,24.99]},{"s":"3163","n":"Jared Goff","p":"QB","b":17.0,"y":[17,42.5]},{"s":"12508","n":"Jaxson Dart","p":"QB","b":15.2,"y":[9.12,31.92]},{"s":"11566","n":"Jayden Daniels","p":"QB","b":20.0,"y":[1.2]},{"s":"7591","n":"Justin Fields","p":"QB","b":6.0,"y":[1.5,0.6,0.6,0.3]},{"s":"11559","n":"Michael Penix","p":"QB","b":8.9,"y":[0.53]},{"s":"4943","n":"Sam Darnold","p":"QB","b":38.0,"y":[22.8,11.4]},{"s":"7523","n":"Trevor Lawrence","p":"QB","b":18.0,"y":[1.8,1.8,0.9]},{"s":"12527","n":"Ashton Jeanty","p":"RB","b":21.5,"y":[1.94,1.29]},{"s":"8155","n":"Breece Hall","p":"RB","b":27.0,"y":[9.3,27,27]},{"s":"12481","n":"Cam Skattebo","p":"RB","b":13.9,"y":[8.34,29.19]},{"s":"4034","n":"Christian McCaffrey","p":"RB","b":20.0,"y":[1.8,1.2]},{"s":"7594","n":"Chuba Hubbard","p":"RB","b":15.0,"y":[12,36]},{"s":"5892","n":"David Montgomery","p":"RB","b":14.0,"y":[1.4,0.7]},{"s":"12457","n":"Jaydon Blue","p":"RB","b":7.6,"y":[0.68,0.46]},{"s":"11583","n":"Jonathon Brooks","p":"RB","b":19.0,"y":[34.2]},{"s":"5850","n":"Josh Jacobs","p":"RB","b":31.0,"y":[24.8,49.6]},{"s":"12504","n":"Kaleb Johnson","p":"RB","b":17.2,"y":[12.9,30.96]},{"s":"11647","n":"Kimani Vidal","p":"RB","b":6.4,"y":[0.38]},{"s":"12507","n":"Omarion Hampton","p":"RB","b":20.5,"y":[1.85,1.23]},{"s":"7543","n":"Travis Etienne","p":"RB","b":23.0,"y":[17.25,17.25,11.5]},{"s":"12529","n":"TreVeyon Henderson","p":"RB","b":18.3,"y":[10.98,5.49]},{"s":"11589","n":"Trey Benson","p":"RB","b":15.8,"y":[4.74]},{"s":"11604","n":"Brock Bowers","p":"TE","b":14.8,"y":[31.08]},{"s":"6826","n":"Cole Kmet","p":"TE","b":17.0,"y":[0,17]},{"s":"7553","n":"Kyle Pitts","p":"TE","b":7.0,"y":[3.5,3.5,3.5]},{"s":"8130","n":"Trey McBride","p":"TE","b":12.0,"y":[21,73.5]},{"s":"12518","n":"Tyler Warren","p":"TE","b":17.2,"y":[12.9,7.74]},{"s":"11621","n":"Brenden Rice","p":"WR","b":4.2,"y":[8.82]},{"s":"11631","n":"Brian Thomas","p":"WR","b":15.8,"y":[4.74]},{"s":"13311","n":"Chris Bell","p":"WR","b":9.8,"y":[3.84,7.68,26.88]},{"s":"8144","n":"Chris Olave","p":"WR","b":17.0,"y":[17,8.5,8.5,8.5]},{"s":"4950","n":"Christian Kirk","p":"WR","b":34.0,"y":[34,85]},{"s":"7525","n":"DeVonta Smith","p":"WR","b":19.0,"y":[15.2,15.2]},{"s":"8146","n":"Garrett Wilson","p":"WR","b":24.0,"y":[14.4,50.4]},{"s":"7564","n":"Ja'Marr Chase","p":"WR","b":19.0,"y":[9.5,9.5,9.5]},{"s":"12483","n":"Jack Bech","p":"WR","b":10.9,"y":[6.54,3.27]},{"s":"12505","n":"Jalen Royals","p":"WR","b":9.1,"y":[0.82,0.55]},{"s":"8148","n":"Jameson Williams","p":"WR","b":19.0,"y":[18,43.2]},{"s":"7526","n":"Jaylen Waddle","p":"WR","b":16.0,"y":[6.4,6.4]},{"s":"6783","n":"Jerry Jeudy","p":"WR","b":17.0,"y":[1.7,0.85]},{"s":"6794","n":"Justin Jefferson","p":"WR","b":39.0,"y":[0,0,0]},{"s":"11637","n":"Keon Coleman","p":"WR","b":13.6,"y":[0.82]},{"s":"12519","n":"Luther Burden","p":"WR","b":16.2,"y":[1.46,0.97]},{"s":"11632","n":"Malik Nabers","p":"WR","b":20.0,"y":[36]},{"s":"5848","n":"Marquise Brown","p":"WR","b":19.0,"y":[15.2,30.4]},{"s":"11628","n":"Marvin Harrison","p":"WR","b":21.0,"y":[1.26]},{"s":"8676","n":"Rashid Shaheed","p":"WR","b":19.0,"y":[8.55]},{"s":"7571","n":"Rashod Bateman","p":"WR","b":15.0,"y":[0.5,0.5,0.25]},{"s":"11630","n":"Roman Wilson","p":"WR","b":11.6,"y":[0.46]},{"s":"11620","n":"Rome Odunze","p":"WR","b":17.8,"y":[37.38]},{"s":"6801","n":"Tee Higgins","p":"WR","b":13.0,"y":[1.3,1.3,0.65]},{"s":"12526","n":"Tetairoa McMillan","p":"WR","b":20.5,"y":[1.85,1.23]},{"s":"11627","n":"Troy Franklin","p":"WR","b":26.0,"y":[19]},{"s":"3321","n":"Tyreek Hill","p":"WR","b":82.0,"y":[82,164]}]};
+/* The deals signed before this season whose base the sheet recorded, that the
+   app has not been told yet. A row only counts while the deal is still the one
+   the sheet described — same years, same money — so an edit since is left be. */
+function sheetBaseFor(r){
+  const p = S.players.find(x=> r.s && String(x.sleeperId) === String(r.s)) ||
+            S.players.find(x=> x.name === r.n && x.pos === r.p);
+  if(!p || !p.contract || !p.contract.teamId) return null;
+  const c = p.contract, sal = c.salaries || [];
+  const off = S.league.season - (+c.startYear || S.league.season);
+  const left = off > 0 ? sal.slice(off) : sal;
+  if(left.length !== r.y.length || left.some((v,i)=> Math.abs((+v||0) - r.y[i]) > 0.011)) return null;
+  return {p, c, was:contractBase(c), base:r.b};
+}
+/* Contracts the sheet shows were written wrong in the app, fixed once. Each is
+   only offered while the deal still reads exactly as it did when it was found. */
+const SHEET_FIXES = [
+  {s:'13294', n:'Makai Lemon',    was:[6.67,6.67,6.66], to:[20,20,20],       why:'pick 1.05 is $20 a year'},
+  {s:'13349', n:'Eli Stowers',    was:[4.4,4.4,4.4],    to:[13.2,13.2,13.2], why:'pick 2.05 is $13.20 a year'},
+  {s:'13270', n:'CJ Daniels',     was:[0.5,0.5],        to:[1,1],            why:'$1 a year'},
+  {s:'13309', n:'Aaron Anderson', was:[0.5,0.5],        to:[1,1],            why:'$1 a year'}
+];
+function sheetFixesPending(){
+  const out = [];
+  if(S.league.season !== SHEET_BASES.season) return out;
+  SHEET_FIXES.forEach(f=>{
+    const p = S.players.find(x=> String(x.sleeperId) === f.s) || S.players.find(x=> x.name === f.n);
+    const c = p && p.contract;
+    if(!c || !c.teamId || c.startYear !== SHEET_BASES.season) return;
+    const sal = c.salaries || [];
+    if(sal.length !== f.was.length || sal.some((v,i)=> Math.abs((+v||0) - f.was[i]) > 0.011)) return;
+    out.push({kind:'deal', p, c, f});
+  });
+  /* The 2028 share of Justin Jefferson that his old team kept, which the
+     other two years were entered with and this one was not. */
+  const t = S.teams.find(tt=> (tt.adj||[]).some(d=> /Justin Jefferson/.test(d.note||'') && d.year === 2027 && Math.abs(+d.amount - 3.9) < 0.011));
+  if(t && !(t.adj||[]).some(d=> /Justin Jefferson/.test(d.note||'') && d.year === 2028))
+    out.push({kind:'adj', t, adj:{note:'Justin Jefferson', year:2028, amount:1.95}});
+  return out;
+}
+function sheetBasePending(){
+  if(S.league.season !== SHEET_BASES.season) return [];
+  return SHEET_BASES.rows.map(sheetBaseFor).filter(x=> x && Math.abs(x.was - x.base) > 0.011 &&
+    !(x.c.base != null && x.c.base !== ''));
+}
+function sheetBasesCard(){
+  if(!isCommish()) return '';
+  const rows = sheetBasePending(), fixes = sheetFixesPending();
+  if(!rows.length && !fixes.length) return '';
+  const fixList = fixes.map(x=> x.kind === 'deal'
+    ? '<li>'+esc(x.p.name)+' <span class="dim tiny">'+esc(teamName(x.c.teamId))+'</span> — '+
+        x.f.was.map(v=> money(v)).join(' / ')+' → <b>'+x.f.to.map(v=> money(v)).join(' / ')+'</b> <span class="dim tiny">('+esc(x.f.why)+')</span></li>'
+    : '<li>'+esc(x.t.name)+' — add the '+money(x.adj.amount)+' of Justin Jefferson it keeps in '+x.adj.year+'</li>').join('');
+  const fixBox = fixes.length ? '<div class="flabel">Contracts to put right</div><ul class="tiny" style="margin:0;padding-left:18px">'+fixList+'</ul>' : '';
+  if(!rows.length) return '<div class="panel"><div class="ph"><h3>Fixes from your league sheet</h3></div><div class="pb stack">'+fixBox+
+    '<div class="row"><button class="btn pri" data-a="applySheetBases">Make these changes</button></div></div></div>';
+  const list = rows.slice().sort((a,b)=> (a.p.pos>b.p.pos?1:a.p.pos<b.p.pos?-1:0) || b.base-a.base).map(x=>
+    '<tr><td>'+esc(x.p.pos)+'</td><td>'+esc(x.p.name)+' <span class="dim tiny">'+esc(teamName(x.c.teamId))+'</span></td>'+
+    '<td class="right num dim">'+money(x.was)+'</td><td class="right money">'+money(x.base)+'</td></tr>').join('');
+  return '<div class="panel"><div class="ph"><h3>Base salaries from your league sheet</h3></div><div class="pb stack">'+
+    '<div class="hint warn">'+rows.length+' deal'+(rows.length===1?' was':'s were')+' signed before '+S.league.season+
+      '. The app only has the years still to run, so it has been working out their base from those — which is not what they signed for. '+
+      '“'+esc(SHEET_BASES.from)+'” has the base each was signed at. The extension ladder and franchise tags price off base salary, so this moves those prices.</div>'+
+    '<details><summary class="tiny" style="cursor:pointer">See all '+rows.length+'</summary><div class="scrollx" style="margin-top:6px"><table>'+
+      '<thead><tr><th>Pos</th><th>Player</th><th class="right">App now</th><th class="right">Sheet</th></tr></thead><tbody>'+list+'</tbody></table></div></details>'+
+    fixBox+
+    '<div class="row"><button class="btn pri" data-a="applySheetBases">'+(fixes.length ? 'Make all of these changes' : 'Use the sheet’s base salaries')+'</button>'+
+      '<span class="tiny dim">Nothing he is paid changes — only the base his deal is priced from. Each can be changed after in Edit contract.</span></div>'+
+  '</div></div>';
+}
+ACT.applySheetBases = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const rows = sheetBasePending(), fixes = sheetFixesPending();
+  if(!rows.length && !fixes.length) return toast('Nothing to change');
+  rows.forEach(x=>{ x.c.base = x.base; });
+  if(rows.length) logIt('Base salaries set from '+SHEET_BASES.from+' for '+rows.length+' deals signed before '+S.league.season,
+    {type:'contract', teams:[...new Set(rows.map(x=> x.c.teamId))], players:rows.map(x=> x.p.id)});
+  fixes.forEach(x=>{
+    if(x.kind === 'deal'){
+      x.c.salaries = x.f.to.slice(); x.c.total = fixInc(sum(x.c.salaries)); x.c.byYear = true;
+      logIt(teamName(x.c.teamId)+': '+x.p.name+' corrected to '+money(x.f.to[0])+' a year for '+x.f.to.length+' years ('+x.f.why+')',
+        {type:'contract', teams:[x.c.teamId], players:[x.p.id]});
+    } else {
+      (x.t.adj = x.t.adj || []).push(x.adj);
+      logIt(x.t.name+': added the '+money(x.adj.amount)+' of Justin Jefferson kept in '+x.adj.year, {type:'contract', teams:[x.t.id]});
+    }
+  });
+  clearCapCache(); save(); render();
+  toast([rows.length ? rows.length+' base salaries set' : '', fixes.length ? fixes.length+' contract fix'+(fixes.length===1?'':'es') : ''].filter(Boolean).join(', '),'good');
+};
+
+/* Base salary: what a deal is worth a year as it was signed — its total over
+   its years, as if paid evenly. A deal signed before the app took over only
+   shows the years still to run, so the even rate of those is not his base (a
+   max-front-loaded rookie deal has almost nothing left to pay); those carry the
+   base recorded when they were signed, in c.base. An extension starts a new
+   base from its first year. */
+function contractBase(c, year){
   if(!c) return 0;
+  const y = year == null ? S.league.season : +year;
+  let b = (c.base != null && c.base !== '' && isFinite(+c.base)) ? +c.base : null;
+  if(b == null){
+    const years = Math.max(1, +c.years||1);
+    const total = (+c.total || (Array.isArray(c.salaries) ? sum(c.salaries) : 0));
+    b = total / years;
+  }
+  (c.extensions||[]).forEach(e=>{ if(e && e.from != null && y >= +e.from && isFinite(+e.aav)) b = +e.aav; });
+  return Math.round(b * 100) / 100;
+}
+function baseSalary(p, year){ return contractBase(p && p.contract, year); }
+/* Said in words beside the figure, so it can be checked. */
+function baseHow(c, year){
+  if(!c) return '';
+  const y = year == null ? S.league.season : +year;
+  const ext = (c.extensions||[]).filter(e=> e && e.from != null && y >= +e.from).pop();
+  if(ext) return 'extension base, from '+ext.from;
+  if(c.base != null && c.base !== '') return 'base as signed';
   const years = Math.max(1, +c.years||1);
-  const total = (+c.total || (Array.isArray(c.byYear) ? sum(c.byYear) : 0));
-  return Math.round((total / years) * 100) / 100;
+  return '= '+money(+c.total||0)+' ÷ '+years+' yr'+(years===1?'':'s');
 }
 function aavOf(p){ return baseSalary(p); }
 function tagCount(pos){
@@ -17374,6 +17645,52 @@ function extDeadlineAt(){
   const times = Object.keys(book).map(k=> +book[k]).filter(v=> v && !isNaN(v));
   return times.length ? Math.min.apply(null, times) : null;
 }
+/* ---- No extensions while the week is being played ----------------------------
+   From the week's first kickoff — Thursday night, most weeks — until the last
+   game is final and its numbers are in, nobody can extend anybody. Otherwise a
+   manager could watch a man go off on Sunday and lock him up at the old price
+   before the ladder caught up. The rank and the price go on moving live
+   throughout; only the signing waits.
+
+   The real card decides it where the app has one; a week without a card falls
+   back on the clock: Thursday 7pm Central to early Tuesday. */
+function weekCard(w){ return ((S.live.nfl||{})[w]) || []; }
+function extFreeze(now){
+  const t = now || Date.now();
+  const w = +S.live.week || 1;
+  const card = weekCard(w).filter(g=> +g.at);
+  if(card.length){
+    const first = Math.min.apply(null, card.map(g=> +g.at));
+    const last = Math.max.apply(null, card.map(g=> +g.at));
+    if(t < first) return {frozen:false, until:first, week:w};
+    const done = card.every(g=> g.status === 'final');
+    if(!done){
+      const left = card.filter(g=> g.status !== 'final').length;
+      return {frozen:true, week:w, why:'Week '+w+' is being played — '+left+' game'+(left===1?'':'s')+' still to finish.',
+              back:'once the last game ('+dayTime(last)+') is final and its numbers are in'};
+    }
+    /* Every game is final. Give the last numbers a moment to arrive — Sleeper
+       settles a few minutes after the whistle — and then it is open again. */
+    S.live.allFinalAt = S.live.allFinalAt || {};
+    if(!S.live.allFinalAt[w]) S.live.allFinalAt[w] = t;
+    const fa = +S.live.allFinalAt[w];
+    const settled = t - fa > 10*60000 && (+S.live.statsAt||0) >= fa;
+    if(!settled && t - fa < 60*60000)
+      return {frozen:true, week:w, why:'Week '+w+' is over — the final numbers are coming in.', back:'in a few minutes'};
+    return {frozen:false, week:w};
+  }
+  /* No card yet: go by the clock, in Central time. */
+  const ct = new Date(new Date(t).toLocaleString('en-US', {timeZone:'America/Chicago'}));
+  const d = ct.getDay(), h = ct.getHours() + ct.getMinutes()/60;
+  const inWindow = (d === 4 && h >= 19) || d === 5 || d === 6 || d === 0 || d === 1 || (d === 2 && h < 3);
+  return inWindow
+    ? {frozen:true, week:w, why:'NFL games are on this week.', back:'once Monday night’s game is final'}
+    : {frozen:false, week:w};
+}
+function dayTime(ms){
+  try{ return new Date(ms).toLocaleString('en-US', {weekday:'short', hour:'numeric', minute:'2-digit'}); }
+  catch(e){ return dstr(ms); }
+}
 function extWindowOpen(){
   const w = extDeadlineWeek();
   if(!w) return {ok:true};
@@ -17494,6 +17811,7 @@ function subsRun(){
       if(!g.ok) return;
       saved[i] = sub.id;
       on++;
+      noteSwap(t.id, w, {inId:sub.id, out:p.id, how:'sub', why: isOut(p) ? 'out' : 'dnp'});
       logIt(teamName(t.id)+': '+sub.name+' came on for '+p.name+', who did not play',
         {type:'admin', teams:[t.id], players:[p.id, sub.id]});
       notify(sub.name+' came on for '+p.name,
@@ -17529,10 +17847,11 @@ function slotAt(teamId, week, index){
      he can play that place — the same position, or anything the flex allows
      his own game has not kicked off
      and it does not start before the game of the man he is replacing */
-function standInFor(p, teamId, week, slot){
+function standInFor(p, teamId, week, slot, exclude){
   const w = +week || +S.live.week || 1;
   const saved = ((S.lineups||{})[w]||{})[teamId] || [];
   const started = {}; saved.forEach(id=>{ if(id) started[id]=1; });
+  (exclude||[]).forEach(id=>{ if(id) started[id]=1; });
   /* The place he is filling. Fall back to the first that takes his position. */
   const place = slot || (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(p.pos) >= 0);
   const fits = (x)=> place ? place.eligible.indexOf(x.pos) >= 0 : x.pos === p.pos;
@@ -17569,6 +17888,7 @@ function autoFillRun(){
       if(!sub) return;
       saved[i] = sub.p.id;
       swaps++;
+      noteSwap(t.id, w, {inId:sub.p.id, out:p.id, how:'fill', why:'out', proj:Math.round(sub.proj*10)/10});
       logIt(teamName(t.id)+': '+sub.p.name+' in for '+p.name+', who is out',
         {type:'admin', teams:[t.id], players:[p.id, sub.p.id]});
       notify(sub.p.name+' is in for '+p.name,
@@ -17578,6 +17898,82 @@ function autoFillRun(){
   });
   if(swaps){ clearCapCache(); save(); }
   return swaps;
+}
+/* ---- Showing who came on, and how ------------------------------------------
+   Both kinds of swap used to overwrite the place in the lineup and forget the
+   rest: the screen then showed the new man as if he had been picked, with no
+   word of who he replaced or why. Every swap is written down now, with the league
+   so every phone sees it, and shown wherever the lineup is.
+
+   Two ways in, told apart on purpose:
+     AUTO-SUB   the substitute you named yourself, on for a man who did not play
+     FILLED IN  the app's own choice — your best available — on for a man ruled
+                out, because you had fill-in switched on */
+function swapBook(week){
+  const w = +week || +S.live.week || 1;
+  S.swaps = S.swaps || {};
+  S.swaps[w] = S.swaps[w] || {};
+  return S.swaps[w];
+}
+function noteSwap(teamId, week, rec){
+  const b = swapBook(week);
+  b[teamId] = b[teamId] || {};
+  b[teamId][rec.inId] = {out:rec.out, how:rec.how, why:rec.why, proj:rec.proj, at:Date.now()};
+}
+/* The swap that put this man where he is, if there was one. Swaps made before
+   this build are found from the log, so this week's already show. */
+function swapFor(teamId, playerId, week){
+  const w = +week || +S.live.week || 1;
+  const rec = ((swapBook(w)[teamId])||{})[playerId];
+  if(rec) return rec;
+  const weekAgo = Date.now() - 7*86400000;
+  const hit = (S.log||[]).find(l=> l && (+l.at||0) > weekAgo && Array.isArray(l.players) && l.players[1] === playerId &&
+    (l.teams||[]).indexOf(teamId) >= 0 && /came on for|in for .*, who is out/.test(l.text||''));
+  if(!hit) return null;
+  return {out:hit.players[0], how: /came on for/.test(hit.text) ? 'sub' : 'fill',
+          why: /who is out/.test(hit.text) ? 'out' : 'dnp', at:hit.at};
+}
+/* The line under a man who came on: who he replaced, and why. His points are
+   the row's own figure, live as his game goes. */
+function swapLine(teamId, p, week){
+  if(!p) return '';
+  const r = swapFor(teamId, p.id, week);
+  if(!r) return '';
+  const gone = byId(S.players, r.out);
+  const who = gone ? esc(gone.name) : 'a starter';
+  if(r.how === 'sub')
+    return '<div class="swapline"><span class="pill swapsub">AUTO-SUB</span> on for <b>'+who+'</b> — '+
+      (r.why === 'out' ? 'ruled OUT' : 'did not play')+'</div>';
+  return '<div class="swapline"><span class="pill swapfill">FILLED IN</span> for <b>'+who+'</b> — ruled OUT · '+
+    'your best available'+(r.proj != null ? ', '+(+r.proj).toFixed(1)+' projected' : '')+'</div>';
+}
+/* And under a starter who is out or doubtful, before anything has happened:
+   who is lined up to come on for him, and which way. */
+function pendingSwapLine(teamId, p, week){
+  if(!p) return '';
+  const w = +week || +S.live.week || 1;
+  if(gameStarted(p) || gameLive(p.nfl, w) || gameFinal(p.nfl, w)) return '';
+  const st = injStatus(p);
+  const out = st === 'out', shaky = st === 'doubtful' || st === 'questionable';
+  if(!out && !shaky) return '';
+  const named = subFor(teamId, p.id, w);
+  const namedOk = named && subAllowed(p, named, teamId, w).ok;
+  if(namedOk)
+    return '<div class="swapline"><span class="pill swapsub">AUTO-SUB</span> '+
+      (out ? '<b>'+esc(named.name)+'</b> comes on for him' : 'if he sits, <b>'+esc(named.name)+'</b> comes on')+'</div>';
+  if(autoFillOn(teamId)){
+    const lu = ((S.lineups||{})[w]||{})[teamId] || [];
+    const idx = lu.indexOf(p.id);
+    /* Not a man already promised to someone else: a substitute named for
+       another starter who is out is going on for him, not this one. */
+    const promised = lu.map(id=> byId(S.players, id)).filter(x=> x && x.id !== p.id && isOut(x))
+      .map(x=> { const sb = subFor(teamId, x.id, w); return sb ? sb.id : null; }).filter(Boolean);
+    const f = standInFor(p, teamId, w, idx >= 0 ? slotAt(teamId, w, idx) : null, promised);
+    if(f) return '<div class="swapline"><span class="pill swapfill">FILL-IN</span> '+
+      (out ? '<b>'+esc(f.p.name)+'</b> takes his place' : 'if ruled out, <b>'+esc(f.p.name)+'</b> takes his place')+
+      ' · '+f.proj.toFixed(1)+' projected</div>';
+  }
+  return out ? '<div class="swapline bad">Ruled OUT — nobody is set to come on for him. Name a sub, or turn on fill-in.</div>' : '';
 }
 function injuryTag(p){
   const inj = p && p.injury;
@@ -19714,6 +20110,10 @@ ACT.impCommit = ()=>{
         p.contract.salaries = perYear.map(v=> fixCents(v));
         p.contract.total = fixCents(sum(p.contract.salaries));
         p.contract.byYear = true;
+        /* A sheet that carries a base salary beside the season columns has said
+           what the deal was signed for, which the years left to run cannot. */
+        if(!isNaN(sal) && sal > 0 && im.salaryIs !== 'total' &&
+           Math.abs(sal - p.contract.total / p.contract.years) > 0.011) p.contract.base = fixCents(sal);
         p.value = Math.max(1, Math.round(p.contract.total / p.contract.years));
         const notes = [];
         if(haveTotal && Math.abs(totRaw - sumFromCols) > 0.011)
@@ -20258,6 +20658,7 @@ VIEWS.settings = function(){
                 ' to choose how many years and whether it is front, back or evenly loaded. He sits on your roster at the agreed rate meanwhile. Let the clock run out and it settles at '+(ct.defaultYears||1)+' year'+((ct.defaultYears||1)>1?'s':'')+'.'
               : 'Set to zero, so terms are fixed the moment a player is won. A week is the most the league allows.'}</div>
           </div></div>
+          ${sheetBasesCard()}
           <div class="panel"><div class="ph"><h3>Extensions</h3></div><div class="pb stack">
             <label class="f"><span>Years an extension may run past the maximum</span>
               <input type="number" min="0" max="5" data-set="settings.contracts.extendExtra" value="${ct.extendExtra}"></label>
@@ -24105,6 +24506,7 @@ function migrate(j){
      runs on every load, every import and every copy taken off the server, so a
      stray edit on somebody else's device cannot carry the league away. */
   pinCommish(out);
+  charterSettings(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -24246,9 +24648,12 @@ function tickAll(){
      check every couple of minutes even when nothing has kicked off, so a card
      that has not been fetched yet arrives. */
   const haveCard = !!((S.live.nfl||{})[+S.live.week||1]);
-  const kickGap = anyLive ? 45000 : (route==='live' ? 120000 : 3600000);
+  /* While extensions wait on the week's last game, look every couple of
+     minutes so they open again soon after it ends, not an hour later. */
+  const waiting = (()=>{ try{ const f = extFreeze(); return f.frozen && weekCard(+S.live.week||1).length; }catch(e){ return false; } })();
+  const kickGap = anyLive ? 45000 : ((route==='live' || waiting) ? 120000 : 3600000);
   if(!ui.tmp.kickBusy && (Date.now() - (S.live.kicksAt||0)) > kickGap &&
-     (anyLive || !haveCard || route==='live')){
+     (anyLive || !haveCard || route==='live' || waiting)){
     ui.tmp.kickBusy = true;
     setTimeout(()=>{ pullKickoffs().then(nn=>{
       ui.tmp.kickBusy = false;
@@ -24743,7 +25148,7 @@ async function fanOut(league, cfg, messages, opts) {
 
 /* ------------------------------------------------------------------ scoring, lifted from the app */
 let S = { settings: { scoring: {} } };
-/* ---- lifted from index.html, 2026-08-21u · the phones tell the server the schedule ---- */
+/* ---- lifted from index.html, 2026-08-21v · who came on, and how ---- */
 const BAND_KEYS = {};
 ['pts_allow_0','pts_allow_1_6','pts_allow_7_13','pts_allow_14_20','pts_allow_21_27','pts_allow_28_34','pts_allow_35p',
  'yds_allow_0_100','yds_allow_100_199','yds_allow_200_299','yds_allow_300_349','yds_allow_350_399',
