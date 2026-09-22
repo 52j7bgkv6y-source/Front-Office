@@ -783,7 +783,8 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 .chatgifrow .chatinput{max-height:none}
 .chatprev{margin-bottom:8px;display:flex;align-items:center;gap:8px}
 /* Compact chat preview on the dashboard */
-.dashchat .chatscroll{max-height:30vh}
+.dashchat .chatscroll{max-height:46vh}
+.dashsplit{align-items:start}
 .dashchat .chatpanel{max-height:none}
 @media (max-width:560px){
   .chatbtxt{display:none}                       /* icon-only media buttons */
@@ -937,6 +938,9 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 }
 /* A short table needs no cap — let it stand at its own height. */
 .scrollx.short{max-height:none}
+.thinfo{text-decoration:underline dotted;text-underline-offset:3px;cursor:help;padding:6px 0}
+.pstats th[title]{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
+.pstats td,.pstats th{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -959,7 +963,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-22b · charter settings';
+const APP_BUILD = '2026-08-22h · block and front office';
 
 /* ============================================================
    HOME LEAGUE
@@ -2065,7 +2069,9 @@ function capRoom(teamId, year){ return fixInc(capSpace(teamId, year) - capFloor(
 function overCapFloor(teamId, year){ return capSpace(teamId, year) < capFloor() - 1e-9; }
 // A projection can never run past the longest contract the league allows —
 // there would be nothing on the books to show.
-function maxProjYears(){ return clamp(+S.settings.contracts.maxYears||10, 1, 10); }
+/* How far ahead the cap ladder looks. Not tied to the longest contract — an
+   extension can run past it, and a commissioner may simply want to see further. */
+function maxProjYears(){ return 10; }
 function projYears(){
   const n = clamp(+S.settings.cap.projectYears||6, 1, maxProjYears()), out=[];
   for(let i=0;i<n;i++) out.push(S.league.season+i);
@@ -2443,6 +2449,7 @@ const NAV = [
   {id:'schedule', ic:'▦', label:'Schedule'},
   {id:'chat',     ic:'💬', label:'League Chat'},
   {id:'tx',       ic:'≡', label:'Transactions'},
+  {id:'history',  ic:'⌛', label:'League History'},
   {id:'rules',    ic:'§', label:'League Rules'},
   {id:'dues',     ic:'◈', label:'Dues'},
   {id:'import',   ic:'↥', label:'Import League', commish:true},
@@ -2516,6 +2523,22 @@ function charterSettings(st){
     text:'Settings brought in line with the league charter: rollover up to 20%, extensions close at week 16, '+
       'playoff byes for 1 and 2 with the 6th spot on points, consolation byes for 12 and 11, '+
       'counter-trades extended 3 hours inside the last 3, comp picks capped at 7 league-wide'});
+}
+/* Back to back, as the commissioner set it on 22 Sep 2026: The bad man is gone
+   won 2025, and the jackpot on offer in 2026 is $890, growing $120 a year. */
+function b2bSeed(st){
+  if(!st || !st.settings || !st.league || st.league.b2bSet) return;
+  const sup = (st.settings.supa||{}).leagueId, sl = (st.settings.live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  const t = (st.teams||[]).find(x=> /^the bad man is (still )?gone$/i.test((x.name||'').trim())) ||
+            (st.teams||[]).find(x=> (x.owner||'').toLowerCase() === 'lnagle97');
+  if(!t) return;
+  const d = st.settings.payouts = st.settings.payouts || {};
+  d.backToBack = 120;
+  d.b2b = {season:2026, pot:890, holder:t.id, holderOwner:t.owner||''};
+  st.league.b2bSet = '2026-09-22';
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[t.id], players:[],
+    text:'Back to back: '+t.name+' won in 2025. The 2026 jackpot is $890 and it is theirs if they win again; otherwise it grows by $120 a year until someone does'});
 }
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
@@ -3341,7 +3364,18 @@ ACT.sheet = ()=> $('#sheet').classList.contains('on') ? closeSheet() : openSheet
 
 function val(el){
   if(el.type==='checkbox') return el.checked;
-  if(el.type==='number'){ return el.value==='' ? '' : +el.value; }
+  if(el.type==='number'){
+    if(el.value==='') return '';
+    /* A number typed past the box's own limits is held to them — the arrows
+       already stop there, and a figure the page then shows differently from the
+       one it saved helps nobody. */
+    let n = +el.value;
+    const lo = el.getAttribute('min'), hi = el.getAttribute('max');
+    if(lo !== null && lo !== '' && isFinite(+lo) && n < +lo) n = +lo;
+    if(hi !== null && hi !== '' && isFinite(+hi) && n > +hi) n = +hi;
+    if(n !== +el.value) el.value = n;
+    return n;
+  }
   return el.value;
 }
 function setPath(path, v){
@@ -3554,11 +3588,37 @@ function myName(){
    clicking the same one again turns it round.
    ============================================================ */
 function sortOf(tid){ return (ui.tmp.sorts||{})[tid] || null; }
-function sortTh(tid, key, label, cls){
+function sortTh(tid, key, label, cls, info){
   const cur = sortOf(tid), on = cur && cur.key===key;
+  /* A short heading can be tapped for what it stands for; the rest of the
+     heading still sorts. */
+  const lab = info && COL_INFO[info]
+    ? '<span class="thinfo" data-a="colInfo" data-c="'+esc(info)+'" data-t="'+esc(tid)+'" data-k="'+esc(key)+'" title="'+esc(COL_INFO[info].name)+'">'+label+'</span>'
+    : label;
   return '<th class="sortable'+(cls?' '+cls:'')+(on?' sorted':'')+'" data-a="sortBy" data-t="'+esc(tid)+
-    '" data-k="'+esc(key)+'">'+label+'<i class="sarr">'+(on ? (cur.dir>0?'▲':'▼') : '')+'</i></th>';
+    '" data-k="'+esc(key)+'">'+lab+'<i class="sarr">'+(on ? (cur.dir>0?'▲':'▼') : '')+'</i></th>';
 }
+/* What each short column heading stands for, and what it does. */
+const COL_INFO = {
+  w:    {name:'W — Wins', what:'Matchups won this season. A matchup only counts once every player in it has finished playing.'},
+  l:    {name:'L — Losses', what:'Matchups lost this season, counted the same way as wins.'},
+  t:    {name:'T — Ties', what:'Matchups that finished level. A tie is worth half a win in the percentage and in SOS.'},
+  pct:  {name:'Pct — Win percentage', what:'Wins, plus half a win for each tie, divided by games played. This is what the standings are ranked on first.'},
+  pf:   {name:'PF — Points for', what:'Every point your starting lineups have scored this season. It moves live during games, and it is also what the sixth playoff spot goes on.'},
+  pa:   {name:'PA — Points against', what:'Every point your opponents have scored against you this season.'},
+  sos:  {name:'SOS — Strength of schedule', what:'The wins of every team you have played, added up — a tie counts as half, and a team you have played twice counts twice. The higher it is, the tougher the teams you have faced. It is the tiebreaker after head to head: when teams finish level, the one with the harder schedule goes ahead.'},
+  eff:  {name:'Eff — Lineup efficiency', what:'How much of your best possible score you actually started, averaged over the season. 100% means you started your best lineup every week.'},
+  slot: {name:'Draft slot', what:'Where you would pick in next year’s rookie draft if the season ended today.'},
+  bill: {name:'Picks — Rookie draft cost', what:'What next year’s rookie picks you own would cost against the cap, at the league’s rookie scale.'}
+};
+ACT.colInfo = (d)=>{
+  const c = COL_INFO[d.c]; if(!c) return;
+  const cur = sortOf(d.t), on = cur && cur.key===d.k;
+  modal(c.name, '<p style="margin:0">'+esc(c.what)+'</p>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn" data-a="colSort" data-t="'+esc(d.t)+'" data-k="'+esc(d.k)+'">'+(on ? 'Flip the sort' : 'Sort by it')+'</button>');
+};
+ACT.colSort = (d)=>{ closeModal(); ACT.sortBy(d); };
 /* Blanks always sink, whichever way round the column is. */
 function sortRows(tid, rows, cols, fallback){
   const cur = sortOf(tid) || fallback;
@@ -3685,7 +3745,8 @@ VIEWS.dash = function(){
     </div></div>
   </div>`:''}
 
-  <div class="split">
+  <div class="split dashsplit">
+    <div class="stack">
     <div class="panel">
       <div class="ph"><h3>${yrs.length}-year outlook</h3><div class="spacer"></div><button class="btn ghost sm" data-a="go" data-r="cap">Full cap ladder</button></div>
       <div class="pb tight scrollx">
@@ -3698,6 +3759,21 @@ VIEWS.dash = function(){
         }).join('')}
         </tbody></table>
       </div>
+    </div>
+    <!-- League chat sits under the outlook so it is on screen without scrolling,
+         in the space the outlook used to stretch into. -->
+    <div class="panel dashchat">
+      <div class="ph"><h3>League chat</h3><div class="spacer"></div>
+        <button class="btn ghost sm" data-a="go" data-r="chat">Open full chat</button></div>
+      <div class="pb">
+        <div id="chatScroll" class="chatscroll">
+          ${(()=>{ const m=(S.chat||[]).slice(-8); return m.length
+            ? m.map(chatBubble).join('')
+            : '<div class="dim" style="text-align:center;padding:18px">No messages yet — say hello to the league.</div>'; })()}
+        </div>
+      </div>
+      ${chatComposeHTML()}
+    </div>
     </div>
     <div class="stack">
       ${pendingFor(currentTeamId()).length?`<div class="panel" style="border-color:#5C4526">
@@ -3795,18 +3871,6 @@ VIEWS.dash = function(){
           '<div><span class="dim">'+dstr(l.at)+'</span> <span class="dim">'+TX_TYPES[l.type||'admin'].ic+'</span> '+esc(l.text)+'</div>').join('') || '<div class="dim">No moves yet.</div>'}</div></div></div>
     </div>
 
-    <div class="panel dashchat">
-      <div class="ph"><h3>League chat</h3><div class="spacer"></div>
-        <button class="btn ghost sm" data-a="go" data-r="chat">Open full chat</button></div>
-      <div class="pb">
-        <div id="chatScroll" class="chatscroll">
-          ${(()=>{ const m=(S.chat||[]).slice(-8); return m.length
-            ? m.map(chatBubble).join('')
-            : '<div class="dim" style="text-align:center;padding:18px">No messages yet — say hello to the league.</div>'; })()}
-        </div>
-      </div>
-      ${chatComposeHTML()}
-    </div>
   </div>`;
 };
 ACT.clearNotices = ()=>{ S.notices=[]; save(); render(); };
@@ -6784,11 +6848,12 @@ VIEWS.teams = function(){
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Standings</h3><div class="spacer"></div>
         <span class="tiny dim">through week ${Math.max(0,(+S.live.week||1)-1)}</span></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>#</th>${sortTh('std','name','Team')}${sortTh('std','w','W','right')}${sortTh('std','l','L','right')}
-          ${sortTh('std','t','T','right')}${sortTh('std','pct','Pct','right')}
-          ${sortTh('std','pf','PF','right hide-xs')}${sortTh('std','pa','PA','right hide-xs')}
-          ${sortTh('std','opp','Opp pts','right hide-xs')}${sortTh('std','eff','Eff','right hide-xs')}
-          ${sortTh('std','slot','Draft slot','right')}${sortTh('std','bill', nextY+' picks', 'right')}</tr></thead><tbody>
+        <thead><tr><th>#</th>${sortTh('std','name','Team')}${sortTh('std','w','W','right','w')}${sortTh('std','l','L','right','l')}
+          ${sortTh('std','t','T','right','t')}${sortTh('std','pct','Pct','right','pct')}
+          ${sortTh('std','pf','PF','right hide-xs','pf')}${sortTh('std','pa','PA','right hide-xs','pa')}
+          ${sortTh('std','opp','SOS','right hide-xs','sos')}${sortTh('std','eff','Eff','right hide-xs','eff')}
+          ${sortTh('std','slot','Draft slot','right','slot')}${sortTh('std','bill', nextY+' picks', 'right','bill')}</tr></thead><tbody>
+        <tr class="thhelp"><td colspan="12" class="tiny dim" style="padding:2px 8px 6px">Tap a heading’s name to see what it means.</td></tr>
         ${sortRows('std', table, {
             name:t=>t.name, w:t=>liveRecord(t).w, l:t=>liveRecord(t).l, t:t=>liveRecord(t).t,
             pct:t=>livePct(t), pf:t=>liveRecord(t).pf||0, pa:t=>liveRecord(t).pa||0,
@@ -6823,7 +6888,7 @@ VIEWS.teams = function(){
         <div class="pb"><div class="hint">Top ${P.teams} make the playoffs${P.byes?', top '+P.byes+' on a bye':''}.
           ${wildcardOn() ? 'The last place goes to whoever has scored the most points without earning one on record'+
             ((()=>{ const w = wildcardTeam(); return w ? ' — as things stand, <b>'+esc(w.name)+'</b>' : ''; })())+'. ' : ''}
-          Points, points against, opponent points and efficiency move as the games do. A win, a loss, the
+          Points, points against, SOS and efficiency move as the games do. A win, a loss, the
           percentage, the draft slot and what next year's picks cost only change once every man in that
           matchup has finished playing — so a matchup settles on its own, without waiting on games elsewhere.
           ${(()=>{
@@ -6849,7 +6914,7 @@ VIEWS.teams = function(){
                ['Runner-up', +d.second||0, pay.runner],
                ['Third', +d.third||0, pay.third],
                ['Most points scored', +d.topScorer||0, pay.scorer],
-               ['Back to back', +d.backToBack||0, pay.backToBack ? pay.champ : null]]
+               ['Back to back', b2bJackpot(), pay.backToBack ? pay.champ : null]]
               .map(([what, amt, who])=>`<tr>
                 <td>${esc(what)}</td>
                 <td>${who ? '<b style="font-weight:500">'+esc(teamName(who))+'</b>'
@@ -6867,7 +6932,8 @@ VIEWS.teams = function(){
                 : 'It goes out to the league room once the bracket is done.')
             : 'These fill in as the bracket resolves. Most points scored is running live.'}
             ${!pay.backToBack && lastChampion() ? ' '+esc(teamName(lastChampion()))+
-              ' won it in '+(S.league.season-1)+', so the back-to-back money is still live.' : ''}</div></div>
+              ' won it in '+(S.league.season-1)+', so the back-to-back jackpot of '+payMoney(b2bJackpot())+
+              ' is theirs if they win it again. If they do not, it grows by '+payMoney(+d.backToBack||0)+' for next year.' : ''}</div></div>
         </div>`;
       })()}
       ${isCommish()?`<div class="panel" style="margin-bottom:14px">
@@ -8067,6 +8133,98 @@ ACT.freeFilter = (d, el)=>{
 };
 ACT.offClear = ()=>{ ui.tmp.offPos=''; ui.tmp.offTeam=''; ui.tmp.offAgeMin=0; ui.tmp.offAgeMax=0;
   ui.tmp.offPpg=0; render(); };
+/* ---- The numbers that matter at each position ---------------------------
+   Sleeper sends a hundred-odd stat codes; these are the ones a manager reads,
+   in the order he reads them, with their proper names. Each is [short, long,
+   how to get it from a line of stats, how to show it]. Rates are worked out
+   from the counts, so a season line and a week line read the same way. */
+const PSV = (s,k)=> +((s||{})[k])||0;
+const PS_FG = (s)=> PSV(s,'fgm') || (PSV(s,'fgm_0_19')+PSV(s,'fgm_20_29')+PSV(s,'fgm_30_39')+PSV(s,'fgm_40_49')+PSV(s,'fgm_50p'));
+const PS_FGA = (s)=> PSV(s,'fga') || (PS_FG(s) + (PSV(s,'fgmiss') || (PSV(s,'fgmiss_0_19')+PSV(s,'fgmiss_20_29')+PSV(s,'fgmiss_30_39')+PSV(s,'fgmiss_40_49')+PSV(s,'fgmiss_50p'))));
+const PS_RATE = (a,b,dp)=> b ? (a/b).toFixed(dp==null?1:dp) : '—';
+const PSN = (n)=> String(Math.round((+n||0)*10)/10);
+const POS_STATS = {
+  QB: [['C/A','Completions / attempts', s=> PSN(PSV(s,'pass_cmp'))+'/'+PSN(PSV(s,'pass_att'))],
+       ['Pct','Completion %', s=> PSV(s,'pass_att') ? Math.round(PSV(s,'pass_cmp')/PSV(s,'pass_att')*100)+'%' : '—'],
+       ['Yds','Passing yards', s=> PSV(s,'pass_yd')], ['Y/A','Yards per attempt', s=> PS_RATE(PSV(s,'pass_yd'), PSV(s,'pass_att'))],
+       ['TD','Passing touchdowns', s=> PSV(s,'pass_td')], ['INT','Interceptions thrown', s=> PSV(s,'pass_int')],
+       ['Sk','Times sacked', s=> PSV(s,'pass_sack')],
+       ['Car','Rushing attempts', s=> PSV(s,'rush_att')], ['RuYd','Rushing yards', s=> PSV(s,'rush_yd')], ['RuTD','Rushing touchdowns', s=> PSV(s,'rush_td')],
+       ['FL','Fumbles lost', s=> PSV(s,'fum_lost')]],
+  RB: [['Car','Carries', s=> PSV(s,'rush_att')], ['Yds','Rushing yards', s=> PSV(s,'rush_yd')],
+       ['YPC','Yards per carry', s=> PS_RATE(PSV(s,'rush_yd'), PSV(s,'rush_att'))], ['TD','Rushing touchdowns', s=> PSV(s,'rush_td')],
+       ['Tgt','Targets', s=> PSV(s,'rec_tgt')], ['Rec','Receptions', s=> PSV(s,'rec')], ['ReYd','Receiving yards', s=> PSV(s,'rec_yd')],
+       ['ReTD','Receiving touchdowns', s=> PSV(s,'rec_td')], ['Tch','Touches (carries + catches)', s=> PSV(s,'rush_att')+PSV(s,'rec')],
+       ['FL','Fumbles lost', s=> PSV(s,'fum_lost')]],
+  WR: [['Tgt','Targets', s=> PSV(s,'rec_tgt')], ['Rec','Receptions', s=> PSV(s,'rec')],
+       ['Ctch%','Catch rate', s=> PSV(s,'rec_tgt') ? Math.round(PSV(s,'rec')/PSV(s,'rec_tgt')*100)+'%' : '—'],
+       ['Yds','Receiving yards', s=> PSV(s,'rec_yd')], ['Y/R','Yards per catch', s=> PS_RATE(PSV(s,'rec_yd'), PSV(s,'rec'))],
+       ['TD','Receiving touchdowns', s=> PSV(s,'rec_td')], ['Lng','Longest catch', s=> PSV(s,'rec_lng') || '—'],
+       ['Car','Carries', s=> PSV(s,'rush_att')], ['RuYd','Rushing yards', s=> PSV(s,'rush_yd')],
+       ['FL','Fumbles lost', s=> PSV(s,'fum_lost')]],
+  K:  [['FG','Field goals made / tried', s=> PSN(PS_FG(s))+'/'+PSN(PS_FGA(s))],
+       ['0-39','Made from under 40', s=> PSV(s,'fgm_0_19')+PSV(s,'fgm_20_29')+PSV(s,'fgm_30_39')],
+       ['40-49','Made from 40–49', s=> PSV(s,'fgm_40_49')], ['50+','Made from 50 and beyond', s=> PSV(s,'fgm_50p')],
+       ['Lng','Longest field goal', s=> PSV(s,'fgm_lng') || '—'],
+       ['XP','Extra points made / tried', s=> PSN(PSV(s,'xpm'))+'/'+PSN(PSV(s,'xpa') || (PSV(s,'xpm')+PSV(s,'xpmiss')))]],
+  DEF:[['PA','Points allowed', s=> PSV(s,'pts_allow')], ['YA','Yards allowed', s=> PSV(s,'yds_allow')],
+       ['Sack','Sacks', s=> PSV(s,'sack')], ['INT','Interceptions', s=> PSV(s,'int')], ['FR','Fumbles recovered', s=> PSV(s,'fum_rec')],
+       ['FF','Fumbles forced', s=> PSV(s,'ff')], ['TD','Defensive and return touchdowns', s=> PSV(s,'def_td')+PSV(s,'def_st_td')],
+       ['Sfty','Safeties', s=> PSV(s,'safe')], ['Blk','Blocked kicks', s=> PSV(s,'blk_kick')], ['TFL','Tackles for loss', s=> PSV(s,'tkl_loss')]],
+  IDP:[['Tkl','Tackles (solo + assisted)', s=> PSV(s,'idp_tkl') || (PSV(s,'idp_tkl_solo')+PSV(s,'idp_tkl_ast'))],
+       ['Solo','Solo tackles', s=> PSV(s,'idp_tkl_solo')], ['TFL','Tackles for loss', s=> PSV(s,'idp_tkl_loss')],
+       ['Sack','Sacks', s=> PSV(s,'idp_sack')], ['QBH','Quarterback hits', s=> PSV(s,'idp_qb_hit')],
+       ['PD','Passes defended', s=> PSV(s,'idp_pass_def')], ['INT','Interceptions', s=> PSV(s,'idp_int')],
+       ['FF','Fumbles forced', s=> PSV(s,'idp_ff')], ['FR','Fumbles recovered', s=> PSV(s,'idp_fum_rec')], ['TD','Touchdowns', s=> PSV(s,'idp_def_td')]]
+};
+POS_STATS.TE = POS_STATS.WR;
+ACT.statHelp = (d)=>{ toast(d.h); };
+function posStatCols(pos){ return POS_STATS[pos] || (/^(DL|LB|DB|DE|DT|CB|S)$/.test(pos) ? POS_STATS.IDP : POS_STATS.WR); }
+/* Sum week lines into one, for the season row. */
+function sumStatLines(lines){
+  const out = {};
+  /* Sleeper sends attempts some weeks and only makes and misses others, so
+     every week is given its attempts before they are added up. */
+  lines = lines.map(s0=>{
+    const s = Object.assign({}, s0||{});
+    if(!(+s.xpa) && (+s.xpm || +s.xpmiss)) s.xpa = (+s.xpm||0) + (+s.xpmiss||0);
+    if(!(+s.fgm) && PS_FG(s)) s.fgm = PS_FG(s);
+    if(!(+s.fga) && PS_FGA(s)) s.fga = PS_FGA(s);
+    return s;
+  });
+  lines.forEach(s=> Object.keys(s||{}).forEach(k=>{
+    if(/_lng$/.test(k)) out[k] = Math.max(out[k]||0, +s[k]||0);
+    else if(isFinite(+s[k])) out[k] = Math.round(((out[k]||0) + (+s[k]||0))*100)/100;
+  }));
+  return out;
+}
+/* The block on a player's card: a season line, his average, and this week's
+   game as it stands. Stats nobody on his position cares about are left out. */
+function playerStatBlock(p){
+  const cols = posStatCols(p.pos);
+  const log = playerLog(p, S.league.season);
+  const w = +S.live.week||1;
+  const live = (S.live.stats||{})[p.id];
+  const liveOn = live && countsAsGame(live) && !log.some(x=> x.week === w);
+  const seasonStats = sumStatLines(log.map(x=> x.stats).concat(liveOn ? [live] : []));
+  const games = log.filter(x=> countsAsGame(x.stats) || +x.fpts).length + (liveOn ? 1 : 0);
+  const pts = log.reduce((n,x)=> n + (+x.fpts||0), 0) + (liveOn ? scoreLine(live, p) : 0);
+  if(!games && !live) return '';
+  const cell = (c, st)=> '<td class="right num" title="'+esc(c[1])+'">'+esc(String(c[2](st)))+'</td>';
+  const head = '<tr><th></th><th class="right" title="Fantasy points" data-a="statHelp" data-h="Pts — fantasy points, on this league’s scoring">Pts</th>'+cols.map(c=> '<th class="right" title="'+esc(c[1])+'" data-a="statHelp" data-h="'+esc(c[0]+' — '+c[1])+'">'+esc(c[0])+'</th>').join('')+'</tr>';
+  const rows = [];
+  if(games) rows.push('<tr><td>'+S.league.season+' <span class="dim tiny">'+games+' g</span></td><td class="right num">'+pts.toFixed(1)+'</td>'+cols.map(c=> cell(c, seasonStats)).join('')+'</tr>');
+  if(games > 1){
+    const per = {}; Object.keys(seasonStats).forEach(k=> per[k] = /_lng$/.test(k) ? seasonStats[k] : Math.round(seasonStats[k]/games*10)/10);
+    rows.push('<tr class="dim"><td>per game</td><td class="right num">'+(pts/games).toFixed(1)+'</td>'+cols.map(c=>{
+      const v = c[2](per); return '<td class="right num">'+esc(typeof v === 'number' ? (Math.round(v*10)/10) : String(v))+'</td>'; }).join('')+'</tr>');
+  }
+  if(live && countsAsGame(live))
+    rows.push('<tr><td>Week '+w+' <span class="pill live" style="font-size:10px">'+(gameStarted(p) && !(gameState(p.nfl)||{}).done ? 'LIVE' : 'this week')+'</span></td>'+
+      '<td class="right num">'+scoreLine(live, p).toFixed(1)+'</td>'+cols.map(c=> cell(c, live)).join('')+'</tr>');
+  return '<div class="hr"></div><div class="flabel">Stats <span class="dim tiny">— tap a heading for what it means</span></div>'+
+    '<div class="scrollx"><table class="pstats"><thead>'+head+'</thead><tbody>'+rows.join('')+'</tbody></table></div>';
+}
 ACT.pcYear = (d)=>{ ui.tmp.pcYear = +d.y; const id=ui.tmp.pcId; if(id) ACT.playerCard({id}); };
 /* Tell the owner what you would give for him, straight into league chat. */
 ACT.askFor = (d)=>{
@@ -9163,6 +9321,8 @@ ACT.playerCard = (d)=>{
     </div>
     ${p.injury?`<div class="assetbox" style="margin-bottom:12px;border-color:#5C4526">
       <div class="flabel">Injury</div><b>${esc(p.injury.status)}</b>${p.injury.body?' — '+esc(p.injury.body):''}</div>`:''}
+    ${playerStatBlock(p)}
+    <div class="hr"></div>
     <div class="flabel">Around the league</div>
     ${news.length
       ? '<div class="stack">'+news.map(n=>`<a href="#" class="assetbox" style="display:block;text-decoration:none;color:inherit"
@@ -9251,20 +9411,22 @@ ACT.playerCard = (d)=>{
       const yr = ui.tmp.pcYear || S.league.season;
       const years = playerYears(p);
       const log = playerLog(p, yr);
-      const keys = {};
-      log.forEach(w=> Object.keys(w.stats||{}).forEach(k=>{ if(+w.stats[k]) keys[k]=true; }));
-      const cols = Object.keys(keys).slice(0,7);
+      const cols = posStatCols(p.pos);
+      const past = yr !== S.league.season ? ((S.history||{})[yr]||{})[p.id] : null;
       return '<div class="hr"></div><div class="flabel">Game log</div>'+
         (years.length>1 ? '<div class="row" style="gap:6px;margin-bottom:6px">'+
           years.map(y=>'<button class="btn sm '+(y===yr?'':'ghost')+'" data-a="pcYear" data-y="'+y+'">'+y+'</button>').join('')+
           '</div>' : '')+
         (log.length
-          ? '<div class="scrollx"><table><thead><tr><th>Wk</th><th class="right">Pts</th>'+
-            cols.map(k=>'<th class="right">'+esc(k)+'</th>').join('')+'</tr></thead><tbody>'+
-            log.map(w=>'<tr><td class="num">'+w.week+'</td><td class="right num">'+w.fpts.toFixed(1)+'</td>'+
-              cols.map(k=>'<td class="right num dim">'+(w.stats[k]||0)+'</td>').join('')+'</tr>').join('')+
+          ? '<div class="scrollx"><table class="pstats"><thead><tr><th>Wk</th><th class="right" title="Fantasy points" data-a="statHelp" data-h="Pts — fantasy points, on this league’s scoring">Pts</th>'+
+            cols.map(c=>'<th class="right" title="'+esc(c[1])+'" data-a="statHelp" data-h="'+esc(c[0]+' — '+c[1])+'">'+esc(c[0])+'</th>').join('')+'</tr></thead><tbody>'+
+            log.map(w=>'<tr><td class="num">'+w.week+'</td><td class="right num">'+(+w.fpts||0).toFixed(1)+'</td>'+
+              cols.map(c=>'<td class="right num dim">'+esc(String(c[2](w.stats||{})))+'</td>').join('')+'</tr>').join('')+
             '</tbody></table></div>'
-          : '<div class="hint">No weeks recorded for '+yr+' yet. Weeks are logged from the point this build went in, as each one is closed out.</div>');
+          : past
+            ? '<div class="hint">'+yr+': '+past.gp+' game'+(past.gp===1?'':'s')+', '+(+past.fpts||0).toFixed(1)+' points — '+
+                (past.gp ? (past.fpts/past.gp).toFixed(1) : '0')+' a game. Only the season totals are kept for '+yr+', not each week.</div>'
+            : '<div class="hint">No weeks recorded for '+yr+' yet. Weeks are logged from the point this build went in, as each one is closed out.</div>');
     })()}
 
     ${(()=>{
@@ -10465,7 +10627,7 @@ VIEWS.cap = function(){
         <label class="check"><input type="checkbox" data-set="settings.cap.deadCapSpread" ${c.deadCapSpread?'checked':''}><span>Spread the charge across the remaining years instead of all at once</span></label>
         <label class="f"><span>Years shown in projections</span>
           <input type="number" min="1" max="${maxProjYears()}" data-set="settings.cap.projectYears" value="${clamp(c.projectYears,1,maxProjYears())}"></label>
-        <div class="hint">Up to ten, capped at your longest allowed contract (${S.settings.contracts.maxYears} years). Raise the contract limit in Settings to see further out.</div>
+        <div class="hint">Anywhere from one to ten seasons ahead, including this one.</div>
       </div></div>
     </div>`}
   </div>`;
@@ -10955,7 +11117,7 @@ ACT.declineOffer = (d)=>{
 };
 function settleAuction(auc){
   if(auc.status!=='running') return;
-  if(!auc.leading){ auc.status='cancelled'; auc.log.unshift({at:Date.now(), text:'Expired with no offer'}); return; }
+  if(!auc.leading){ auc.status='cancelled'; auc.settledAt=Date.now(); auc.log.unshift({at:Date.now(), text:'Expired with no offer'}); return; }
   const buyer = auc.leading.teamId, seller = auc.sellerTeamId, p = byId(S.players, auc.playerId);
   if(p && p.contract){
     p.contract.teamId = buyer;
@@ -10970,7 +11132,7 @@ function settleAuction(auc){
 }
 ACT.cancelAuction = (d)=>{
   const auc = byId(S.auctions,d.id);
-  auc.status='cancelled'; auc.log.unshift({at:Date.now(), text:'Pulled off the block'});
+  auc.status='cancelled'; auc.settledAt=Date.now(); auc.log.unshift({at:Date.now(), text:'Pulled off the block'});
   save(); render(); toast('Pulled off the block');
 };
 ACT.forceSettle = (d)=>{ const auc=byId(S.auctions,d.id); auc.clock.remain=0; settleAuction(auc); save(); render(); };
@@ -11234,7 +11396,7 @@ ACT.faBidGo = ()=>{
 };
 ACT.faCancel = (d)=>{
   const a = byId(S.faAuctions,d.id);
-  a.status='cancelled'; a.log.unshift({at:Date.now(), text:'Pulled by the commissioner'});
+  a.status='cancelled'; a.settledAt=Date.now(); a.log.unshift({at:Date.now(), text:'Pulled by the commissioner'});
   save(); render();
 };
 ACT.faSettleNow = (d)=>{ const a=byId(S.faAuctions,d.id); a.clock.remain=0; settleFA(a); save(); render(); };
@@ -11473,9 +11635,16 @@ ACT.bbMove = (d)=>{
   save(); render();
 };
 
+/* When a block listing closed. Older ones were never stamped when pulled or
+   left to expire, so the newest line of their log stands in. */
+function blockClosedAt(a){
+  const logAt = Math.max(0, ...((a.log||[]).map(l=> +l.at||0)));
+  return +a.settledAt || +a.endedAt || logAt || +a.at || 0;
+}
 VIEWS.block = function(){
   const live = S.auctions.filter(a=> a.status==='open'||a.status==='running');
-  const done = S.auctions.filter(a=> a.status==='settled'||a.status==='cancelled').slice(0,12);
+  /* Closed in the last week only — after that it is in Transactions, not here. */
+  const done = S.auctions.filter(a=> (a.status==='settled'||a.status==='cancelled') && Date.now() - blockClosedAt(a) < 7*86400000).slice(0,12);
   const me = actingTeam(), t = S.settings.trades;
   return `
   <div class="section">
@@ -16301,16 +16470,19 @@ function h2hVs(team, group){
   const n = w+l+t;
   return {w,l,t,n, pct: n ? (w + t*0.5)/n : null};
 }
-/* "Opponent points" — every team you have played, weighted by how they have
-   done. A hard schedule counts for something when three teams are level. */
-function oppPoints(t){
-  const played = (S.schedule||[]).filter(g=> g.home===t.id || g.away===t.id);
+/* SOS, strength of schedule — the wins of every team you have played (a tie is
+   half), counted once for each time you played them. A hard schedule counts for
+   something when three teams are level. Only games already played count: the
+   rest of the schedule is who you will face, not who you have beaten. */
+function oppPoints(t, recordOf){
+  const rec = recordOf || teamRecord;
+  const played = (S.schedule||[]).filter(g=> (g.home===t.id || g.away===t.id) && g.hp!=null);
   if(!played.length) return 0;
   return Math.round(played.reduce((acc,g)=>{
     const oppId = g.home===t.id ? g.away : g.home;
     const o = byId(S.teams, oppId);
     if(!o) return acc;
-    const r = teamRecord(o);
+    const r = rec(o);
     return acc + (r.w + r.t*0.5);
   }, 0) * 100)/100;
 }
@@ -16321,7 +16493,7 @@ function efficiency(t){
 }
 const TIEBREAKS = {
   h2h:  {label:'Head to head',        val:null},
-  opp:  {label:'Opponent points',     val:oppPoints},
+  opp:  {label:'Strength of schedule (SOS)', val:(t)=> oppPoints(t)},
   pf:   {label:'Points for',          val:(t)=> teamRecord(t).pf||0},
   pa:   {label:'Fewest points against', val:(t)=> -(teamRecord(t).pa||0)},
   eff:  {label:'Lineup efficiency',   val:(t)=> efficiency(t)==null ? -1 : efficiency(t)}
@@ -16436,14 +16608,20 @@ function liveEff(t){
   if(!best) return null;
   return Math.round((got/best)*1000)/10;
 }
-/* Opponent points, and the win percentage, both counting the week in play. */
+/* SOS and the win percentage, both counting the week in play. This used to add
+   this week's opponent's points to a count of wins, which is why the column
+   looked like a points total. Now it is wins throughout: everyone's record as it
+   stands this minute, and this week's opponent once the game has started. */
 function liveOppPoints(t){
-  const base = oppPoints(t);
+  const base = oppPoints(t, liveRecord);
   const lw = liveWeek(t.id);
   const closed = (S.schedule||[]).some(g=> g.week===(+S.live.week||1) && g.hp!=null &&
     (g.home===t.id || g.away===t.id));
-  if(!lw || closed) return base;
-  return Math.round((base + (lw.oppGot||0))*100)/100;
+  if(!lw || closed || !(lw.got || lw.oppGot)) return base;
+  const o = byId(S.teams, lw.opp);
+  if(!o) return base;
+  const r = liveRecord(o);
+  return Math.round((base + r.w + r.t*0.5)*100)/100;
 }
 function livePct(t){
   const r = liveRecord(t);
@@ -16544,14 +16722,36 @@ function payMoney(v){
 }
 function payoutPot(){
   const d = payoutCfg();
-  return (+d.first||0) + (+d.second||0) + (+d.third||0) + (+d.topScorer||0) + (+d.backToBack||0);
+  return (+d.first||0) + (+d.second||0) + (+d.third||0) + (+d.topScorer||0) + b2bJackpot();
+}
+/* ---- Back to back -----------------------------------------------------------
+   A jackpot, not a flat prize. Every season it is not won, the yearly amount
+   (payouts.backToBack) is added to it; the champion who wins it again the next
+   year takes all of it, and it starts over from the yearly amount.
+   payouts.b2b = {season, pot, holder, holderOwner} — the pot on offer in that
+   season, and last year's champion, the only team who can win it. The owner is
+   kept beside the id because a Sleeper pull can hand a team a new id. */
+function b2bCfg(){ const d = payoutCfg(); d.b2b = d.b2b || {}; return d.b2b; }
+function b2bJackpot(year){
+  const y = year || S.league.season, b = b2bCfg();
+  if(b.season === y && b.pot != null && isFinite(+b.pot)) return +b.pot;
+  return +payoutCfg().backToBack || 0;
 }
 /* Who won it last year, for the back-to-back money. */
 function lastChampion(){
-  const h = S.history || {};
-  const prev = S.league.season - 1;
-  const rec = h[prev];
-  return (rec && rec.champion) || null;
+  const b = b2bCfg();
+  if(b.season !== S.league.season) return null;
+  if(b.holderOwner){ const t = teamByOwner(S, b.holderOwner); if(t) return t.id; }
+  return (b.holder && byId(S.teams, b.holder)) ? b.holder : null;
+}
+/* At the turn of the season: the champion becomes the one who can win it next,
+   and the pot either starts over (it was won) or grows (it was not). */
+function b2bRoll(old, champ, won){
+  const b = b2bCfg(), add = +payoutCfg().backToBack || 0;
+  const pot = won ? add : Math.round((b2bJackpot(old) + add) * 100) / 100;
+  const t = champ ? byId(S.teams, champ) : null;
+  payoutCfg().b2b = {season:old+1, pot, holder: t ? t.id : null, holderOwner: t ? (t.owner||'') : ''};
+  return payoutCfg().b2b;
 }
 /* Everything the season owes, given how it finished. */
 function payouts(year){ return memo('payouts|'+(year||''), ()=> payoutsRaw(year)); }
@@ -16573,8 +16773,8 @@ function payoutsRaw(year){
   if(scorer) rows.push({what:'Most points scored', teamId:scorer.id, amount:+d.topScorer||0,
     note:(liveRecord(scorer).pf||0).toFixed(2)+' points'});
   if(champ && prev && champ === prev)
-    rows.push({what:'Back to back', teamId:champ, amount:+d.backToBack||0,
-      note:'won it in '+(y-1)+' as well'});
+    rows.push({what:'Back to back', teamId:champ, amount:b2bJackpot(y),
+      note:'won it in '+(y-1)+' as well — the whole jackpot'});
   /* Somebody may be owed twice — the total is what actually changes hands. */
   const byTeam = {};
   rows.forEach(r=>{ byTeam[r.teamId] = Math.round(((byTeam[r.teamId]||0) + r.amount)*100)/100; });
@@ -18055,6 +18255,431 @@ ACT.txExport = ()=>{
 /* ============================================================
    VIEW · LEAGUE RULES
    ============================================================ */
+/* ============================================================
+   LEAGUE HISTORY — every finished season on Sleeper
+   Sleeper links each season to the one before it, so the whole run of the
+   league can be walked from this year's id. A finished season never changes,
+   so each phone fetches it once, straight from Sleeper, and keeps it in its own
+   database storage (not beside the league, which is busy with backups) — none
+   of it goes through the league's server, so it costs the data allowance
+   nothing.
+   ============================================================ */
+const HIST_VER = 1;
+let HIST = null, HIST_BUSY = false, HIST_ERR = '', HIST_MSG = '', HIST_TRIED = false;
+function histRoot(){
+  const lv = S.settings.live || {};
+  return sleeperLeagueId(lv.sleeperLeagueId || lv.lastSleeperId || '');
+}
+/* A small key-value store in IndexedDB, with memory as the fallback. */
+const histDB = {
+  open(){
+    return new Promise((res, rej)=>{
+      try{
+        const rq = indexedDB.open('frontoffice-history', 1);
+        rq.onupgradeneeded = ()=> rq.result.createObjectStore('kv');
+        rq.onsuccess = ()=> res(rq.result);
+        rq.onerror = ()=> rej(rq.error);
+      }catch(e){ rej(e); }
+    });
+  },
+  async get(k){
+    try{
+      const db = await this.open();
+      return await new Promise((res)=>{
+        const rq = db.transaction('kv').objectStore('kv').get(k);
+        rq.onsuccess = ()=> res(rq.result || null); rq.onerror = ()=> res(null);
+      });
+    }catch(e){ return null; }
+  },
+  async set(k, v){
+    try{
+      const db = await this.open();
+      return await new Promise((res)=>{
+        const tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put(v, k);
+        tx.oncomplete = ()=> res(true); tx.onerror = ()=> res(false);
+      });
+    }catch(e){ return false; }
+  }
+};
+function histKey(root){ return 'history-v'+HIST_VER+'-'+root; }
+async function histFromCache(){
+  const root = histRoot();
+  if(!root) return null;
+  if(HIST && HIST.root === root) return HIST;
+  const v = await histDB.get(histKey(root));
+  if(v && v.root === root) HIST = v;
+  return HIST;
+}
+/* Pull whatever is missing. Seasons already kept are not fetched again. */
+async function histFetch(force){
+  if(HIST_BUSY) return;
+  const root = histRoot();
+  if(!root){ HIST_ERR = 'This league is not linked to Sleeper, so there is no history to fetch.'; render(); return; }
+  HIST_BUSY = true; HIST_ERR = ''; HIST_MSG = 'Finding the past seasons on Sleeper…'; render();
+  try{
+    const have = (!force && HIST && HIST.root === root) ? HIST : {root, ver:HIST_VER, seasons:{}, names:{}, users:{}};
+    /* Walk back from this season. */
+    const chain = [];
+    let id = root, guard = 0;
+    while(id && id !== '0' && guard++ < 30){
+      const lg = await getJSON(SLEEPER+'/league/'+id);
+      if(!lg) break;
+      chain.push(lg);
+      id = lg.previous_league_id;
+    }
+    const cur = chain[0];
+    const past = chain.slice(1).filter(lg=> lg.status === 'complete');
+    /* Who is who today, so a manager's history lands on the team he runs now. */
+    try{
+      const us = await getJSON(SLEEPER+'/league/'+root+'/users') || [];
+      us.forEach(u=>{ have.users[u.user_id] = {o:u.display_name||'', n:(u.metadata||{}).team_name||''}; });
+      have.current = cur ? +cur.season : null;
+    }catch(e){}
+    let done = 0;
+    for(const lg of past){
+      const y = +lg.season;
+      if(have.seasons[y] && !force){ done++; continue; }
+      HIST_MSG = 'Fetching '+y+' ('+(done+1)+' of '+past.length+')…'; render();
+      have.seasons[y] = await histSeason(lg, have);
+      done++;
+      await histDB.set(histKey(root), have);           // keep what we have as we go
+    }
+    await histNames(have);
+    have.at = Date.now();
+    HIST = have;
+    await histDB.set(histKey(root), have);
+    HIST_MSG = '';
+  }catch(e){
+    HIST_ERR = 'Sleeper did not answer: '+(e && e.message || e)+'. Try again in a minute.';
+  }
+  HIST_BUSY = false; render();
+}
+async function histBatch(urls, n){
+  const out = new Array(urls.length);
+  for(let i=0; i<urls.length; i+=n){
+    const part = await Promise.all(urls.slice(i, i+n).map(u=> getJSON(u).catch(()=> null)));
+    part.forEach((v,j)=> out[i+j] = v);
+  }
+  return out;
+}
+const hp2 = (a, b)=> Math.round(((+a||0) + (+b||0)/100)*100)/100;
+async function histSeason(lg, have){
+  const L = SLEEPER+'/league/'+lg.league_id;
+  const [users, rosters, wb, lb, drafts] = await histBatch(
+    [L+'/users', L+'/rosters', L+'/winners_bracket', L+'/losers_bracket', L+'/drafts'], 5);
+  const weeks = Array.from({length:18}, (_,i)=> i+1);
+  const mus = await histBatch(weeks.map(w=> L+'/matchups/'+w), 6);
+  const txs = await histBatch(weeks.map(w=> L+'/transactions/'+w), 6);
+  const uById = {};
+  (users||[]).forEach(u=>{ uById[u.user_id] = u; if(!have.users[u.user_id]) have.users[u.user_id] = {o:u.display_name||'', n:(u.metadata||{}).team_name||''}; });
+  const teams = {};
+  (rosters||[]).forEach(r=>{
+    const u = uById[r.owner_id] || {};
+    const st = r.settings || {};
+    teams[r.roster_id] = {u:r.owner_id||'', o:u.display_name||('Team '+r.roster_id), n:(u.metadata||{}).team_name||u.display_name||('Team '+r.roster_id),
+      w:+st.wins||0, l:+st.losses||0, t:+st.ties||0, pf:hp2(st.fpts, st.fpts_decimal), pa:hp2(st.fpts_against, st.fpts_against_decimal)};
+  });
+  const start = +((lg.settings||{}).playoff_week_start) || 15;
+  const wk = {}, pp = {};
+  mus.forEach((list, i)=>{
+    if(!Array.isArray(list) || !list.length) return;
+    const w = i+1, byM = {};
+    list.forEach(m=>{
+      /* Every man on every roster, every week: what he scored under this
+         league's own rules, as Sleeper scored it at the time. */
+      Object.entries(m.players_points||{}).forEach(([pid, v])=>{
+        const x = pp[pid] = pp[pid] || [0, 0];
+        if(+v){ x[0]++; x[1] = Math.round((x[1] + (+v))*100)/100; }
+      });
+      if(m.matchup_id == null) return;
+      (byM[m.matchup_id] = byM[m.matchup_id] || []).push(m);
+    });
+    const games = Object.values(byM).filter(g=> g.length === 2)
+      .map(g=> [g[0].roster_id, Math.round((+g[0].points||0)*100)/100, g[1].roster_id, Math.round((+g[1].points||0)*100)/100]);
+    if(games.length && games.some(g=> g[1] || g[3])) wk[w] = games;
+  });
+  const br = (b)=> (Array.isArray(b) ? b : []).map(m=> [m.r, m.m, m.t1||null, m.t2||null, m.w||null, m.l||null, m.p||null]);
+  const W = br(wb), LB = br(lb);
+  const final = W.find(m=> m[6] === 1), third = W.find(m=> m[6] === 3), toilet = LB.find(m=> m[6] === 1);
+  /* Drafts: the rookie draft, and the startup in the first year. */
+  const draft = [];
+  for(const d of (drafts||[])){
+    if(!d || d.status !== 'complete') continue;
+    const picks = await getJSON(SLEEPER+'/draft/'+d.draft_id+'/picks').catch(()=> []);
+    (picks||[]).forEach(p=>{
+      const md = p.metadata || {};
+      const name = ((md.first_name||'')+' '+(md.last_name||'')).trim();
+      if(name) have.names[p.player_id] = [name, md.position||'', md.team||''];
+      draft.push([+p.round, +p.pick_no, +p.roster_id || null, p.player_id, d.type||'', +(p.draft_slot||0)]);
+    });
+  }
+  /* Trades, and nothing else — adds and drops are too many to be worth keeping. */
+  const trades = [];
+  txs.forEach(list=> (list||[]).forEach(t=>{
+    if(t.type !== 'trade' || t.status !== 'complete') return;
+    trades.push({at:+t.status_updated || +t.created || 0, r:t.roster_ids||[], a:t.adds||{}, d:t.drops||{},
+      pk:(t.draft_picks||[]).map(p=> [+p.season, +p.round, +p.roster_id, +p.previous_owner_id, +p.owner_id]),
+      fb:(t.waiver_budget||[]).map(b=> [+b.sender, +b.receiver, +b.amount])});
+  }));
+  trades.sort((a,b)=> a.at - b.at);
+  return {year:+lg.season, id:lg.league_id, start, teams, weeks:wk, wb:W, lb:LB,
+    champ: final ? final[4] : null, runner: final ? final[5] : null, third: third ? third[4] : null,
+    toilet: toilet ? toilet[4] : null, draft, trades, pp};
+}
+/* Names for everybody mentioned. Most come from the league's own players and
+   the drafts; anybody left is looked up in Sleeper's full player list once. */
+async function histNames(h){
+  const known = {};
+  (S.players||[]).forEach(p=>{ if(p.sleeperId) known[p.sleeperId] = [p.name, p.pos, p.nfl||'']; });
+  const want = new Set();
+  Object.values(h.seasons).forEach(se=>{
+    se.draft.forEach(d=> want.add(d[3]));
+    se.trades.forEach(t=>{ Object.keys(t.a).forEach(k=> want.add(k)); Object.keys(t.d).forEach(k=> want.add(k)); });
+  });
+  const missing = [...want].filter(pid=> !h.names[pid] && !known[pid]);
+  if(missing.length){
+    HIST_MSG = 'Looking up '+missing.length+' old player names…'; render();
+    try{
+      const all = await sleeperPlayerMap();
+      missing.forEach(pid=>{ const p = all[pid]; if(p) h.names[pid] = [(p.full_name || ((p.first_name||'')+' '+(p.last_name||'')).trim() || pid), p.position||'', p.team||'']; });
+    }catch(e){}
+  }
+}
+function histPlayer(pid){
+  const p = (S.players||[]).find(x=> String(x.sleeperId) === String(pid));
+  if(p) return {name:p.name, pos:p.pos};
+  const n = HIST && HIST.names[pid];
+  if(n) return {name:n[0], pos:n[1]};
+  return {name: /^[A-Z]{2,3}$/.test(pid) ? pid+' D/ST' : 'Player '+pid, pos:''};
+}
+/* A manager across the years: by Sleeper account, shown under the team he runs
+   now if he is still here. */
+function histManager(uid){
+  const u = (HIST && HIST.users[uid]) || {};
+  const t = (S.teams||[]).find(x=> (x.owner||'').toLowerCase() === (u.o||'').toLowerCase());
+  return {id:uid, name: t ? t.name : (u.n || u.o || 'Former manager'), owner:u.o||'', here:!!t, teamId:t ? t.id : null};
+}
+function histTeam(se, rid){ const t = se.teams[rid]; return t ? histManager(t.u) : {name:'Team '+rid}; }
+/* Where each team finished: the bracket for the top three, then the playoff
+   field, then everybody else on record. */
+function histFinish(se){
+  const rids = Object.keys(se.teams).map(Number);
+  const inPO = new Set(); se.wb.forEach(m=>{ if(m[2]) inPO.add(m[2]); if(m[3]) inPO.add(m[3]); });
+  const rec = (r)=>{ const t = se.teams[r]; return (t.w + t.t*0.5)*100000 + t.pf; };
+  const top = [se.champ, se.runner, se.third].filter(Boolean);
+  const rest = rids.filter(r=> top.indexOf(r) < 0).sort((a,b)=>
+    ((inPO.has(b)?1:0) - (inPO.has(a)?1:0)) || rec(b) - rec(a));
+  const order = top.concat(rest), at = {};
+  order.forEach((r,i)=> at[r] = i+1);
+  return {order, at, inPO};
+}
+/* Everything, summed by manager. */
+function histAllTime(){
+  const m = {};
+  const get = (uid)=> m[uid] = m[uid] || {uid, seasons:0, w:0, l:0, t:0, pf:0, pa:0, titles:[], seconds:0, thirds:0, playoffs:0, best:99, toilets:0};
+  Object.values(HIST.seasons).sort((a,b)=> a.year-b.year).forEach(se=>{
+    const f = histFinish(se);
+    Object.entries(se.teams).forEach(([rid, t])=>{
+      const r = +rid, x = get(t.u);
+      x.seasons++; x.w += t.w; x.l += t.l; x.t += t.t;
+      x.pf = Math.round((x.pf + t.pf)*100)/100; x.pa = Math.round((x.pa + t.pa)*100)/100;
+      if(se.champ === r) x.titles.push(se.year);
+      if(se.runner === r) x.seconds++;
+      if(se.third === r) x.thirds++;
+      if(se.toilet === r) x.toilets++;
+      if(f.inPO.has(r)) x.playoffs++;
+      x.best = Math.min(x.best, f.at[r] || 99);
+    });
+  });
+  return Object.values(m).sort((a,b)=> b.titles.length - a.titles.length || (b.w+b.t/2)/(b.w+b.l+b.t||1) - (a.w+a.t/2)/(a.w+a.l+a.t||1));
+}
+/* Head to head between two managers, every game they have played. */
+function histH2H(ua, ub){
+  let w = 0, l = 0, t = 0; const games = [];
+  Object.values(HIST.seasons).forEach(se=>{
+    const ridOf = (u)=> Object.keys(se.teams).find(r=> se.teams[r].u === u);
+    const ra = +ridOf(ua), rb = +ridOf(ub);
+    if(!ra || !rb) return;
+    Object.entries(se.weeks).forEach(([wk, gs])=> gs.forEach(g=>{
+      let a = null, b = null;
+      if(g[0] === ra && g[2] === rb){ a = g[1]; b = g[3]; }
+      else if(g[2] === ra && g[0] === rb){ a = g[3]; b = g[1]; }
+      if(a == null) return;
+      if(a > b) w++; else if(b > a) l++; else t++;
+      games.push({year:se.year, week:+wk, a, b, po: +wk >= se.start});
+    }));
+  });
+  return {w, l, t, games};
+}
+/* The points each player scored in each past season, into the league's own
+   record, so a man with no games yet this year is priced off the last season
+   he played. Only players the league knows, and never over a season the app
+   already kept itself. */
+function histPricingYears(){
+  if(!HIST) return [];
+  const have = S.history || {};
+  return Object.keys(HIST.seasons).map(Number).filter(y=> !have[y] || !Object.keys(have[y]).length).sort();
+}
+ACT.histPricing = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const ys = histPricingYears();
+  if(!ys.length) return toast('Nothing to add');
+  const bySid = {};
+  S.players.forEach(p=>{ if(p.sleeperId) bySid[String(p.sleeperId)] = p; });
+  S.history = S.history || {};
+  let n = 0;
+  ys.forEach(y=>{
+    const out = {};
+    Object.entries(HIST.seasons[y].pp || {}).forEach(([pid, v])=>{
+      const p = bySid[pid];
+      if(!p || !v[0]) return;
+      out[p.id] = {gp:v[0], fpts:v[1]};
+      n++;
+    });
+    S.history[y] = out;
+  });
+  logIt('Past seasons added for pricing from Sleeper: '+ys.join(', ')+' ('+n+' player seasons)', {type:'admin'});
+  clearCapCache(); save(); render(); toast(ys.length+' seasons added','good');
+};
+ACT.histLoad = ()=>{ histFetch(false); };
+ACT.histReload = ()=>{ histFetch(true); };
+ACT.histYear = (d, el)=>{ ui.tmp.histYear = +el.value; render(); };
+ACT.histWeek = (d, el)=>{ ui.tmp.histWeek = +el.value; render(); };
+ACT.histPick = (d, el)=>{ ui.tmp['hist'+d.k] = el.value; render(); };
+VIEWS.history = function(){
+  /* Tried once per league, and only once the league it belongs to is loaded —
+     opened during start-up there is no Sleeper link yet, and that must not
+     stop it looking when the league arrives. */
+  const root0 = histRoot();
+  if(HIST && HIST.root !== root0){ HIST = null; }
+  if(!HIST && root0 && HIST_TRIED !== root0 && !HIST_BUSY){
+    HIST_TRIED = root0; HIST_ERR = '';
+    histFromCache().then(h=>{ if(h) render(); else histFetch(false); });
+  }
+  const sub = ui.sub || 'alltime';
+  const head = `<header><div><div class="eyebrow">${HIST ? Object.keys(HIST.seasons).length+' seasons on Sleeper' : 'from Sleeper'}</div><h1>League History</h1></div>
+      <div class="spacer"></div>
+      ${HIST && !HIST_BUSY ? '<button class="btn ghost sm" data-a="histLoad">Check for new seasons</button>' : ''}</header>`;
+  if(!HIST && !root0){
+    return `<div class="section">${head}<div class="panel"><div class="pb"><div class="hint">This league is not linked to Sleeper yet, so there is no history to show.</div></div></div></div>`;
+  }
+  if(!HIST){
+    return `<div class="section">${head}
+      <div class="panel"><div class="pb">
+        ${HIST_ERR ? '<div class="hint bad">'+esc(HIST_ERR)+'</div><button class="btn pri" data-a="histLoad">Try again</button>'
+          : '<div class="hint">'+esc(HIST_MSG || 'Getting the league’s past seasons from Sleeper…')+'</div>'+
+            '<div class="tiny dim" style="margin-top:6px">This happens once on each phone. After that it opens straight away.</div>'}
+      </div></div></div>`;
+  }
+  const years = Object.keys(HIST.seasons).map(Number).sort((a,b)=> b-a);
+  const y = years.indexOf(ui.tmp.histYear) >= 0 ? ui.tmp.histYear : years[0];
+  const se = HIST.seasons[y];
+  const tabs = `<div class="tabs">
+      ${[['alltime','All-time'],['season','Seasons'],['h2h','Head to head'],['draft','Drafts'],['trades','Trades']].map(([k,l])=>
+        '<button class="'+(sub===k?'on':'')+'" data-a="sub" data-s="'+k+'">'+l+'</button>').join('')}
+    </div>`;
+  const busy = HIST_BUSY || HIST_ERR ? '<div class="hint '+(HIST_ERR?'bad':'')+'" style="margin-bottom:10px">'+esc(HIST_ERR || HIST_MSG)+'</div>' : '';
+  const yearPick = `<label class="f" style="max-width:180px"><span>Season</span><select data-oninput="histYear">
+      ${years.map(yy=> '<option value="'+yy+'"'+(yy===y?' selected':'')+'>'+yy+'</option>').join('')}</select></label>`;
+  const nm = (se2, rid)=> esc(histTeam(se2, rid).name);
+  const own = (se2, rid)=>{ const t = se2.teams[rid]; return t ? '<span class="dim tiny">'+esc(t.o)+'</span>' : ''; };
+  let body = '';
+  if(sub === 'alltime'){
+    const rows = histAllTime();
+    const champs = years.slice().sort((a,b)=> a-b).map(yy=>{
+      const s2 = HIST.seasons[yy];
+      return '<tr><td class="num">'+yy+'</td><td>'+(s2.champ ? '<b style="font-weight:500">'+nm(s2, s2.champ)+'</b> '+own(s2, s2.champ) : '—')+'</td>'+
+        '<td class="hide-xs">'+(s2.runner ? nm(s2, s2.runner) : '—')+'</td><td class="hide-xs">'+(s2.third ? nm(s2, s2.third) : '—')+'</td>'+
+        '<td class="hide-xs dim">'+(s2.toilet ? nm(s2, s2.toilet) : '—')+'</td></tr>';
+    }).join('');
+    body = `<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Champions</h3></div>
+        <div class="pb tight scrollx"><table><thead><tr><th>Year</th><th>Champion</th><th class="hide-xs">Runner-up</th><th class="hide-xs">Third</th><th class="hide-xs">Toilet bowl</th></tr></thead>
+        <tbody>${champs}</tbody></table></div></div>
+      <div class="panel"><div class="ph"><h3>Every manager, every season</h3></div>
+        <div class="pb tight scrollx"><table><thead><tr><th>Manager</th><th class="right">Titles</th><th class="right">Record</th>
+          <th class="right">Pct</th><th class="right hide-xs">PF</th><th class="right hide-xs">PA</th><th class="right">Playoffs</th><th class="right hide-xs">Best</th></tr></thead><tbody>
+        ${rows.map(x=>{ const m = histManager(x.uid), g = x.w+x.l+x.t;
+          return '<tr class="'+(m.teamId && m.teamId===(myTeam()||{}).id ? 'me' : '')+'"><td>'+esc(m.name)+' <span class="dim tiny">'+esc(m.owner)+(m.here?'':' · gone')+'</span></td>'+
+            '<td class="right num">'+(x.titles.length ? '<b>'+x.titles.length+'</b> <span class="dim tiny">'+x.titles.join(', ')+'</span>' : '0')+'</td>'+
+            '<td class="right num">'+x.w+'-'+x.l+(x.t?'-'+x.t:'')+'</td><td class="right num">'+(g ? ((x.w+x.t/2)/g).toFixed(3).replace(/^0/,'') : '—')+'</td>'+
+            '<td class="right num hide-xs">'+x.pf.toFixed(0)+'</td><td class="right num hide-xs">'+x.pa.toFixed(0)+'</td>'+
+            '<td class="right num">'+x.playoffs+' <span class="dim tiny">of '+x.seasons+'</span></td>'+
+            '<td class="right num hide-xs">'+(x.best<99 ? ord(x.best) : '—')+'</td></tr>'; }).join('')}
+        </tbody></table></div>
+        <div class="pb"><div class="tiny dim">Regular-season records and points, ${years[years.length-1]}–${years[0]}. Playoffs means making the winners’ bracket.</div></div></div>`;
+  } else if(sub === 'season'){
+    const f = histFinish(se);
+    const stand = f.order.map(r=>{ const t = se.teams[r];
+      return '<tr><td class="num">'+f.at[r]+'</td><td>'+nm(se, r)+' '+own(se, r)+(se.champ===r?' <span class="pill good">champion</span>':'')+'</td>'+
+        '<td class="right num">'+t.w+'-'+t.l+(t.t?'-'+t.t:'')+'</td><td class="right num">'+t.pf.toFixed(2)+'</td><td class="right num hide-xs">'+t.pa.toFixed(2)+'</td></tr>'; }).join('');
+    const wks = Object.keys(se.weeks).map(Number).sort((a,b)=> a-b);
+    const wSel = wks.indexOf(ui.tmp.histWeek) >= 0 ? ui.tmp.histWeek : wks[0];
+    const games = (se.weeks[wSel]||[]).map(g=>{
+      const aw = g[1] > g[3], bw = g[3] > g[1];
+      return '<div class="row" style="justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line, #2a3440)">'+
+        '<span style="flex:1;'+(aw?'font-weight:600':'')+'">'+nm(se, g[0])+'</span><span class="num" style="'+(aw?'font-weight:600':'')+'">'+g[1].toFixed(2)+'</span>'+
+        '<span class="dim">–</span><span class="num" style="'+(bw?'font-weight:600':'')+'">'+g[3].toFixed(2)+'</span>'+
+        '<span style="flex:1;text-align:right;'+(bw?'font-weight:600':'')+'">'+nm(se, g[2])+'</span></div>'; }).join('');
+    body = `<div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">${yearPick}</div>
+      <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>${y} final standings</h3></div>
+        <div class="pb tight scrollx"><table><thead><tr><th>#</th><th>Team</th><th class="right">Record</th><th class="right">PF</th><th class="right hide-xs">PA</th></tr></thead>
+        <tbody>${stand}</tbody></table></div>
+        <div class="pb"><div class="tiny dim">Places 1–3 from the playoffs, then the rest of the playoff field, then everyone else by record.
+          ${se.toilet ? 'Toilet bowl: '+nm(se, se.toilet)+'.' : ''}</div></div></div>
+      <div class="panel"><div class="ph"><h3>Scores</h3><div class="spacer"></div>
+        <select data-oninput="histWeek">${wks.map(w=> '<option value="'+w+'"'+(w===wSel?' selected':'')+'>Week '+w+(w>=se.start?' · playoffs':'')+'</option>').join('')}</select></div>
+        <div class="pb">${games || '<div class="dim">No games that week.</div>'}</div></div>`;
+  } else if(sub === 'h2h'){
+    const mans = histAllTime().map(x=> histManager(x.uid));
+    const me = (myTeam()||{}).owner||'';
+    const meU = mans.find(m=> m.owner.toLowerCase() === me.toLowerCase());
+    const a = ui.tmp.histA || (meU ? meU.id : (mans[0]||{}).id), b = ui.tmp.histB || ((mans.find(m=> m.id !== a)||{}).id);
+    const sel = (k, v)=> '<select data-oninput="histPick" data-k="'+k+'">'+mans.map(m=> '<option value="'+esc(m.id)+'"'+(m.id===v?' selected':'')+'>'+esc(m.name)+'</option>').join('')+'</select>';
+    const r = (a && b && a !== b) ? histH2H(a, b) : null;
+    body = `<div class="panel"><div class="ph"><h3>Head to head</h3></div><div class="pb stack">
+      <div class="grid g2"><label class="f"><span>Manager</span>${sel('A', a)}</label><label class="f"><span>Against</span>${sel('B', b)}</label></div>
+      ${!r ? '<div class="dim">Pick two different managers.</div>' : !r.games.length ? '<div class="dim">They have never played each other.</div>' :
+        '<div class="big">'+r.w+'-'+r.l+(r.t?'-'+r.t:'')+'</div>'+
+        '<div class="scrollx"><table><thead><tr><th>Season</th><th>Week</th><th class="right">Score</th></tr></thead><tbody>'+
+        r.games.sort((x,z)=> z.year-x.year || z.week-x.week).map(g=> '<tr><td class="num">'+g.year+'</td><td>'+g.week+(g.po?' <span class="pill">playoffs</span>':'')+'</td>'+
+          '<td class="right num '+(g.a>g.b?'good':g.a<g.b?'bad':'')+'">'+g.a.toFixed(2)+' – '+g.b.toFixed(2)+'</td></tr>').join('')+'</tbody></table></div>'}
+      </div></div>`;
+  } else if(sub === 'draft'){
+    const rows = se.draft.slice().sort((a,b)=> a[1]-b[1]);
+    const types = [...new Set(rows.map(d=> d[4]))];
+    body = `<div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">${yearPick}</div>
+      <div class="panel"><div class="ph"><h3>${y} draft${rows.length?'':' — none on Sleeper'}</h3><div class="spacer"></div>
+        <span class="tiny dim">${rows.length} picks${types.filter(Boolean).length>1?' · '+types.join(', '):''}</span></div>
+        <div class="pb tight scrollx"><table><thead><tr><th>Pick</th><th>Player</th><th>Team</th></tr></thead><tbody>
+        ${rows.map(d=>{ const p = histPlayer(d[3]); const per = Math.max(1, Object.keys(se.teams).length);
+          return '<tr><td class="num">'+d[0]+'.'+String(((d[1]-1)%per)+1).padStart(2,'0')+'</td><td>'+esc(p.name)+' <span class="dim tiny">'+esc(p.pos)+'</span></td>'+
+            '<td>'+(d[2] ? nm(se, d[2]) : '—')+'</td></tr>'; }).join('')}
+        </tbody></table></div></div>`;
+  } else {
+    const list = se.trades.slice().reverse();
+    body = `<div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:10px">${yearPick}</div>
+      <div class="panel"><div class="ph"><h3>${y} trades</h3><div class="spacer"></div><span class="tiny dim">${list.length}</span></div>
+        <div class="pb stack">${list.length ? list.map(t=>{
+          const side = (rid)=>{
+            const got = Object.entries(t.a).filter(([,r])=> +r === +rid).map(([pid])=>{ const p = histPlayer(pid); return esc(p.name)+(p.pos?' <span class="dim tiny">'+esc(p.pos)+'</span>':''); });
+            t.pk.filter(p=> p[4] === +rid).forEach(p=> got.push(p[0]+' round '+p[1]+' pick <span class="dim tiny">(originally '+esc(histTeam(se, p[2]).name)+')</span>'));
+            t.fb.filter(b=> b[1] === +rid).forEach(b=> got.push('$'+b[2]+' FAAB'));
+            return '<div><div class="flabel">'+nm(se, rid)+' got</div><div class="tiny">'+(got.join('<br>') || '<span class="dim">nothing</span>')+'</div></div>';
+          };
+          return '<div class="assetbox"><div class="tiny dim" style="margin-bottom:6px">'+(t.at ? new Date(t.at).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : '')+'</div>'+
+            '<div class="grid g2">'+t.r.map(side).join('')+'</div></div>'; }).join('') : '<div class="dim">No trades that season.</div>'}</div></div>`;
+  }
+  const ys = histPricingYears();
+  const pricing = (isCommish() && ys.length) ? `<div class="panel" style="margin-top:14px"><div class="ph"><h3>Use these seasons for pricing</h3></div><div class="pb stack">
+      <div class="hint">The extension ladder ranks a man on this season once he has played, and on the last season he did play before that.
+        The app has no past seasons of its own, so a player without a game yet this year has nothing to fall back on.
+        This adds each player’s points per game from ${ys.join(', ')} — as Sleeper scored them in this league at the time.</div>
+      <div><button class="btn pri" data-a="histPricing">Add ${ys.length} season${ys.length===1?'':'s'}</button></div></div></div>` : '';
+  return `<div class="section">${head}${busy}${tabs}${body}${pricing}
+    <div class="tiny dim" style="margin-top:10px">Straight from Sleeper, kept on this phone.${HIST.at ? ' Last checked '+esc(dstr(HIST.at))+'.' : ''}</div></div>`;
+};
+
 VIEWS.rules = function(){
   const q = (ui.tmp.ruleq||'').toLowerCase();
   const list = S.rules.filter(r=> !q || r.title.toLowerCase().includes(q) || r.body.toLowerCase().includes(q));
@@ -21247,7 +21872,7 @@ VIEWS.settings = function(){
           </div>
           <div class="hint"><b>Head to head</b> only counts when it separates the whole tied group — three teams all at 1-1
             proves nothing and falls through to the next test.
-            <b>Opponent points</b> adds up the records of everyone you have played, which is what settles most three-way ties.
+            <b>Strength of schedule (SOS)</b> adds up the wins of everyone you have played, which is what settles most three-way ties.
             <b>Lineup efficiency</b> is the share of your own best possible score you actually put on the field; it reads
             100% for everyone until people start setting lineups by hand rather than letting the optimiser do it.</div>
           <label class="check"><input type="checkbox" data-set="settings.playoffs.seedLastWeek" ${P.seedLastWeek!==false?'checked':''}>
@@ -21530,7 +22155,7 @@ VIEWS.settings = function(){
           <span>Spread the charge over the years left on the deal</span></label>
         <label class="f"><span>Years shown in projections</span>
           <input type="number" min="1" max="${maxProjYears()}" data-set="settings.cap.projectYears" value="${clamp(c.cap.projectYears,1,maxProjYears())}"></label>
-        <div class="hint">Ten years is the ceiling, and it will not run past your longest allowed contract — currently ${ct.maxYears} years.</div>
+        <div class="hint">Anywhere from one to ten seasons ahead, including this one.</div>
         <div class="flabel" style="margin-top:6px">One-off cap for a single year</div>
         ${projYears().map(y=>`<div class="row"><span class="eyebrow" style="width:52px">${y}</span>
           <input type="number" step="${c.cap.increment}" placeholder="${money(capForYear(y))}" style="flex:1"
@@ -21544,12 +22169,19 @@ VIEWS.settings = function(){
         <div class="pb">
           <div class="grid g3">
             ${[['first','Champion'],['second','Runner-up'],['third','Third'],
-               ['topScorer','Most points scored'],['backToBack','Back to back']].map(([k,label])=>
+               ['topScorer','Most points scored'],['backToBack','Added to back to back each year']].map(([k,label])=>
               '<label class="f"><span>'+label+'</span><input type="number" min="0" step="10" '+
               'data-set="settings.payouts.'+k+'" value="'+(+payoutCfg()[k]||0)+'"></label>').join('')}
           </div>
+          <div class="grid g2" style="margin-top:8px">
+            <label class="f"><span>Back-to-back jackpot this season</span>
+              <input type="number" min="0" step="10" data-a2="b2bPot" data-oninput="b2bField" data-f="pot" value="${b2bJackpot()}"></label>
+            <label class="f"><span>Can be won by <span class="dim">— last year’s champion</span></span>
+              ${teamSelect(null, lastChampion()||'', {blank:'Nobody', attrs:'data-oninput="b2bField" data-f="holder"'})}</label>
+          </div>
           <div class="hint">Worked out from the final standings and posted to the league room once the bracket
-            is done. Back to back only pays if the champion also won it the year before.</div>
+            is done. Back to back pays the whole jackpot, and only if last year’s champion wins it again. Every
+            season it is not won, it grows by the yearly amount; once it is won it starts over from that amount.</div>
         </div></div>
       <div class="panel" style="grid-column:1/-1"><div class="ph"><h3>Pop-up notifications</h3></div>
         <div class="pb stack">
@@ -23420,10 +24052,19 @@ ACT.rollSeason = ()=>{
     <p class="muted tiny">Download a copy from this tab first if you want to be able to go back.</p>`,
     '<button class="btn ghost" data-a="closeModal">Not yet</button><button class="btn pri" data-a="rollSeasonGo">Roll it over</button>');
 };
+ACT.b2bField = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const b = b2bCfg();
+  if(b.season !== S.league.season){ b.season = S.league.season; if(b.pot == null) b.pot = +payoutCfg().backToBack||0; }
+  if(d.f === 'pot') b.pot = Math.max(0, +el.value||0);
+  if(d.f === 'holder'){ const t = byId(S.teams, el.value); b.holder = t ? t.id : null; b.holderOwner = t ? (t.owner||'') : ''; }
+  clearCapCache(); save(); if(d.f !== 'pot') render();
+};
 ACT.rollSeasonGo = ()=>{
   keepBackup(S, 'before rolling the season over');
   foldWeekIntoSeason(); foldWeekIntoDvp();
   const old = S.league.season;
+  { const pay = payouts(old); b2bRoll(old, pay.champ, !!pay.backToBack); }
   S.history = S.history || {};
   S.history[old] = (S.season||{}).byPlayer || {};
   if(S.settings.cap.rollover.on){
@@ -24507,6 +25148,7 @@ function migrate(j){
      stray edit on somebody else's device cannot carry the league away. */
   pinCommish(out);
   charterSettings(out);
+  b2bSeed(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
