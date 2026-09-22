@@ -697,7 +697,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .ladder .lhead,.ladder .lrow,.capline{grid-template-columns:128px repeat(var(--yc),minmax(60px,1fr))}
   .ladder .lname .pn{font-size:12px}
   #tabbar{
-    display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:50;
+    display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:50;
     background:rgba(19,32,45,.97);backdrop-filter:blur(12px);border-top:1px solid var(--rule);
     padding-bottom:env(safe-area-inset-bottom);
   }
@@ -712,7 +712,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   }
   #tabbar button .lb{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #tabbar button .ic{font-size:17px;line-height:1}
-  #tabbar button .lb{font:600 9.5px/1 var(--disp);letter-spacing:.1em;text-transform:uppercase}
+  #tabbar button .lb{font:600 9.5px/1 var(--disp);letter-spacing:.05em;text-transform:uppercase}
   #tabbar button.on{color:var(--brass)}
   #tabbar button .badge{position:absolute;top:3px;right:calc(50% - 22px);font-size:9.5px;padding:2px 5px}
   #sheet{position:fixed;inset:0;z-index:90;background:rgba(6,11,16,.7);align-items:flex-end}
@@ -963,7 +963,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-08-22h · block and front office';
+const APP_BUILD = '2026-09-22b · ladder-only extensions';
 
 /* ============================================================
    HOME LEAGUE
@@ -2455,7 +2455,9 @@ const NAV = [
   {id:'import',   ic:'↥', label:'Import League', commish:true},
   {id:'settings', ic:'⚙', label:'Settings'}
 ];
-const MOBILE_TABS = ['live','chat','trades','cap'];
+const MOBILE_TABS = ['dash','teams','live','chat','trades','cap'];
+/* Short names for the bottom bar, where a full label will not fit. */
+const TAB_SHORT = {dash:'Office', teams:'Teams', chat:'League'};
 
 function myTeam(){
   /* The team object. Which seat is mine follows the sign-in, same as elsewhere. */
@@ -2539,6 +2541,40 @@ function b2bSeed(st){
   st.league.b2bSet = '2026-09-22';
   if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[t.id], players:[],
     text:'Back to back: '+t.name+' won in 2025. The 2026 jackpot is $890 and it is theirs if they win again; otherwise it grows by $120 a year until someone does'});
+}
+/* Kyle signed a test extension on the Bengals defense on 22 Sep 2026 and asked
+   for it to be taken back. Done once, on the league itself, the same way the
+   Undo button does it. Only an extension signed on the 21st or 22nd is touched. */
+function bengalsUndo(st){
+  if(!st || !st.league || !Array.isArray(st.players) || st.league.bengalsUndone) return;
+  const sup = ((st.settings||{}).supa||{}).leagueId, sl = ((st.settings||{}).live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  if(st.players.length < 100) return;                         // not the real league yet
+  const p = st.players.find(x=> x.pos === 'DEF' && /bengals|^cin$/i.test((x.name||'')+'') && x.contract && (x.contract.extensions||[]).length)
+         || st.players.find(x=> x.pos === 'DEF' && String(x.sleeperId) === 'CIN' && x.contract && (x.contract.extensions||[]).length);
+  st.league.bengalsUndone = '2026-09-22';
+  if(!p) return;
+  const c = p.contract, list = c.extensions, e = list[list.length-1];
+  const from = Date.UTC(2026, 8, 21, 5), to = Date.UTC(2026, 8, 23, 5);
+  if(!(+e.at >= from && +e.at < to)) return;
+  const tid = c.teamId, r2 = (v)=> Math.round(v*100)/100;
+  if(e.prev){
+    const back = JSON.parse(JSON.stringify(e.prev));
+    if(list.length > 1) back.extensions = list.slice(0, -1);
+    p.contract = back;
+  } else {
+    const n = Math.max(0, +e.years||0);
+    let sal = (c.salaries||[]).slice(0, Math.max(0, c.salaries.length - n));
+    if(e.replaced){
+      const baseThen = (c.base != null && c.base !== '') ? +c.base : (+c.total||0)/Math.max(1, +c.years||1);
+      sal = sal.concat([r2(baseThen + (+e.backload||0))]);
+    }
+    c.salaries = sal; c.years = sal.length; c.byYear = true;
+    c.total = r2(sal.reduce((a,v)=> a + (+v||0), 0));
+    if(list.length > 1) c.extensions = list.slice(0, -1); else delete c.extensions;
+  }
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'contract', teams:[tid], players:[p.id],
+    text:(p.name||'Bengals D/ST')+': test extension undone — back to $'+p.contract.total+' over '+p.contract.years+' yr, as before it was signed'});
 }
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
@@ -2783,7 +2819,7 @@ function renderShell(){
   $('#tabbar').innerHTML = MOBILE_TABS.map(id=>{
     const n = NAV.find(x=>x.id===id);
     const b = id==='trades'&&c.trades ? '<span class="badge">'+c.trades+'</span>' : (id==='block'&&c.block?'<span class="badge q">'+c.block+'</span>':'');
-    return '<button data-a="go" data-r="'+id+'" class="'+(route===id?'on':'')+'"><span class="ic">'+n.ic+'</span><span class="lb">'+esc(n.label.split(' ')[0])+'</span>'+b+'</button>';
+    return '<button data-a="go" data-r="'+id+'" class="'+(route===id?'on':'')+'"><span class="ic">'+n.ic+'</span><span class="lb">'+esc(TAB_SHORT[id]||n.label.split(' ')[0])+'</span>'+b+'</button>';
   }).join('') + '<button data-a="sheet" class="'+(MOBILE_TABS.indexOf(route)<0?'on':'')+'"><span class="ic">⋯</span><span class="lb">More</span></button>';
 }
 /* Nobody who has been handed this league should ever be looking at the practice
@@ -9454,6 +9490,7 @@ ACT.playerCard = (d)=>{
     (c && c.teamId && c.teamId!==S.league.myTeamId
       ? '<button class="btn" data-a="askFor" data-id="'+p.id+'">Ask about him</button>' : '')+
     (c && !isWaiver(p)?'<button class="btn" data-a="extend" data-id="'+p.id+'">Extend</button>':'')+
+    (c && isCommish() && (c.extensions||[]).length ? '<button class="btn ghost danger" data-a="undoExtension" data-id="'+p.id+'">Undo extension</button>' : '')+
     '<button class="btn pri" data-a="editContract" data-id="'+p.id+'">'+(c?'Edit contract':'Sign him')+'</button>');
 };
 ACT.unretire = (d)=>{
@@ -10182,6 +10219,9 @@ function extReplacesFinal(c){ return yearsLeft(c) >= 2; }
 function applyExtension(p, addYears, aav, structId){
   const c = p.contract;
   const replace = extReplacesFinal(c);
+  /* The deal exactly as it stood, so the extension can be taken back. */
+  const prev = JSON.parse(JSON.stringify(c)); delete prev.extensions;
+  const baseWasSet = !(c.base == null || c.base === '');
   /* Keep the base he signed at, and start the new one where the new years do. */
   if(c.base == null || c.base === '') c.base = contractBase(c);
   const extFrom = replace ? (c.startYear + c.years - 1) : (c.startYear + c.years);
@@ -10200,8 +10240,57 @@ function applyExtension(p, addYears, aav, structId){
   }
   c.total = fixInc(sum(c.salaries));
   c.extensions = (c.extensions||[]).concat([{at:Date.now(), years:addYears, aav:fixInc(aav),
-    structId, replaced:replace, backload:owed, from:extFrom}]);
+    structId, replaced:replace, backload:owed, from:extFrom, prev, baseWasSet}]);
 }
+/* Take the last extension back, leaving the deal as it was before it. Exact
+   when the extension kept a copy of the deal; otherwise rebuilt from what it
+   recorded — the years it added, whether it replaced the final year, and any
+   backload difference it carried. */
+function undoExtension(p){
+  const c = p && p.contract;
+  const list = (c && c.extensions) || [];
+  if(!list.length) return null;
+  const e = list[list.length-1], rest = list.slice(0, -1);
+  if(e.prev){
+    const back = JSON.parse(JSON.stringify(e.prev));
+    if(rest.length) back.extensions = rest;
+    p.contract = back;
+    return e;
+  }
+  const n = Math.max(0, +e.years||0);
+  let sal = (c.salaries||[]).slice(0, Math.max(0, c.salaries.length - n));
+  if(e.replaced){
+    /* The year it bought out paid his base plus the backload difference. */
+    const baseThen = (c.base != null && c.base !== '') ? +c.base : contractBase(c);
+    sal = sal.concat([Math.round((baseThen + (+e.backload||0))*100)/100]);
+  }
+  c.salaries = sal;
+  c.years = sal.length;
+  c.total = fixInc(sum(sal));
+  c.byYear = true;
+  c.extensions = rest;
+  if(!rest.length){
+    delete c.extensions;
+    if(!e.baseWasSet && c.base != null && Math.abs(+c.base - c.total/Math.max(1,c.years)) < 0.011) delete c.base;
+  }
+  return e;
+}
+ACT.undoExtension = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id);
+  const c = p && p.contract, e = c && (c.extensions||[]).slice(-1)[0];
+  if(!e) return toast('He has no extension to undo','bad');
+  if(!d.sure) return modal('Undo '+p.name+'’s extension?',
+    '<p>This takes back the '+e.years+'-year extension at '+money(e.aav)+' a year'+(e.at?' signed '+esc(dstr(e.at)):'')+
+    ', and puts his deal back to how it was before it.</p>',
+    '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+    '<button class="btn danger" data-a="undoExtension" data-id="'+p.id+'" data-sure="1">Undo it</button>');
+  const tid = c.teamId;
+  undoExtension(p);
+  logIt(teamName(tid)+': '+p.name+'’s extension undone — back to '+money(p.contract.total)+' over '+p.contract.years+' yr',
+    {type:'contract', teams:[tid], players:[p.id]});
+  closeModal(); clearCapCache(); save(); render(); toast('Extension undone','good');
+};
 /* With players not given a say, the ladder sets the number outright. */
 function ladderMode(){
   return !S.settings.players.on && S.settings.contracts.ladder.on;
@@ -10324,6 +10413,8 @@ function extInfoPanel(p){
     (g.ok && g.basis != null && g.basis !== y && g.rank
       ? '<div class="hint warn">He has not played '+need+' games this season yet, so the extension itself is priced off '+g.basis+
         ', the last season he did: '+esc(p.pos)+g.rank.rank+', '+money(ladderPrice(p.pos, g.rank.rank))+' a year.</div>' : '')+
+    (!met ? '<div class="tiny" style="margin-top:4px">Until he has played '+need+', he can only be extended in week '+extLastCallWeek()+
+      ', the week of the deadline — and then on last season’s price.</div>' : '')+
     '<div class="tiny dim" style="margin-top:4px">The games needed is set in <b>Settings › Contracts</b> — '+
       '“Games he must play before you can extend him”.'+
       (isCommish() ? ' <a href="#" data-a="goContracts">Change it</a>' : ' Your commissioner sets it.')+'</div>';
@@ -10367,16 +10458,22 @@ ACT.extend = (d)=>{
       '<button class="btn ghost" data-a="closeModal">Close</button>');
   }
   const offset = Math.max(0, c.startYear + c.years - S.league.season);
-  const lq = ladderMode() ? ladderQuote(p) : null;
-  const q = extensionQuote(p, 2, offset);
-  ui.tmp.ext = {pid:p.id, years:2, aav: lq ? lq.price : q.aav, structId:c.structId, offset};
+  /* The ladder sets the price, and nothing else does. */
+  const lq = ladderQuote(p);
+  if(!lq) return modal('No ladder price — '+p.name,
+    '<p>Extensions are priced off the extension ladder only, and there is no ladder price for him'+
+    (!(S.settings.contracts.ladder||{}).on ? ' because the ladder is switched off in Settings › Contracts.' : '.')+'</p>'+extInfoPanel(p),
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+  ui.tmp.ext = {pid:p.id, years:2, aav: lq.price, structId:c.structId, offset};
   extModal();
 };
 function extModal(){
   const e = ui.tmp.ext, p = byId(S.players,e.pid), c = p.contract;
   const b = valueBreakdown(p);
   const q = extensionQuote(p, e.years, e.offset);
-  const lq = ladderMode() ? ladderQuote(p) : null;
+  const lq = ladderQuote(p);
+  /* The base salary is the ladder's, always — whatever was held before. */
+  if(lq) e.aav = lq.price;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   const roomYears = Math.max(0, maxTotal - c.years);
   const lp = limitProblemFor('extensions', c.teamId, c.years + e.years, p.id);
@@ -10427,20 +10524,15 @@ function extModal(){
     <div class="grid g3">
       <label class="f"><span>Extra years (up to ${roomYears})</span>
         <input type="number" min="1" max="${Math.max(1,roomYears)}" value="${e.years}" data-oninput="extField" data-f="years" data-k="exty"></label>
-      <label class="f"><span>Base salary a year (total ÷ years)</span>
-        <input type="number" step="${S.settings.cap.increment}" value="${e.aav}" data-oninput="extField" data-f="aav" data-k="extaav"></label>
+      <div class="f"><span>Base salary a year <span class="dim">— the ladder’s, fixed</span></span>
+        <div class="money" style="font-size:20px;padding:6px 0">${money(e.aav)}</div></div>
       <label class="f"><span>Structure for the new years</span>
         <select data-oninput="extField" data-f="structId">${S.settings.contracts.structures.map(x=>
           '<option value="'+x.id+'"'+(x.id===e.structId?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select></label>
     </div>
-    <div class="row" style="margin:8px 0 12px">
-      ${lq?`<button class="btn sm" data-a="extUseLadder">Use the ladder's ${money(lq.price)}</button>`:''}
-      <button class="btn sm" data-a="extUseQuote">Use the model's ${money(q.aav)}</button>
-      <span class="tiny muted">${e.years>1?'includes a '+pct((q.prem-1)*100)+' premium for the term':'no term premium on a single year'}</span>
-    </div>
+    <div class="tiny dim" style="margin:8px 0 12px">The price is set by the extension ladder and cannot be changed. Choose how many years to add and how the money is spread across them.</div>
     <div class="scrollx"><table><thead><tr><th>Year</th>${q.perYear.map((_,i)=>'<th class="right">'+(firstYear+i)+'</th>').join('')}</tr></thead>
       <tbody>
-        <tr><td class="dim">Projected worth</td>${q.perYear.map(v=>'<td class="right num dim">'+money(v)+'</td>').join('')}</tr>
         <tr><td class="dim">You would pay</td>${salariesFor(roundInc(e.aav*e.years), e.years, e.structId).map(v=>'<td class="right money">'+money(v)+'</td>').join('')}</tr>
       </tbody></table></div>
     <div class="tiny dim" style="margin:4px 0 8px">${e.years} year${e.years===1?'':'s'} × ${money(e.aav)} base = <b>${money(roundInc(e.aav*e.years))}</b> in total. The structure only moves money between the years — the base salary, and the ladder price, stay ${money(e.aav)} a year.</div>
@@ -10451,15 +10543,11 @@ function extModal(){
         : '<div class="hint bad">He turns that down. '+esc(askLabel(p, c.teamId, e.years))+
           (S.settings.players.showAsk==='hidden'?'':' You are '+money(w.gap)+' a year short.')+'</div>';
     })()}
-    <div class="hint">${sum(salariesFor(roundInc(e.aav*e.years), e.years, e.structId).map((v,i)=> v-q.perYear[i])) > 0
-      ? 'You are paying '+money(fixInc(e.aav*e.years - sum(q.perYear)))+' more than the projection over those years.'
-      : 'You are getting him '+money(fixInc(sum(q.perYear) - e.aav*e.years))+' under the projection over those years.'}
-      The deal would run ${c.years + e.years} years in total, through ${firstYear + e.years - 1}.</div>
+    <div class="hint">The deal would run ${c.years + e.years} years in total, through ${firstYear + e.years - 1}.</div>
     ${lp?'<div class="hint bad">'+esc(teamName(c.teamId))+' would then hold '+lp.have+' deals of '+lp.length+
       ' years or longer, and the league allows '+lp.allow+'. Shorten it, or let another long deal run out first.</div>':''}
     ${roomYears<=0?'<div class="hint bad">This contract is already at the longest the league permits, extensions included.</div>':''}`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
-    (S.settings.players.on?'<button class="btn ghost" data-a="extMeetAsk">Meet his number</button>':'')+
     '<button class="btn pri" data-a="extGo"'+((lp||roomYears<=0)?' disabled':'')+'>Sign the extension</button>');
 }
 ACT.extField = (d,el)=>{
@@ -10472,25 +10560,17 @@ ACT.extField = (d,el)=>{
     const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
     e.aav = lq ? lq.price : extensionQuote(byId(S.players,e.pid), e.years, e.offset).aav;
   }
-  else if(d.f==='aav') e.aav = Math.max(0, +el.value||0);
+  else if(d.f==='aav'){ /* the ladder's price is not for changing */ }
   else e.structId = el.value;
   extModal();
 };
-ACT.extUseQuote = ()=>{
-  const e = ui.tmp.ext;
-  e.aav = extensionQuote(byId(S.players,e.pid), e.years, e.offset).aav;
-  extModal();
-};
+ACT.extUseQuote = ()=>{ extModal(); };
 ACT.ladderPos = (d,el)=>{ ui.tmp.ladPos = el.value; render(); };
 ACT.extUseLadder = ()=>{
   const e = ui.tmp.ext, lq = ladderQuote(byId(S.players,e.pid));
   if(lq){ e.aav = lq.price; extModal(); }
 };
-ACT.extMeetAsk = ()=>{
-  const e = ui.tmp.ext, p = byId(S.players,e.pid);
-  e.aav = demandFrom(p, p.contract.teamId, e.years);
-  extModal();
-};
+ACT.extMeetAsk = ()=>{ extModal(); };
 ACT.extGo = ()=>{
   const e = ui.tmp.ext, p = byId(S.players,e.pid), c = p.contract;
   /* Checked again here, at the moment of signing — a dialog left open over
@@ -10498,6 +10578,8 @@ ACT.extGo = ()=>{
   { const fz = extFreeze(); if(fz.frozen) { closeModal(); render(); return toast(fz.why+' Extensions open again '+fz.back+'.','bad'); } }
   { const w = extWindowOpen(); if(!w.ok && !isCommish()) { closeModal(); return toast(w.why,'bad'); } }
   { const g = canExtend(p); if(!g.ok) { closeModal(); return toast(g.why || 'He cannot be extended yet','bad'); } }
+  /* Signed at the ladder's price and no other, whatever the dialog was holding. */
+  { const lq = ladderQuote(p); if(!lq) { closeModal(); return toast('There is no ladder price for him, so he cannot be extended','bad'); } e.aav = lq.price; }
   if(limitProblemFor('extensions', c.teamId, c.years + e.years, p.id)) return toast('That breaks the length limits','bad');
   const w = willAccept(p, c.teamId, e.aav, e.years);
   if(!w.ok){
@@ -14403,6 +14485,9 @@ function positionRank(p, year){
   const n = t.at[p.id];
   return n ? {rank:n, of:t.of, year, live: year === S.league.season && playedThisWeek(p.id)} : null;
 }
+/* The week a man short of his games may still be extended, off last season —
+   the week the extension deadline falls in. */
+function extLastCallWeek(){ return extDeadlineWeek() || 16; }
 function canExtend(p){
   /* Nobody is extended with years still to run beyond the next one. */
   const left = p && p.contract ? yearsLeft(p.contract) : 0;
@@ -14415,6 +14500,14 @@ function canExtend(p){
     const r = positionRank(p, S.league.season);
     return {ok:true, basis:S.league.season, rank:r, games:here, current:true};
   }
+  /* Short of the games, he waits. Seeing where he stands and what he would
+     cost is fine; signing is not — until the last week before the deadline,
+     when a man who still has not played enough is priced off last season. */
+  const lastCall = extLastCallWeek();
+  if((+S.live.week||1) < lastCall)
+    return {ok:false, basis:null, rank:null, games:here, preview:true,
+      why: p.name+' has played '+here+' of the '+need+' game'+(need===1?'':'s')+' he needs. He can be extended once he has played '+need+
+        ', or in week '+lastCall+' on last season’s price if he still has not.'};
   const y = rankBasisYear(p);
   if(y==null) return {ok:false, basis:null, rank:null, games:here,
     why: here >= 1
@@ -25149,6 +25242,7 @@ function migrate(j){
   pinCommish(out);
   charterSettings(out);
   b2bSeed(out);
+  bengalsUndo(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -25483,8 +25577,13 @@ async function init(){
      hole, so any missing card is fetched once in the background and the book is
      worked out again. */
   setTimeout(()=>{ try{ fillMissingCards(); }catch(e){} }, 1500);
-  const h = location.hash.slice(1);
-  route = VIEWS[h] ? h : 'dash';
+  /* Every launch opens on the Front Office. The address keeps the last screen
+     visited (#live, #trades...), and a phone reopening the app from its home
+     screen hands that back, which is how it kept waking up on Live Scoring.
+     Only the screen is reset; invitation and join codes in the address are
+     read by greetInvites below and are left alone. */
+  route = 'dash';
+  try{ const h0 = location.hash.slice(1); if(VIEWS[h0]) history.replaceState(null,'',location.pathname+location.search); }catch(e){}
   render();
   greetInvites();
   if(openedFromFile()) notify('Opened from a file',
