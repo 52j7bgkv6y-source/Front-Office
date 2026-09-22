@@ -963,7 +963,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-22b · ladder-only extensions';
+const APP_BUILD = '2026-09-22e · one matchup rank everywhere';
 
 /* ============================================================
    HOME LEAGUE
@@ -4323,60 +4323,23 @@ function defStreamDifficulty(code){
    or before there is enough data to rate it. */
 function matchupTag(p){
   if(!p) return '';
-  const o = thisWeekOpponent(p.nfl);
-  if(!o) return 'bye';
-  const face = (o.atHome ? 'vs ' : '@ ')+o.code;
-  if(p.pos==='DEF'){
-    const ds = defStreamDifficulty(o.code);
-    return ds ? face+' · '+ds.band.label : face;
-  }
-  const m = matchupFor(p);
-  return (m && m.diff) ? face+' · '+m.diff.label : face;
+  const mi = matchupInfo(p);
+  if(!mi || mi.bye) return 'bye';
+  return mi.thin ? mi.face : mi.face+' · '+mi.label+' #'+mi.rank;
 }
 function matchupLine(p){
   if(!p) return '';
-  const o = thisWeekOpponent(p.nfl);
-  if(!o){
-    // no game this week — a bye, or an unmapped team
-    return '<span class="tiny dim">on a bye — nothing this week</span>';
-  }
-  const face = (o.atHome ? 'vs ' : '@ ')+esc(o.code);
-  const started = o.game.status!=='pre';
-  const when = o.game.status==='final' ? 'final' : o.game.status!=='pre' ? 'playing now' : '';
-
+  const mi = matchupInfo(p);
+  if(!mi || mi.bye) return '<span class="tiny dim">on a bye — nothing this week</span>';
+  const whenBit = mi.when ? ' <span class="tiny '+(mi.o.game.status==='final'?'dim':'live')+'">'+mi.when+'</span>' : '';
+  let extra = '';
   if(p.pos==='DEF'){
-    /* A defense's week is the offense across from it: an easy stream against a
-       weak offense, a hard one against a strong offense. */
-    const ds = defStreamDifficulty(o.code);
     const own = (S.dvp||{})[p.nfl];
     const form = (own && own.games) ? Math.round((sum(Object.values(own.pos).map(x=>x.f||0))/own.games)*10)/10 : null;
-    if(!ds){
-      return '<span class="pill" title="not enough games on that offense yet">'+face+'</span>'+
-        (when?' <span class="tiny '+(o.game.status==='final'?'dim':'live')+'">'+when+'</span>':'')+
-        (form!=null?' <span class="tiny dim" title="fantasy points this defense gives up per game">gives up '+form+'/gm</span>':'')+
-        ' <span class="tiny dim">offense data still thin</span>';
-    }
-    const cls = ds.band.cls==='bad'?'live':ds.band.cls==='good'?'ok':'';
-    return '<span class="pill '+cls+'">'+face+' · '+esc(ds.band.label)+'</span>'+
-      (when?' <span class="tiny '+(o.game.status==='final'?'dim':'live')+'">'+when+'</span>':'')+
-      ' <span class="tiny dim" title="how that offense ranks in fantasy points scored, best first">'+
-        esc(o.code)+' offense '+ds.rank+' of '+ds.of+'</span>'+
-      (form!=null?' <span class="tiny dim">· gives up '+form+'/gm</span>':'');
+    if(form!=null) extra = ' <span class="tiny dim" title="fantasy points this defense gives up per game">· gives up '+form+'/gm</span>';
   }
-
-  const m = matchupFor(p);
-  if(!m || !m.diff){
-    return '<span class="pill" title="not enough games on this defense yet">'+face+'</span>'+
-      (when?' <span class="tiny '+(o.game.status==='final'?'dim':'live')+'">'+when+'</span>':'')+
-      ' <span class="tiny dim">matchup data still thin</span>';
-  }
-  const cls = m.diff.cls==='bad'?'live':m.diff.cls==='good'?'ok':'';
-  const posBit = m.byPos ? m.byPos.rank+' of '+m.byPos.of+' vs '+p.pos : '';
-  const splitBit = m.bySplit ? m.bySplit.rank+' of '+m.bySplit.of+' vs the '+m.kind : '';
-  return '<span class="pill '+cls+'">'+face+' · '+esc(m.diff.label)+'</span>'+
-    (when?' <span class="tiny '+(o.game.status==='final'?'dim':'live')+'">'+when+'</span>':'')+
-    (posBit?' <span class="tiny dim">'+esc(posBit)+'</span>':'')+
-    (splitBit?' <span class="tiny dim">· '+esc(splitBit)+'</span>':'');
+  return matchupChip(p) + whenBit +
+    ' <span class="tiny dim">'+esc(mi.thin ? mi.thinWhy : mi.what)+'</span>' + extra;
 }
 function bestLineup(teamId, week){
   /* Only men who could actually have been started. Somebody on the taxi squad or
@@ -5265,19 +5228,19 @@ VIEWS.live = function(){
       <div class="panel"><div class="ph"><h3>This week's matchups</h3><div class="spacer"></div>
         <span class="tiny dim">${book?book+' defenses on the book':'no games logged yet'}</span></div>
         <div class="pb tight scrollx"><table>
-        <thead><tr><th>Player</th><th>Pos</th><th>Facing</th><th class="right">Rank vs pos</th>
+        <thead><tr><th>Player</th><th>Pos</th><th>Facing</th><th class="right" title="Rank 1 is the hardest. A defense is ranked on the offense it faces.">Rank</th>
           <th class="right hide-xs">Vs the run</th><th class="right hide-xs">Vs the pass</th><th class="right">Week</th></tr></thead><tbody>
-        ${mine.sort((a,b)=> (matchupFor(b)&&matchupFor(b).byPos?matchupFor(b).byPos.rank:0)-(matchupFor(a)&&matchupFor(a).byPos?matchupFor(a).byPos.rank:0))
-          .map(p=>{
-          const m = matchupFor(p); if(!m) return '';
-          const r = m.byPos, run = dvpRank(m.opp.code,null,'rush'), pass = dvpRank(m.opp.code,null,'pass');
+        ${mine.map(p=>({p, mi:matchupInfo(p)})).sort((a,b)=> ((b.mi&&b.mi.rank)||0) - ((a.mi&&a.mi.rank)||0))
+          .map(({p, mi})=>{
+          const m = matchupFor(p); if(!m || !mi || mi.bye) return '';
+          const r = mi.rank ? {rank:mi.rank, of:mi.of} : null, run = dvpRank(m.opp.code,null,'rush'), pass = dvpRank(m.opp.code,null,'pass');
           const strong = primaryKind(p.pos);
           return `<tr><td>${esc(p.name)}</td><td>${posTag(p.pos)}</td>
             <td class="num">${m.opp.atHome?'vs':'@'} ${esc(m.opp.code)}${wxChip(p)?'<div>'+wxChip(p)+'</div>':''}</td>
             <td class="right num">${r? r.rank+' <span class="dim">of '+r.of+'</span>' : '<span class="dim">—</span>'}</td>
             <td class="right num hide-xs ${strong==='rush'?'':'dim'}">${run? run.rank : '—'}</td>
             <td class="right num hide-xs ${strong==='pass'?'':'dim'}">${pass? pass.rank : '—'}</td>
-            <td class="right">${m.diff?'<span class="pill '+(m.diff.cls==='bad'?'live':m.diff.cls==='good'?'ok':'')+'">'+m.diff.label+'</span>':'<span class="dim tiny">no book</span>'}</td></tr>`;
+            <td class="right">${!mi.thin?'<span class="pill '+(mi.cls==='bad'?'live':mi.cls==='good'?'ok':'')+'" title="'+esc(mi.what)+'">'+mi.label+' #'+mi.rank+'</span>':'<span class="dim tiny">no book</span>'}</td></tr>`;
         }).join('') || '<tr><td colspan="7" class="dim center" style="padding:20px">Nobody on your roster is playing this week.</td></tr>'}
         </tbody></table></div>
         <div class="pb"><div class="hint">Rank one gives up the least, so a low number is a hard week.
@@ -6861,7 +6824,7 @@ VIEWS.teams = function(){
         });
         if(!wrong.length) return '';
         return '<div class="panel" style="margin-bottom:14px;border-color:#5C3227"><div class="pb">'+
-          '<div class="row" style="gap:10px;align-items:center"><div>'+
+          '<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap"><div>'+
           '<b>These figures do not add up.</b><div class="tiny dim">'+wrong.length+
           ' team'+(wrong.length===1?' has':'s have')+' a record that does not match the results on the '+
           'fixture list. Working them out again will put it right.</div></div><div class="spacer"></div>'+
@@ -6871,7 +6834,7 @@ VIEWS.teams = function(){
       })()}
       ${hasSimResults() ? `
       <div class="panel" style="margin-bottom:14px;border-color:#5C3227"><div class="pb">
-        <div class="row" style="gap:10px;align-items:center">
+        <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
           <div><b>These standings include simulated weeks.</b>
             <div class="tiny dim">Week${simWeeks().length===1?' ':'s '}${simWeeks().join(', ')}
               ${simWeeks().length===1?'was':'were'} played on the simulator, so the records and points below
@@ -6886,8 +6849,8 @@ VIEWS.teams = function(){
         <div class="pb tight scrollx"><table>
         <thead><tr><th>#</th>${sortTh('std','name','Team')}${sortTh('std','w','W','right','w')}${sortTh('std','l','L','right','l')}
           ${sortTh('std','t','T','right','t')}${sortTh('std','pct','Pct','right','pct')}
-          ${sortTh('std','pf','PF','right hide-xs','pf')}${sortTh('std','pa','PA','right hide-xs','pa')}
-          ${sortTh('std','opp','SOS','right hide-xs','sos')}${sortTh('std','eff','Eff','right hide-xs','eff')}
+          ${sortTh('std','pf','PF','right','pf')}${sortTh('std','pa','PA','right','pa')}
+          ${sortTh('std','opp','SOS','right','sos')}${sortTh('std','eff','Eff','right','eff')}
           ${sortTh('std','slot','Draft slot','right','slot')}${sortTh('std','bill', nextY+' picks', 'right','bill')}</tr></thead><tbody>
         <tr class="thhelp"><td colspan="12" class="tiny dim" style="padding:2px 8px 6px">Tap a heading’s name to see what it means.</td></tr>
         ${sortRows('std', table, {
@@ -6906,10 +6869,10 @@ VIEWS.teams = function(){
               ${t._why?'<div class="tiny dim">tie broken on '+esc(t._why)+'</div>':''}</td>
             <td class="right num ${r.done?'onnow':''}">${r.w}</td><td class="right num ${r.done?'onnow':''}">${r.l}</td><td class="right num">${r.t}</td>
             <td class="right num">${livePct(t).toFixed(3).replace(/^0/,'')}</td>
-            <td class="right num hide-xs ${r.live?'onnow':''}">${(r.pf||0).toFixed(2)}</td>
-            <td class="right num hide-xs ${r.live?'onnow':''}">${(r.pa||0).toFixed(2)}</td>
-            <td class="right num hide-xs">${liveOppPoints(t).toFixed(2)}</td>
-            <td class="right num hide-xs">${eff==null?'<span class="dim">—</span>':eff.toFixed(1)+'%'}</td>
+            <td class="right num ${r.live?'onnow':''}">${(r.pf||0).toFixed(2)}</td>
+            <td class="right num ${r.live?'onnow':''}">${(r.pa||0).toFixed(2)}</td>
+            <td class="right num">${liveOppPoints(t).toFixed(2)}</td>
+            <td class="right num">${eff==null?'<span class="dim">—</span>':eff.toFixed(1)+'%'}</td>
             <td class="right num">${order.findIndex(x=>x.id===t.id)+1}</td>
             <td class="right num">${(()=>{
               const run = pickRun(t.id, nextY);
@@ -10215,6 +10178,43 @@ function extBackloadGap(c){
    adding after it — you are buying out the year he had not reached yet.
    With one year left there is nothing to replace, so it simply follows on. */
 function extReplacesFinal(c){ return yearsLeft(c) >= 2; }
+/* How long the whole deal runs once the extension is on. */
+function extNewYears(c, add){ return extReplacesFinal(c) ? c.years - 1 + add : c.years + add; }
+/* Would this extension put the team over the cap in any year it touches? Tried
+   on the real deal and put straight back, so the answer is the cap ladder's own. */
+function extCapProblem(p, add, aav, structId){
+  if(!S.settings.trades.capMustBeLegal) return null;
+  const c = p.contract, tid = c.teamId;
+  const saved = JSON.stringify(c);
+  let bad = null;
+  try{
+    applyExtension(p, add, aav, structId);
+    clearCapCache();
+    const last = p.contract.startYear + p.contract.years - 1;
+    for(let y = S.league.season; y <= last; y++){
+      const sp = capSpace(tid, y);
+      if(sp < -0.005){ bad = {year:y, over:fixInc(-sp)}; break; }
+    }
+  }finally{
+    p.contract = JSON.parse(saved); clearCapCache();
+  }
+  return bad;
+}
+/* Everything that could stop the extension, in one place, for the dialog and
+   for the moment of signing alike. */
+function extLimitProblem(p, add, aav, structId){
+  const c = p.contract;
+  const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
+  const n = extNewYears(c, add);
+  if(add < 1) return 'Add at least one year.';
+  if(n > maxTotal) return 'That makes it a '+n+'-year deal, and the longest the league allows, extensions included, is '+maxTotal+'.';
+  const lp = limitProblemFor('extensions', c.teamId, n, p.id);
+  if(lp) return teamName(c.teamId)+' would hold '+lp.have+' deals of '+lp.length+' years or longer, and the league allows '+lp.allow+
+    '. Shorten it, or let another long deal run out first.';
+  const cp = extCapProblem(p, add, aav, structId);
+  if(cp) return 'That puts '+teamName(c.teamId)+' '+money(cp.over)+' over the cap in '+cp.year+'.';
+  return null;
+}
 
 function applyExtension(p, addYears, aav, structId){
   const c = p.contract;
@@ -10475,8 +10475,8 @@ function extModal(){
   /* The base salary is the ladder's, always — whatever was held before. */
   if(lq) e.aav = lq.price;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
-  const roomYears = Math.max(0, maxTotal - c.years);
-  const lp = limitProblemFor('extensions', c.teamId, c.years + e.years, p.id);
+  const roomYears = Math.max(0, maxTotal - extNewYears(c, 0));
+  const lp = extLimitProblem(p, +e.years||0, e.aav, e.structId);
   /* With two years left the extension buys out the final year rather than
      following it, so the new deal starts a year earlier. */
   const replaces = extReplacesFinal(c);
@@ -10543,9 +10543,8 @@ function extModal(){
         : '<div class="hint bad">He turns that down. '+esc(askLabel(p, c.teamId, e.years))+
           (S.settings.players.showAsk==='hidden'?'':' You are '+money(w.gap)+' a year short.')+'</div>';
     })()}
-    <div class="hint">The deal would run ${c.years + e.years} years in total, through ${firstYear + e.years - 1}.</div>
-    ${lp?'<div class="hint bad">'+esc(teamName(c.teamId))+' would then hold '+lp.have+' deals of '+lp.length+
-      ' years or longer, and the league allows '+lp.allow+'. Shorten it, or let another long deal run out first.</div>':''}
+    <div class="hint">The deal would run ${extNewYears(c, e.years)} years in total, through ${firstYear + e.years - 1}.</div>
+    ${lp?'<div class="hint bad">'+esc(lp)+'</div>':''}
     ${roomYears<=0?'<div class="hint bad">This contract is already at the longest the league permits, extensions included.</div>':''}`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
     '<button class="btn pri" data-a="extGo"'+((lp||roomYears<=0)?' disabled':'')+'>Sign the extension</button>');
@@ -10554,7 +10553,7 @@ ACT.extField = (d,el)=>{
   const e = ui.tmp.ext, c = byId(S.players,e.pid).contract;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   if(d.f==='years'){
-    e.years = clamp(+el.value||1, 1, Math.max(1, maxTotal - c.years));
+    e.years = clamp(+el.value||1, 1, Math.max(1, maxTotal - extNewYears(c, 0)));
     /* On the ladder the price is a base salary — the same every year whatever
        the length — so changing the years does not change it. */
     const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
@@ -10580,7 +10579,7 @@ ACT.extGo = ()=>{
   { const g = canExtend(p); if(!g.ok) { closeModal(); return toast(g.why || 'He cannot be extended yet','bad'); } }
   /* Signed at the ladder's price and no other, whatever the dialog was holding. */
   { const lq = ladderQuote(p); if(!lq) { closeModal(); return toast('There is no ladder price for him, so he cannot be extended','bad'); } e.aav = lq.price; }
-  if(limitProblemFor('extensions', c.teamId, c.years + e.years, p.id)) return toast('That breaks the length limits','bad');
+  { const why = extLimitProblem(p, +e.years||0, e.aav, e.structId); if(why) return toast(why,'bad'); }
   const w = willAccept(p, c.teamId, e.aav, e.years);
   if(!w.ok){
     logIt(p.name+' turned down '+money(e.aav)+' a year from '+teamName(c.teamId),
@@ -13347,8 +13346,21 @@ VIEWS.chat = function(){
 /* Who you play and when, across the season. */
 function scheduleRows(teamId){
   const weeks = fixtureWeeks();
-  const list = weeks.length ? weeks : Array.from({length:seasonWeeks()},(_,i)=>i+1);
+  let list = weeks.length ? weeks.slice() : Array.from({length:seasonWeeks()},(_,i)=>i+1);
+  /* The playoff weeks always get a row, whether or not Sleeper has set them. */
+  const ps = playoffStartWeek(), pl = Math.max(1, playoffWeeks() || 3);
+  for(let w = ps; w < ps + pl; w++) if(list.indexOf(w) < 0) list.push(w);
+  list.sort((a,b)=> a-b);
   return list.map(w=>{
+    const row = scheduleRow(teamId, w);
+    /* A playoff week not yet played goes by the bracket alone — the fixture
+       list's regular pairings mean nothing once the playoffs start. */
+    if(w >= ps && !row.done){ row.proj = projectedPlayoffGame(teamId, w); row.opp = null; }
+    return row;
+  });
+}
+function scheduleRow(teamId, w){
+  {
     const set = fixturesFor(w);
     const g = set.find(x=> x.home===teamId || x.away===teamId);
     const played = (S.schedule||[]).find(x=> +x.week===+w && (x.home===teamId || x.away===teamId));
@@ -13363,8 +13375,69 @@ function scheduleRows(teamId){
     /* A fixture whose result has been cleared is not "played" — it is back to
        being a game still to come. */
     return {week:w, opp, home, mine, theirs, done: !!played && mine != null && theirs != null};
+  }
+}
+/* ---- The playoffs, if the season ended today --------------------------------
+   Each bracket played out from the current table: any game not yet decided
+   goes to the better seed, so every playoff week has a name against it rather
+   than a blank. */
+function projectBracket(seeds, o){
+  const res = Object.assign({}, o.results || {});
+  let rounds = [];
+  for(let i=0; i<8; i++){
+    rounds = buildBracket(seeds, Object.assign({}, o, {results:res}));
+    let added = false;
+    rounds.forEach(rd=> rd.games.forEach(g=>{
+      if(g.through || !g.a.team || !g.b.team) return;
+      const sa = typeof g.a.seed === 'number' ? g.a.seed : 99, sb = typeof g.b.seed === 'number' ? g.b.seed : 99;
+      res[g.key] = sa <= sb ? g.a.team.id : g.b.team.id; added = true;
+    }));
+    if(!added) break;
+  }
+  return rounds;
+}
+function projectedBrackets(){
+  return memo('projBrackets', ()=>{
+    const p = S.settings.playoffs, out = [];
+    out.push({name:'Playoffs', rounds: projectBracket(playoffField(), {byes:p.byes, startWeek:p.startWeek, reseed:p.reseed,
+      twoWeekFinal:p.twoWeekFinal, thirdPlace:p.thirdPlace, advance:'winner', results:bracketResults('playoff')})});
+    if(loserOn()){
+      const L = loserSettings();
+      out.push({name:L.name || 'Consolation', rounds: projectBracket(loserField(), {byes:L.byes, startWeek:L.startWeek, reseed:L.reseed,
+        twoWeekFinal:L.twoWeekFinal, thirdPlace:L.thirdPlace, advance:'winner', results:bracketResults('loser')})});
+    }
+    return out;
   });
 }
+/* Who a team would meet in a playoff week, or that it sits out. */
+function projectedPlayoffGame(teamId, week){
+  for(const b of projectedBrackets()){
+    for(const rd of b.rounds){
+      if(+rd.week !== +week) continue;
+      const bye = (rd.byes||[]).find(x=> x.team && x.team.id === teamId);
+      if(bye) return {bracket:b.name, bye:true, seed:bye.seed, final:rd.final};
+      const g = rd.games.find(x=> (x.a.team && x.a.team.id === teamId) || (x.b.team && x.b.team.id === teamId));
+      if(g){
+        const mine = g.a.team && g.a.team.id === teamId ? g.a : g.b, other = mine === g.a ? g.b : g.a;
+        return {bracket:b.name, opp: other.team ? other.team.id : null, seed:mine.seed, oppSeed:other.seed, final:rd.final};
+      }
+      /* The two beaten semi-finalists meet for third, the week of the final. */
+      if(rd.third && b.name === 'Playoffs'){
+        const semi = b.rounds[b.rounds.indexOf(rd) - 1];
+        const losers = (semi ? semi.games : []).map(x=>{
+          if(!x.through || !x.a.team || !x.b.team) return null;
+          return x.through === x.a.team.id ? x.b : x.a;
+        }).filter(Boolean);
+        if(losers.length === 2 && losers.some(x=> x.team.id === teamId)){
+          const mine = losers[0].team.id === teamId ? losers[0] : losers[1], other = mine === losers[0] ? losers[1] : losers[0];
+          return {bracket:b.name, opp:other.team.id, seed:mine.seed, oppSeed:other.seed, third:true};
+        }
+      }
+    }
+  }
+  return null;
+}
+function playoffStartWeek(){ return +((S.settings.playoffs||{}).startWeek) || 15; }
 /* Find a player anywhere in the league, whoever holds him. */
 VIEWS.find = function(){
   const q = String(ui.tmp.findQ||'').trim().toLowerCase();
@@ -13518,6 +13591,7 @@ VIEWS.schedule = function(){
   return `
   <section class="wrap">
     <div class="head"><h1>Schedule</h1><div class="spacer"></div>
+      ${isCommish() && sleeperLeague() ? '<button class="btn ghost sm" data-a="seasonSync" title="Every finished week, scores and player stats, written again exactly as Sleeper has them">Match '+S.league.season+' to Sleeper</button>' : ''}
       ${S.teams.length>1?`<select data-a="pickTeamView">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===tid?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select>`:''}
     </div>
     <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>The week in figures</h3><div class="spacer"></div>
@@ -13536,6 +13610,23 @@ VIEWS.schedule = function(){
         <div class="scrollx"><table>
           <thead><tr><th>Week</th><th></th><th>Opponent</th><th class="right">Score</th><th class="right">Result</th></tr></thead>
           <tbody>${rows.map(r=>{
+            if(r.proj && !r.done){
+              const pj = r.proj;
+              const who = pj.bye ? '<b style="font-weight:500">Bye</b> <span class="dim tiny">seed '+pj.seed+'</span>'
+                : pj.opp ? esc(teamName(pj.opp))+' <span class="dim tiny">seed '+pj.seed+' v '+pj.oppSeed+'</span>'
+                : '<span class="dim">to be decided</span>';
+              return '<tr><td class="num">'+r.week+'</td><td class="dim tiny">'+(pj.final?'final':pj.third?'for 3rd':'')+'</td>'+
+                '<td>'+who+'<div class="tiny dim">'+esc(pj.bracket)+' · if the season ended today</div></td>'+
+                '<td class="right"><span class="dim">—</span></td><td></td></tr>';
+            }
+            if(r.week >= playoffStartWeek() && !r.done && !r.opp){
+              const inPO = playoffField().some(x=> x.id===tid), inL = loserOn() && loserField().some(x=> x.id===tid);
+              return '<tr><td class="num">'+r.week+'</td><td colspan="4" class="dim">'+
+                ((inPO || inL)
+                  ? 'Knocked out by then <span class="tiny">— if the better seed wins every game before it</span>'
+                  : 'Season over <span class="tiny">— outside the playoffs'+(loserOn()?' and the '+esc(loserSettings().name||'consolation')+' bracket':'')+' as things stand</span>')+
+                '</td></tr>';
+            }
             if(!r.opp) return '<tr><td class="num">'+r.week+'</td><td colspan="4" class="dim">No game</td></tr>';
             const res = !r.done ? '' : r.mine>r.theirs ? '<span class="good">W</span>'
                        : r.mine<r.theirs ? '<span class="bad">L</span>' : '<span class="dim">T</span>';
@@ -14091,16 +14182,37 @@ function matchupFor(p){
   const lead = byPos || bySplit;
   return { opp, byPos, bySplit, kind, diff: difficultyOf(lead) };
 }
-function matchupChip(p, opts){
+/* One reading of a player's matchup, shared by every screen that shows one —
+   Live Scoring, Set Lineups, the lineup pickers, player cards — so the rating
+   and the rank can never differ between them. A defense is rated on the offense
+   it faces; everyone else on how that defense has done against his position
+   (or, early on, against the run or the pass). Rank 1 is always the hardest. */
+function matchupInfo(p){
+  if(!p) return null;
+  const o = thisWeekOpponent(p.nfl);
+  if(!o) return {bye:true};
+  const face = (o.atHome ? 'vs ' : '@ ') + o.code;
+  const when = o.game.status==='final' ? 'final' : o.game.status!=='pre' ? 'playing now' : '';
+  if(p.pos === 'DEF'){
+    const ds = defStreamDifficulty(o.code);
+    if(!ds) return {o, face, when, thin:true, thinWhy:'offense data still thin'};
+    return {o, face, when, label:ds.band.label, cls:ds.band.cls, note:ds.band.note, rank:ds.rank, of:ds.of,
+      what: o.code+' offense '+ds.rank+' of '+ds.of+' in fantasy points'};
+  }
   const m = matchupFor(p);
-  if(!m) return '';
-  /* At home is "vs", away is "@" — it was the wrong way round. */
-  const face = (m.opp.atHome ? 'vs ' : '@ ') + m.opp.code;
-  if(!m.diff) return '<span class="pill" title="not enough games on this defense yet">'+esc(face)+'</span>';
-  return '<span class="pill '+(m.diff.cls==='bad'?'live':m.diff.cls==='good'?'ok':'')+'" title="'+
-    esc(m.opp.code+' ranks '+(m.byPos?m.byPos.rank+' of '+m.byPos.of+' against '+p.pos:'—')+
-        ', '+(m.bySplit?m.bySplit.rank+' of '+m.bySplit.of+' against the '+m.kind:'—')+' — '+m.diff.note)+'">'+
-    esc(face)+' · '+m.diff.label+(opts&&opts.rank&&m.byPos?' '+m.byPos.rank:'')+'</span>';
+  if(!m || !m.diff) return {o, face, when, thin:true, thinWhy:'matchup data still thin'};
+  const lead = m.byPos || m.bySplit;
+  const what = [m.byPos ? m.byPos.rank+' of '+m.byPos.of+' vs '+p.pos : '',
+                m.bySplit ? m.bySplit.rank+' of '+m.bySplit.of+' vs the '+m.kind : ''].filter(Boolean).join(' · ');
+  return {o, face, when, label:m.diff.label, cls:m.diff.cls, note:m.diff.note, rank:lead.rank, of:lead.of, what};
+}
+function matchupChip(p, opts){
+  const mi = matchupInfo(p);
+  if(!mi || mi.bye) return '';
+  if(mi.thin) return '<span class="pill" title="'+esc(mi.thinWhy)+'">'+esc(mi.face)+'</span>';
+  return '<span class="pill '+(mi.cls==='bad'?'live':mi.cls==='good'?'ok':'')+'" title="'+
+    esc(mi.o.code+': '+mi.what+' — '+mi.note+'. Rank 1 is the hardest.')+'">'+
+    esc(mi.face)+' · '+esc(mi.label)+' #'+mi.rank+'</span>';
 }
 
 /* Fantasy side: points per game under this league's own scoring. */
@@ -17390,6 +17502,182 @@ function recordWeek(){
     });
   });
 }
+
+/* ============================================================
+   THIS SEASON, AS SLEEPER HAS IT
+   Sleeper is the book of record for what has been played: every finished
+   week's scores, and what each player did. The league's own copy is checked
+   against it, and any week that is missing or reads differently — cleared by
+   hand, lost between copies, never closed because nobody had the app open —
+   is written again from Sleeper. It runs on a commissioner's device when the
+   app opens and every half hour after, so a new build or a stray copy can
+   never leave the season short.
+   ============================================================ */
+let seasonSyncBusy = false, lastSeasonSync = 0;
+const r2s = (v)=> Math.round((+v||0)*100)/100;
+/* The stats worth keeping on a player's week: whatever the league scores, and
+   whatever his card shows. The rest of Sleeper's hundred-odd codes are left
+   behind, because every one of them travels to every phone. */
+function statKeepSet(){
+  const keep = new Set(['gp','pass_att','pass_cmp','pass_yd','pass_td','pass_int','pass_sack','rush_att','rush_yd','rush_td',
+    'rec_tgt','rec','rec_yd','rec_td','rec_lng','fum_lost','fgm','fga','fgm_lng','xpm','xpa','xpmiss','fgmiss',
+    'fgm_0_19','fgm_20_29','fgm_30_39','fgm_40_49','fgm_50p','fgmiss_0_19','fgmiss_20_29','fgmiss_30_39','fgmiss_40_49','fgmiss_50p',
+    'pts_allow','yds_allow','sack','int','fum_rec','ff','def_td','def_st_td','safe','blk_kick','tkl_loss',
+    'idp_tkl','idp_tkl_solo','idp_tkl_ast','idp_tkl_loss','idp_sack','idp_qb_hit','idp_pass_def','idp_int','idp_ff','idp_fum_rec','idp_def_td']);
+  Object.keys(S.settings.scoring||{}).forEach(k=>{ if(+S.settings.scoring[k]) keep.add(k); });
+  return keep;
+}
+function seasonHasWeek(w){
+  const bp = (S.season||{}).byPlayer || {};
+  for(const k in bp){ const l = bp[k]; if(l && l.weeks && l.weeks[w]) return true; }
+  return false;
+}
+/* One week of Sleeper's stats into every player's season line. A player's
+   points are Sleeper's own for anybody on a roster, so they match to the
+   hundredth; anyone else is scored here, on the same rules. */
+function writeSeasonWeek(w, stats, ptsW, bySid, keep){
+  if(!S.season || S.season.year !== S.league.season) S.season = {year:S.league.season, byPlayer:{}};
+  const bp = S.season.byPlayer;
+  /* Anything held for that week goes first, so it is exactly Sleeper's. */
+  Object.keys(bp).forEach(pid=>{ const l = bp[pid]; if(l && l.weeks && l.weeks[w]) delete l.weeks[w]; });
+  Object.keys(stats||{}).forEach(sid=>{
+    const p = bySid[sid]; if(!p) return;
+    const src = stats[sid];
+    if(!countsAsGame(src)) return;
+    const slim = {};
+    Object.keys(src).forEach(k=>{ if(keep.has(k) && +src[k]) slim[k] = r2s(src[k]); });
+    const line = bp[p.id] = bp[p.id] || {gp:0, fpts:0, stats:{}, weeks:{}};
+    line.weeks = line.weeks || {};
+    line.weeks[w] = {fpts: ptsW && ptsW[sid] != null ? r2s(ptsW[sid]) : scoreLine(src, p), stats: slim};
+  });
+}
+/* Season totals worked out again from the weeks, so they can never drift. */
+function reTotalSeason(){
+  const bp = ((S.season||{}).byPlayer) || {};
+  Object.keys(bp).forEach(pid=>{
+    const l = bp[pid]; if(!l || !l.weeks) return;
+    const ws = Object.keys(l.weeks);
+    if(!ws.length){ delete bp[pid]; return; }
+    l.gp = ws.length;
+    l.fpts = r2s(ws.reduce((n,k)=> n + (+l.weeks[k].fpts||0), 0));
+    const tot = {};
+    ws.forEach(k=> Object.keys(l.weeks[k].stats||{}).forEach(sk=>{
+      const v = +l.weeks[k].stats[sk]||0;
+      tot[sk] = /_lng$/.test(sk) ? Math.max(tot[sk]||0, v) : r2s((tot[sk]||0) + v);
+    }));
+    l.stats = tot;
+  });
+}
+/* Records, points for and against, head to head and lineup efficiency, all
+   worked out from the results, so they agree with them by construction. */
+function recordsFromResults(playoffStart){
+  const start = +playoffStart || +((S.settings.playoffs||{}).startWeek) || 15;
+  S.teams.forEach(t=>{ t.record = {w:0, l:0, t:0, pf:0, pa:0}; t.eff = {weeks:0, got:0, best:0}; });
+  S.h2h = {}; S.effByWeek = {};
+  (S.schedule||[]).filter(g=> g.hp != null && g.ap != null).sort((a,b)=> a.week-b.week).forEach(g=>{
+    const th = byId(S.teams, g.home), ta = byId(S.teams, g.away);
+    if(!th || !ta) return;
+    h2hAdd(g.home, g.away, +g.hp, +g.ap);
+    [[th, +g.hp], [ta, +g.ap]].forEach(([t, got])=>{
+      let best = got;
+      try{ best = Math.max(got, bestLineup(t.id, g.week).total || 0); }catch(e){}
+      (S.effByWeek[g.week] = S.effByWeek[g.week] || {})[t.id] = {got, best};
+      t.eff.weeks++; t.eff.got = r2s(t.eff.got + got); t.eff.best = r2s(t.eff.best + best);
+    });
+    if(+g.week >= start) return;                 /* the playoffs are not the regular-season table */
+    const rh = th.record, ra = ta.record;
+    rh.pf = r2s(rh.pf + +g.hp); rh.pa = r2s(rh.pa + +g.ap);
+    ra.pf = r2s(ra.pf + +g.ap); ra.pa = r2s(ra.pa + +g.hp);
+    if(+g.hp > +g.ap){ rh.w++; ra.l++; } else if(+g.ap > +g.hp){ ra.w++; rh.l++; } else { rh.t++; ra.t++; }
+  });
+}
+async function syncSeasonFromSleeper(opts){
+  opts = opts || {};
+  const id = sleeperLeague();
+  if(!id || seasonSyncBusy) return null;
+  seasonSyncBusy = true; lastSeasonSync = Date.now();
+  try{
+    const [lg, state, rosters] = await Promise.all([
+      getJSON(SLEEPER+'/league/'+id), getJSON(SLEEPER+'/state/nfl'), getJSON(SLEEPER+'/league/'+id+'/rosters')]);
+    if(!lg || +lg.season !== +S.league.season) return {skipped:'a different season on Sleeper'};
+    const season = +lg.season;
+    let cur;
+    if(+state.season > season) cur = 19;
+    else if(+state.season < season || state.season_type === 'pre' || state.season_type === 'off') cur = 1;
+    else cur = +state.week || 1;
+    const last = Math.min(cur - 1, 18);
+    const start = +((lg.settings||{}).playoff_week_start) || +((S.settings.playoffs||{}).startWeek) || 15;
+    const tm = teamByRoster(rosters), bySid = playersBySleeperId();
+    const weeks = []; for(let w = 1; w <= last; w++) weeks.push(w);
+    const mus = await Promise.all(weeks.map(w=> getJSON(SLEEPER+'/league/'+id+'/matchups/'+w).catch(()=> null)));
+    const results = {}, pts = {}, starters = {};
+    weeks.forEach((w, i)=>{
+      const ms = mus[i];
+      if(!Array.isArray(ms) || !ms.some(m=> +m.points)) return;        /* not played */
+      const pair = {}; pts[w] = {}; starters[w] = {};
+      ms.forEach(m=>{
+        Object.entries(m.players_points||{}).forEach(([sid, v])=> pts[w][sid] = +v||0);
+        const t = tm[m.roster_id]; if(t) starters[w][t] = m.starters || [];
+        if(m.matchup_id != null) (pair[m.matchup_id] = pair[m.matchup_id] || []).push(m);
+      });
+      results[w] = Object.values(pair).filter(g=> g.length === 2).map(g=>{
+        let a = g[0], b = g[1];
+        /* Home and away as the league's own fixture list has them. */
+        if(fixturesFor(w).some(f=> f.home === tm[b.roster_id] && f.away === tm[a.roster_id])){ const x = a; a = b; b = x; }
+        return {week:w, home:tm[a.roster_id], away:tm[b.roster_id], hp:r2s(a.points), ap:r2s(b.points)};
+      }).filter(g=> g.home && g.away);
+    });
+    const done = Object.keys(results).map(Number).sort((a,b)=> a-b);
+    const sig = (arr)=> arr.map(g=> [g.home, g.away, (+g.hp).toFixed(2), (+g.ap).toFixed(2)].join('|')).sort().join(';');
+    const off = done.filter(w=>{
+      const mine = (S.schedule||[]).filter(g=> +g.week === w);
+      return mine.length !== results[w].length || mine.some(g=> g.hp == null) || sig(mine) !== sig(results[w]);
+    });
+    const missing = done.filter(w=> !seasonHasWeek(w));
+    const redo = opts.force ? done : [...new Set(off.concat(missing))].sort((a,b)=> a-b);
+    const behind = (+S.live.week||1) < cur && cur <= 18;
+    if(!redo.length && !behind) return {weeks:done.length, fixed:[]};
+    keepBackup(S, 'before matching '+season+' to Sleeper');
+    const keep = statKeepSet();
+    for(const w of redo){
+      const st = await getJSON(SLEEPER+'/stats/nfl/regular/'+season+'/'+w).catch(()=> null);
+      if(st) writeSeasonWeek(w, st, pts[w] || {}, bySid, keep);
+    }
+    reTotalSeason();
+    /* Every finished week's results, exactly as Sleeper has them. */
+    S.schedule = (S.schedule||[]).filter(g=> done.indexOf(+g.week) < 0)
+      .concat(...done.map(w=> results[w].map(g=> Object.assign({}, g, {src:'sleeper'}))))
+      .sort((a,b)=> a.week - b.week);
+    /* Who started, for the record. */
+    S.lineups = S.lineups || {};
+    done.forEach(w=>{
+      S.lineups[w] = S.lineups[w] || {};
+      Object.entries(starters[w]).forEach(([teamId, arr])=>{
+        const ids = arr.map(sid=>{ const p = sid && sid !== '0' ? bySid[String(sid)] : null; return p ? p.id : ''; });
+        if(ids.some(Boolean)) S.lineups[w][teamId] = ids;
+      });
+    });
+    recordsFromResults(start);
+    if(behind) buildWeek(cur);
+    logIt(season+' matched to Sleeper — '+(redo.length ? 'week'+(redo.length===1?' ':'s ')+redo.join(', ')+' written from Sleeper' : 'results checked')+
+      (behind ? '; now on week '+cur : ''), {type:'admin'});
+    clearCapCache(); save(); render();
+    return {weeks:done.length, fixed:redo, week:cur};
+  }catch(e){
+    return {error: e && e.message || String(e)};
+  }finally{
+    seasonSyncBusy = false;
+  }
+}
+ACT.seasonSync = async ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  toast('Checking '+S.league.season+' against Sleeper…');
+  const r = await syncSeasonFromSleeper({force:true});
+  if(!r) return toast('Already checking','warn');
+  if(r.error) return toast('Sleeper did not answer: '+r.error,'bad');
+  if(r.skipped) return toast('Nothing to match — '+r.skipped,'warn');
+  toast(r.weeks+' week'+(r.weeks===1?'':'s')+' checked; '+(r.fixed.length ? r.fixed.length+' written from Sleeper' : 'all matched'),'good');
+};
 
 /* ============================================================
    PLAYOFFS
@@ -25366,6 +25654,13 @@ function tickAll(){
   try{ if(autoFillRun()) needsRender = true; }catch(e){}
   try{ if(waiverTick()) needsRender = true; }catch(e){}
   try{ if(autoCloseTick()) needsRender = true; }catch(e){}
+  /* This season against Sleeper: shortly after the app opens, then every half
+     hour. Only a commissioner's device writes it back. */
+  if(isCommish() && sleeperLeague() && !seasonSyncBusy && (S.players||[]).length > 100 &&
+     Date.now() - lastSeasonSync > (lastSeasonSync ? 30*60000 : 0) && !(S.meta && S.meta.demo)){
+    lastSeasonSync = Date.now();
+    setTimeout(()=>{ syncSeasonFromSleeper().then(()=>{}, ()=>{}); }, 6000);
+  }
   try{ if(payoutPost()) needsRender = true; }catch(e){}
   /* If hardly anybody carries a Sleeper id, go and get them once. Trending,
      projections and the live feed all lean on it. */
