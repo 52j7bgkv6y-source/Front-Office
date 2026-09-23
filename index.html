@@ -963,7 +963,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-22e · one matchup rank everywhere';
+const APP_BUILD = '2026-09-23c · claims name their team';
 
 /* ============================================================
    HOME LEAGUE
@@ -1454,7 +1454,7 @@ function defaultState(){
         dropClearHour:8 },
       /* A side starting more of one position than the league thinks reasonable
          can be asked to give one up. */
-      surplus:{ on:true, pos:'QB', startedMax:2,
+      surplus:{ on:true, pos:'QB', startedMax:3,
         nameHours:24,      /* to say which man is going */
         rejectHours:24,    /* for the claimant to turn him down */
         moveDays:7,        /* to trade him on before he is handed over */
@@ -2501,7 +2501,7 @@ function teamByOwner(st, handle){
 /* The commissioner went through the charter against the app on 22 Sep 2026 and
    settled each difference. Written into the league once — after that these are
    ordinary settings, free to change in Settings like any other. */
-const CHARTER_SET = '2026-09-22';
+const CHARTER_SET = '2026-09-23';
 function charterSettings(st){
   if(!st || !st.settings || !st.league) return;
   if(st.league.charterSet === CHARTER_SET) return;
@@ -2520,6 +2520,8 @@ function charterSettings(st){
   g.trades = Object.assign({}, g.trades, {antiSnipeOn:true, antiSnipeWithinMin:180, antiSnipeExtendMin:180, antiSnipeUnit:'min'});
   /* Comp picks: 7 across the whole league, and one team could take all 7. */
   g.comp = Object.assign({}, g.comp, {maxTotal:7, maxPerTeam:7});
+  /* The QB rule: at most three men who are their club's named starter. */
+  g.surplus = Object.assign({}, g.surplus, {on:true, pos:'QB', startedMax:3, payRound:3});
   st.league.charterSet = CHARTER_SET;
   if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
     text:'Settings brought in line with the league charter: rollover up to 20%, extensions close at week 16, '+
@@ -2575,6 +2577,27 @@ function bengalsUndo(st){
   }
   if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'contract', teams:[tid], players:[p.id],
     text:(p.name||'Bengals D/ST')+': test extension undone — back to $'+p.contract.total+' over '+p.contract.years+' yr, as before it was signed'});
+}
+/* Kyle put a taxi claim in for Oronde Gadsden while standing in for zCar7er,
+   and it was recorded against Cursed Team. Moved to the side it was meant for,
+   once, and only while it is still open and still reads as it did. */
+function gadsdenClaim(st){
+  if(!st || !st.league || st.league.gadsdenFixed) return;
+  const sup = ((st.settings||{}).supa||{}).leagueId, sl = ((st.settings||{}).live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  if(!Array.isArray(st.players) || st.players.length < 100) return;
+  st.league.gadsdenFixed = '2026-09-23';
+  const p = st.players.find(x=> /oronde\s+gadsden/i.test(x.name||''));
+  const want = (st.teams||[]).find(t=> /^zcar7er$/i.test((t.name||'').trim()));
+  const wrong = (st.teams||[]).find(t=> /^cursed team$/i.test((t.name||'').trim()));
+  if(!p || !want || !wrong) return;
+  const c = (st.taxiClaims||[]).find(x=> x.playerId === p.id && x.status === 'open' && x.toTeam === wrong.id);
+  if(!c) return;
+  c.toTeam = want.id;
+  c.log = c.log || [];
+  c.log.unshift({at:Date.now(), text:'claim put right — it was meant for '+want.name+', not '+wrong.name});
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[want.id, wrong.id, c.fromTeam], players:[p.id],
+    text:'Taxi claim on '+p.name+' moved from '+wrong.name+' to '+want.name+' — it was put in while standing in for them'});
 }
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
@@ -6127,7 +6150,7 @@ VIEWS.teams = function(){
       const surPanel = !sr.on ? '' : `
         <div class="panel" style="margin-bottom:14px"><div class="ph">
           <h3>Too many ${esc(sr.pos)}s</h3><div class="spacer"></div>
-          <span class="tiny dim">more than ${sr.startedMax} started</span></div>
+          <span class="tiny dim">holding more than ${sr.startedMax} named starters</span></div>
           ${myClaims.length ? '<div class="pb tight scrollx"><table><thead><tr>'+
             '<th>Claim</th><th>Man</th><th>Stage</th><th class="right">Left</th><th></th></tr></thead><tbody>'+
             myClaims.map(c=>{
@@ -6160,19 +6183,26 @@ VIEWS.teams = function(){
               const already = surOpenOn(t2.id);
               return '<div class="row" style="gap:8px;align-items:center;margin-bottom:4px">'+
                 '<div><b style="font-weight:500">'+esc(t2.name)+'</b> '+
-                '<span class="tiny dim">started '+men.length+' — '+
-                men.map(p2=> esc(p2.name)).join(', ')+'</span></div><div class="spacer"></div>'+
+                '<span class="tiny dim">'+men.length+' named starters — '+
+                men.map(p2=> esc(p2.name)+' <span class="dim">('+esc(p2.nfl||'')+')</span>').join(', ')+'</span></div><div class="spacer"></div>'+
                 (t2.id===tid ? '<span class="tiny dim">that is you</span>'
                  : already ? '<span class="tiny dim">already claimed</span>'
                  : canManage(tid)
                    ? '<button class="btn sm" data-a="surClaim" data-team="'+t2.id+'">Claim one</button>' : '')+
               '</div>';
-            }).join('')+'</div>' : '<div class="pb"><div class="dim tiny">Nobody is starting more than '+
-            sr.startedMax+' '+esc(sr.pos)+'s this week.</div></div>'}
-          <div class="pb"><div class="hint">A side starting more than ${sr.startedMax} ${esc(sr.pos)}s can be
-            asked to give one up. They have ${sr.nameHours} hours to say which, you have ${sr.rejectHours}
-            hours to turn him down, and they have ${sr.moveDays} day${sr.moveDays===1?'':'s'} from the claim
-            to trade him on. If they do not, he is yours for your best ${ordinal(sr.payRound)}-round pick.</div></div>
+            }).join('')+'</div>' : '<div class="pb"><div class="dim tiny">Nobody is holding more than '+
+            sr.startedMax+' '+esc(sr.pos)+'s who are named starters this week.</div></div>'}
+          ${(()=>{ const mineMen = surHeld(tid, +S.live.week||1);
+            return mineMen.length ? '<div class="pb"><div class="flabel">Your '+esc(sr.pos)+'s starting in the NFL this week</div>'+
+              '<div class="tiny">'+mineMen.map(p2=> esc(p2.name)+' <span class="dim">'+esc(p2.nfl||'')+' · '+esc(starterNote(p2)||'')+'</span>').join('<br>')+'</div>'+
+              '<div class="tiny dim" style="margin-top:4px">'+mineMen.length+' of the '+sr.startedMax+' the league allows.</div></div>' : ''; })()}
+          <div class="pb"><div class="hint">A side holding more than ${sr.startedMax} ${esc(sr.pos)}s who are
+            their NFL club's named starter this week can be asked to give one up. They have ${sr.nameHours} hours
+            to say which, you have ${sr.rejectHours} hours to turn him down, and they have ${sr.moveDays}
+            day${sr.moveDays===1?'':'s'} from the claim to trade him on. If they do not, he is yours for your
+            highest ${ordinal(sr.payRound)}-round pick — the soonest year, best slot — and you need one in hand to claim.
+            A starter is read from this week's projections, and from the depth chart where those have not arrived;
+            anybody ruled out is not counted.</div></div>
         </div>`;
       return `
       ${surPanel}
@@ -7238,25 +7268,28 @@ ACT.assignGo = (d)=>{
 };
 /* ---- The surplus claim, step by step ---------------------------------------- */
 ACT.surClaim = (d)=>{
-  const me = actingTeam();
+  ui.tmp.claimFor = null;
+  const me = claimTeam();
   const from = d.team;
   const r = surRules();
   if(!mustManage(me)) return;
   if(from===me) return toast('That is your own side','bad');
   const men = surOver(from, +S.live.week||1);
-  if(!men) return toast(teamName(from)+' is not starting more than '+r.startedMax+' '+r.pos+'s','bad');
+  if(!men) return toast(teamName(from)+' is not holding more than '+r.startedMax+' starting '+r.pos+'s','bad');
   if(surOpenOn(from)) return toast('There is already a claim against them','bad');
   const pick = surPayPick(me);
   modal('Claim a '+esc(r.pos)+' off '+esc(teamName(from)),
-    '<p class="muted" style="margin:0 0 8px">'+esc(teamName(from))+' started <b>'+men.length+'</b> '+
-    esc(r.pos)+'s this week — '+men.map(p=> esc(p.name)).join(', ')+'.</p>'+
+    claimForRow()+
+    '<p class="muted" style="margin:0 0 8px">'+esc(teamName(from))+' is holding <b>'+men.length+'</b> '+
+    esc(r.pos)+'s who are named starters this week — '+
+    men.map(p=> esc(p.name)+' ('+esc(p.nfl||'')+')').join(', ')+'.</p>'+
     '<div class="kv">'+
       '<dt>They have</dt><dd>'+r.nameHours+' hours to say which one is going</dd>'+
       '<dt>You then have</dt><dd>'+r.rejectHours+' hours to turn him down</dd>'+
       '<dt>And they have</dt><dd>'+r.moveDays+' day'+(r.moveDays===1?'':'s')+
         ' from now to trade him on</dd>'+
       '<dt>If they do not</dt><dd>'+(pick
-        ? 'he is yours for your '+pickLabel(pick)
+        ? 'he is yours for your highest '+ordinal(r.payRound)+'-rounder — '+pickLabel(pick)
         : '<span class="bad">you have no '+ordinal(r.payRound)+'-round pick to give</span>')+'</dd>'+
     '</div>'+
     (pick? '' : '<div class="hint bad">You need a '+ordinal(r.payRound)+
@@ -7265,7 +7298,8 @@ ACT.surClaim = (d)=>{
     (pick? '<button class="btn pri" data-a="surClaimGo" data-team="'+from+'">Put the claim in</button>' : ''));
 };
 ACT.surClaimGo = (d)=>{
-  const me = actingTeam(), from = d.team, r = surRules();
+  const me = claimTeam(), from = d.team, r = surRules();
+  if(me === from) return toast('That is the side you are claiming off','bad');
   if(!mustManage(me)) return;
   if(surOpenOn(from)) return toast('There is already a claim against them','bad');
   const pick = surPayPick(me);
@@ -7319,6 +7353,8 @@ ACT.surNameGo = (d)=>{
 ACT.surAccept = (d)=>{
   const c = surClaims().find(x=> x.id===d.id); if(!c) return;
   if(!mustManage(c.toTeam)) return;
+  /* There is nobody to accept until they have named one. */
+  if(!c.playerId) return toast('They have not named anybody yet','bad');
   c.status = 'moving'; c.acceptedAt = Date.now();
   c.log.unshift({at:Date.now(), text:teamName(c.toTeam)+' accepted him'});
   const left = Math.max(0, surDue(c));
@@ -7344,6 +7380,7 @@ ACT.surReject = (d)=>{
 function surSettle(c){
   const p = byId(S.players, c.playerId);
   const pick = byId(S.picks, c.pickId);
+  if(!c.playerId){ c.status='naming'; c.at = Date.now(); c.log.unshift({at:Date.now(), text:'nobody was named, so the clock starts again'}); return 0; }
   if(!p || !p.contract){ c.status='void'; c.why='he is no longer there'; return 0; }
   /* He may already have been traded on, which is the whole point of the week. */
   if(p.contract.teamId !== c.fromTeam){
@@ -8103,7 +8140,7 @@ function playerLog(p, year){
   const line = src[p.id];
   if(!line || !line.weeks) return [];
   return Object.keys(line.weeks).map(Number).sort((a,b)=>a-b)
-    .map(w=> ({week:w, fpts:line.weeks[w].fpts, stats:line.weeks[w].stats}));
+    .map(w=> ({week:w, fpts:line.weeks[w].fpts, stats:line.weeks[w].stats, opp:line.weeks[w].opp||''}));
 }
 /* Which seasons we hold anything for. */
 function playerYears(p){
@@ -8218,9 +8255,31 @@ function playerStatBlock(p){
     rows.push('<tr class="dim"><td>per game</td><td class="right num">'+(pts/games).toFixed(1)+'</td>'+cols.map(c=>{
       const v = c[2](per); return '<td class="right num">'+esc(typeof v === 'number' ? (Math.round(v*10)/10) : String(v))+'</td>'; }).join('')+'</tr>');
   }
-  if(live && countsAsGame(live))
-    rows.push('<tr><td>Week '+w+' <span class="pill live" style="font-size:10px">'+(gameStarted(p) && !(gameState(p.nfl)||{}).done ? 'LIVE' : 'this week')+'</span></td>'+
+  /* Then every game he has played this season, one row each. */
+  const oppOf = (x)=>{
+    if(x.opp) return x.opp;
+    /* Only a card actually kept for that week — never this week's stand-in. */
+    const card = ((S.live.nfl||{})[x.week]) || [];
+    const c = String(p.nfl||'').toUpperCase();
+    const g = card.find(q=> String(q.home).toUpperCase()===c || String(q.away).toUpperCase()===c);
+    if(!g) return '';
+    return String(g.home).toUpperCase()===c ? 'vs '+g.away : '@ '+g.home;
+  };
+  const played = log.filter(x=> countsAsGame(x.stats) || +x.fpts);
+  if(played.length){
+    rows.push('<tr class="pstats-sep"><td colspan="'+(cols.length+2)+'" class="tiny dim" style="padding-top:10px">Game by game</td></tr>');
+    played.forEach(x=>{
+      const opp = oppOf(x);
+      rows.push('<tr><td class="nowrap">Wk '+x.week+(opp ? ' <span class="dim tiny">'+esc(opp)+'</span>' : '')+'</td>'+
+        '<td class="right num">'+(+x.fpts||0).toFixed(1)+'</td>'+cols.map(c=> cell(c, x.stats||{})).join('')+'</tr>');
+    });
+  }
+  if(live && countsAsGame(live)){
+    const o = thisWeekOpponent(p.nfl, w);
+    rows.push('<tr><td class="nowrap">Wk '+w+(o ? ' <span class="dim tiny">'+esc((o.atHome?'vs ':'@ ')+o.code)+'</span>' : '')+
+      ' <span class="pill live" style="font-size:10px">'+(gameStarted(p) && !(gameState(p.nfl)||{}).done ? 'LIVE' : 'this week')+'</span></td>'+
       '<td class="right num">'+scoreLine(live, p).toFixed(1)+'</td>'+cols.map(c=> cell(c, live)).join('')+'</tr>');
+  }
   return '<div class="hr"></div><div class="flabel">Stats <span class="dim tiny">— tap a heading for what it means</span></div>'+
     '<div class="scrollx"><table class="pstats"><thead>'+head+'</thead><tbody>'+rows.join('')+'</tbody></table></div>';
 }
@@ -8257,23 +8316,33 @@ ACT.askSend = (d)=>{
   toast('Sent to '+teamName(owner),'good');
 };
 /* Depth charts, straight from Sleeper. Only the depth numbers are written. */
-ACT.depthPull = async ()=>{
-  ui.tmp.depthBusy = true; ui.tmp.depthErr = null; render();
+ACT.depthPull = async (quiet)=>{
+  ui.tmp.depthBusy = true; ui.tmp.depthErr = null; if(!quiet) render();
   try{
     impProgress('Reading the player list\u2026', 40);
     const map = await sleeperPlayerMap();
-    let set = 0;
+    let set = 0, moved = 0;
     S.players.forEach(pl=>{
       const src = pl.sleeperId ? map[String(pl.sleeperId)] : null;
       if(!src) return;
       if(src.depth_chart_order!=null){ pl.depth = +src.depth_chart_order||0; set++; }
-      if(src.team && !pl.nfl) pl.nfl = src.team;
+      /* His club as Sleeper has it now, not just when it was blank — a man who
+         has moved kept his old club here, and the whole starter question turns
+         on which club he is at. */
+      if(src.team && String(src.team).toUpperCase() !== String(pl.nfl||'').toUpperCase()){
+        pl.nfl = src.team; moved++;
+      }
+      /* And whether he is hurt, which decides whether he is starting at all. */
+      if(src.injury_status) pl.injury = {status:src.injury_status, body:src.injury_body_part||'', at:Date.now()};
+      else if(pl.injury && pl.injury.status) pl.injury = null;
     });
     impProgress('', 100);
     ui.tmp.depthBusy = false;
-    logIt('Depth chart positions brought in for '+set+' players', {type:'admin'});
+    if(!quiet || moved) logIt('Depth charts refreshed — '+set+' players placed'+
+      (moved ? ', '+moved+' now at a different club' : ''), {type:'admin'});
+    S.meta = S.meta || {}; S.meta.depthAt = Date.now();
     save(); render();
-    toast(set+' players placed on their depth charts','good');
+    if(!quiet) toast(set+' players placed on their depth charts'+(moved?', '+moved+' moved club':''),'good');
   }catch(e){
     ui.tmp.depthBusy = false; ui.tmp.depthErr = e.message; impProgress('', 0); render();
     toast('Could not read that — '+e.message,'bad');
@@ -9406,13 +9475,16 @@ ACT.playerCard = (d)=>{
     })()}
 
     ${(()=>{
-      /* ---- Game log ---- */
-      const yr = ui.tmp.pcYear || S.league.season;
-      const years = playerYears(p);
+      /* ---- Past seasons ----
+         This season is shown game by game at the top of the card, so this is
+         for the seasons before it, and only appears when there is one. */
+      const years = playerYears(p).filter(y=> y !== S.league.season);
+      if(!years.length) return '';
+      const yr = years.indexOf(ui.tmp.pcYear) >= 0 ? ui.tmp.pcYear : years[0];
       const log = playerLog(p, yr);
       const cols = posStatCols(p.pos);
       const past = yr !== S.league.season ? ((S.history||{})[yr]||{})[p.id] : null;
-      return '<div class="hr"></div><div class="flabel">Game log</div>'+
+      return '<div class="hr"></div><div class="flabel">Past seasons</div>'+
         (years.length>1 ? '<div class="row" style="gap:6px;margin-bottom:6px">'+
           years.map(y=>'<button class="btn sm '+(y===yr?'':'ghost')+'" data-a="pcYear" data-y="'+y+'">'+y+'</button>').join('')+
           '</div>' : '')+
@@ -9599,10 +9671,31 @@ function settleTaxiClaim(c){
     money(capHit(p,S.league.season))+' now counts', {type:'add', teams:[c.toTeam, c.fromTeam], players:[p.id]});
   notify('Taxi claim awarded', p.name+' goes to '+teamName(c.toTeam)+' for nothing.','good');
 }
+/* ---- Who a claim is for ------------------------------------------------------
+   Standing in for somebody, previewing them, or just looking at their roster
+   are three different things, and a claim used to go to whichever the app
+   thought you were closest to. It now goes to the team named on the claim
+   itself: the one on screen by default, and a commissioner may pick another. */
+function claimTeam(){
+  const pick = ui.tmp.claimFor && byId(S.teams, ui.tmp.claimFor) ? ui.tmp.claimFor : null;
+  if(pick && (isCommish() || pick === actingTeam())) return pick;
+  const shown = currentTeamId();
+  if(shown && (isCommish() || shown === actingTeam())) return shown;
+  return actingTeam();
+}
+function claimForRow(){
+  const me = claimTeam();
+  if(!isCommish() || S.teams.length < 2)
+    return '<div class="tiny dim" style="margin-bottom:8px">Claiming for <b>'+esc(teamName(me))+'</b>.</div>';
+  return '<label class="f" style="margin-bottom:8px"><span>Claiming for</span>'+
+    teamSelect(null, me, {attrs:'data-oninput="claimFor"'})+'</label>';
+}
+ACT.claimFor = (d, el)=>{ ui.tmp.claimFor = el.value; };
 ACT.taxiClaim = (d)=>{
   { const p2 = byId(S.players, d.id);
     if(isRedshirt(p2)) return toast(p2.name+' is a redshirt — he cannot be claimed this season','bad'); }
-  const p = byId(S.players, d.id), me = actingTeam();
+  ui.tmp.claimFor = null;
+  const p = byId(S.players, d.id), me = claimTeam();
   if(!p || !p.contract || !onTaxi(p)) return toast('He is not on a taxi squad','bad');
   if(p.contract.teamId===me) return toast('He is already yours','bad');
   if(openClaimFor(p.id)) return toast('Somebody has already claimed him','bad');
@@ -9610,6 +9703,7 @@ ACT.taxiClaim = (d)=>{
   const hit = fixInc(Math.max(0, grossHit(p, S.league.season) - retainedOn(p, S.league.season)));
   const room = slotRoom(me,'active'), space = capSpace(me, S.league.season);
   modal('Claim '+p.name+' off the taxi squad', `
+    ${claimForRow()}
     <p>${esc(teamName(p.contract.teamId))} has <b>${S.settings.taxi.windowHours} hours</b> to answer. They can promote him
       to their own active roster, or put a trade together with you. If they do neither, he is yours and you give up nothing.</p>
     <div class="grid g3" style="margin:12px 0">
@@ -9629,7 +9723,10 @@ ACT.taxiClaim = (d)=>{
     '<button class="btn pri" data-a="taxiClaimGo" data-id="'+p.id+'"'+((hit>space&&S.settings.trades.capMustBeLegal)||room<=0?' disabled':'')+'>Put the claim in</button>');
 };
 ACT.taxiClaimGo = (d)=>{
-  const p = byId(S.players,d.id), me = actingTeam();
+  const p = byId(S.players,d.id), me = claimTeam();
+  if(!p || !p.contract) return toast('He is not there any more','bad');
+  if(p.contract.teamId === me) return toast('He is already '+teamName(me)+"'s",'bad');
+  if(!mustManage(me)) return;
   /* Checked again — the modal may have been sitting open while another of
      their claims settled. */
   if(taxiLimitBlock(me)) return toast('No claims left — '+taxiLimitBlock(me),'bad');
@@ -13834,6 +13931,8 @@ function foldWeekIntoSeason(){
     /* the week-by-week log */
     line.weeks = line.weeks || {};
     line.weeks[wk] = {fpts: Math.round(got*100)/100, stats: Object.assign({}, src)};
+    { const pl = byId(S.players, pid), o = pl ? thisWeekOpponent(pl.nfl, wk) : null;
+      if(o) line.weeks[wk].opp = (o.atHome ? 'vs ' : '@ ') + o.code; }
   });
 }
 /* Club codes differ between the places they come from — the card may say WAS
@@ -17591,6 +17690,29 @@ function recordsFromResults(playoffStart){
     if(+g.hp > +g.ap){ rh.w++; ra.l++; } else if(+g.ap > +g.hp){ ra.w++; rh.l++; } else { rh.t++; ra.t++; }
   });
 }
+/* The NFL club's opponent in a given week, from Sleeper's schedule. */
+const NFL_SAME = {WAS:'WSH', WSH:'WAS', LA:'LAR', LAR:'LA', JAC:'JAX', JAX:'JAC', ARZ:'ARI', ARI:'ARZ'};
+async function stampOpponents(season, weeks){
+  const bp = ((S.season||{}).byPlayer) || {};
+  const need = weeks.filter(w=> Object.keys(bp).some(pid=> bp[pid].weeks && bp[pid].weeks[w] && !bp[pid].weeks[w].opp));
+  for(const w of need){
+    const j = await getJSON('https://api.sleeper.app/schedule/nfl/regular/'+season+'/'+w).catch(()=> null);
+    const list = Array.isArray(j) ? j : (j && j.games) || [];
+    const vs = {};
+    list.forEach(g=>{
+      const h = String(g.home || g.home_team || '').toUpperCase(), a = String(g.away || g.away_team || '').toUpperCase();
+      if(!h || !a) return;
+      vs[h] = 'vs '+a; vs[a] = '@ '+h;
+      if(NFL_SAME[h]) vs[NFL_SAME[h]] = vs[h]; if(NFL_SAME[a]) vs[NFL_SAME[a]] = vs[a];
+    });
+    if(!Object.keys(vs).length) continue;
+    Object.keys(bp).forEach(pid=>{
+      const wk = bp[pid].weeks && bp[pid].weeks[w]; if(!wk || wk.opp) return;
+      const p = byId(S.players, pid); if(!p || !p.nfl) return;
+      const o = vs[String(p.nfl).toUpperCase()]; if(o) wk.opp = o;
+    });
+  }
+}
 async function syncSeasonFromSleeper(opts){
   opts = opts || {};
   const id = sleeperLeague();
@@ -17636,7 +17758,13 @@ async function syncSeasonFromSleeper(opts){
     const missing = done.filter(w=> !seasonHasWeek(w));
     const redo = opts.force ? done : [...new Set(off.concat(missing))].sort((a,b)=> a-b);
     const behind = (+S.live.week||1) < cur && cur <= 18;
-    if(!redo.length && !behind) return {weeks:done.length, fixed:[]};
+    if(!redo.length && !behind){
+      const had = JSON.stringify(Object.values(((S.season||{}).byPlayer)||{}).map(l=> Object.keys(l.weeks||{}).map(k=> l.weeks[k].opp||'').join()).join());
+      await stampOpponents(season, done);
+      const now = JSON.stringify(Object.values(((S.season||{}).byPlayer)||{}).map(l=> Object.keys(l.weeks||{}).map(k=> l.weeks[k].opp||'').join()).join());
+      if(had !== now) save();
+      return {weeks:done.length, fixed:[]};
+    }
     keepBackup(S, 'before matching '+season+' to Sleeper');
     const keep = statKeepSet();
     for(const w of redo){
@@ -17644,6 +17772,8 @@ async function syncSeasonFromSleeper(opts){
       if(st) writeSeasonWeek(w, st, pts[w] || {}, bySid, keep);
     }
     reTotalSeason();
+    /* Who each man played each week, for the game-by-game rows on his card. */
+    await stampOpponents(season, done);
     /* Every finished week's results, exactly as Sleeper has them. */
     S.schedule = (S.schedule||[]).filter(g=> done.indexOf(+g.week) < 0)
       .concat(...done.map(w=> results[w].map(g=> Object.assign({}, g, {src:'sleeper'}))))
@@ -18154,6 +18284,54 @@ function surRules(){
     payRound: +r.payRound || 3
   };
 }
+/* ---- Who is actually starting in the NFL this week --------------------------
+   The rule is about men who are their club's named starter, not about who a
+   manager happened to put in his own lineup. Sleeper's projections for the week
+   are the best guide there is — a club's starter is projected for a full game
+   and his back-up for almost nothing — so the club's best projected man is
+   taken as the starter, with the depth chart standing in where the week's
+   projections have not arrived. Anybody ruled out is not starting. */
+function weekProjOnly(p, week){
+  const w = +week || +S.live.week || 1, st = projStore();
+  if(st.week === w && st.byPlayer && st.byPlayer[p.id] != null) return +st.byPlayer[p.id];
+  return null;
+}
+function outThisWeek(p){
+  const st = String(((p||{}).injury||{}).status||'').toLowerCase();
+  return /out|ir|injured reserve|doubtful|suspend|pup|nfi/.test(st);
+}
+function namedStarters(pos, week){
+  const w = +week || +S.live.week || 1;
+  return memo('starters|'+pos+'|'+w, ()=>{
+    const byClub = {};
+    S.players.forEach(p=>{
+      if(p.pos !== pos || !p.nfl || outThisWeek(p)) return;
+      (byClub[String(p.nfl).toUpperCase()] = byClub[String(p.nfl).toUpperCase()] || []).push(p);
+    });
+    const out = {};
+    Object.keys(byClub).forEach(club=>{
+      const men = byClub[club];
+      const withProj = men.map(p=> ({p, v:weekProjOnly(p, w)})).filter(x=> x.v != null);
+      if(withProj.length){
+        const best = withProj.sort((a,b)=> b.v - a.v)[0];
+        /* A club whose best man is projected for nothing has nobody starting
+           worth the name — a bye week, most often. */
+        if(best.v >= 5){ out[club] = {id:best.p.id, how:'projected '+best.v.toFixed(1)+' this week'}; return; }
+        if(best.v > 0 && withProj.length === 1){ out[club] = {id:best.p.id, how:'the only one projected'}; return; }
+        return;
+      }
+      const d1 = men.filter(p=> +p.depth === 1);
+      if(d1.length === 1) out[club] = {id:d1[0].id, how:'first on the depth chart'};
+    });
+    return out;
+  });
+}
+function starterNote(p, week){
+  if(!p || !p.nfl) return null;
+  const s2 = namedStarters(p.pos, week)[String(p.nfl).toUpperCase()];
+  return (s2 && s2.id === p.id) ? s2.how : null;
+}
+function isNamedStarter(p, week){ return !!starterNote(p, week); }
 /* Who a team actually started at that position in a given week. */
 function startedAt(teamId, pos, week){
   const w = +week || +S.live.week || 1;
@@ -18162,11 +18340,19 @@ function startedAt(teamId, pos, week){
     : bestLineup(teamId, w).starters.filter(x=>x.p).map(x=>x.p.id);
   return ids.map(id=> byId(S.players,id)).filter(p=> p && p.pos === pos);
 }
+/* Every named starter at that position a side is holding — taxi and injured
+   reserve aside, since neither is his to play with. */
+function surHeld(teamId, week){
+  const r = surRules();
+  return teamPlayers(teamId)
+    .filter(p=> p.pos === r.pos && playerSlot(p) === 'active' && isNamedStarter(p, week))
+    .sort((a,b)=> (weekProjOnly(b, week)||0) - (weekProjOnly(a, week)||0));
+}
 /* Is this side over the line, and therefore open to a claim? */
 function surOver(teamId, week){
   const r = surRules();
   if(!r.on) return null;
-  const men = startedAt(teamId, r.pos, week);
+  const men = surHeld(teamId, week);
   return men.length > r.startedMax ? men : null;
 }
 function surClaims(){ S.surClaims = S.surClaims || []; return S.surClaims; }
@@ -18179,7 +18365,9 @@ function surOpenBy(teamId){
 /* The claimant's best third-rounder — the price if it comes to that. */
 function surPayPick(teamId){
   const r = surRules();
-  const mine = (S.picks||[]).filter(k=> k.ownerTeamId===teamId && +k.round===r.payRound && !k.used);
+  const pledged = {};
+  surClaims().forEach(c=>{ if(['naming','deciding','moving'].indexOf(c.status)>=0 && c.pickId) pledged[c.pickId] = 1; });
+  const mine = (S.picks||[]).filter(k=> k.ownerTeamId===teamId && +k.round===r.payRound && !k.used && !pledged[k.id]);
   if(!mine.length) return null;
   /* Best means earliest — the soonest year, then the best slot. */
   return mine.slice().sort((a,b)=> (a.year-b.year) || (pickSlot(a)-pickSlot(b)))[0];
@@ -25531,6 +25719,7 @@ function migrate(j){
   charterSettings(out);
   b2bSeed(out);
   bengalsUndo(out);
+  gadsdenClaim(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -25654,6 +25843,12 @@ function tickAll(){
   try{ if(autoFillRun()) needsRender = true; }catch(e){}
   try{ if(waiverTick()) needsRender = true; }catch(e){}
   try{ if(autoCloseTick()) needsRender = true; }catch(e){}
+  /* Depth charts, once a week, so who is a named starter stays current. */
+  if(isCommish() && !ui.tmp.depthBusy && (S.players||[]).length > 100 && !(S.meta && S.meta.demo) &&
+     Date.now() - ((S.meta||{}).depthAt||0) > 7*86400000){
+    S.meta.depthAt = Date.now();
+    setTimeout(()=>{ ACT.depthPull(true).then(()=>{}, ()=>{}); }, 12000);
+  }
   /* This season against Sleeper: shortly after the app opens, then every half
      hour. Only a commissioner's device writes it back. */
   if(isCommish() && sleeperLeague() && !seasonSyncBusy && (S.players||[]).length > 100 &&
