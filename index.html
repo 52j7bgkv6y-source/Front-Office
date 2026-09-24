@@ -42,6 +42,16 @@
   --body:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono:"IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
+/* The phone's own furniture — the clock and signal along the top, the home
+   bar along the bottom, a notch down one side in landscape. The page is drawn
+   edge to edge, so anything pinned to an edge has to leave room for it. Named
+   here once so every rule below asks the same question. */
+:root{
+  --sa-t:env(safe-area-inset-top, 0px);
+  --sa-r:env(safe-area-inset-right, 0px);
+  --sa-b:env(safe-area-inset-bottom, 0px);
+  --sa-l:env(safe-area-inset-left, 0px);
+}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0}
 body{
@@ -49,7 +59,7 @@ body{
   color:var(--bone);
   font:400 15px/1.5 var(--body);
   -webkit-font-smoothing:antialiased;
-  padding-bottom:env(safe-area-inset-bottom);
+  padding-bottom:var(--sa-b);
   overflow-x:hidden;
 }
 body::before{ /* ledger rule texture, very quiet */
@@ -125,6 +135,19 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
   padding:10px 22px;border-bottom:1px solid var(--rule);
   background:rgba(15,26,36,.93);backdrop-filter:blur(10px);
 }
+/* The page is drawn edge to edge, which on a phone means the very top of it
+   sits behind the clock, the signal and the battery. The bar carrying the
+   section you are on and your cap figures is what lands there, so it is given
+   that strip as padding — its own background then fills it, and the words
+   start below. The same for a notch on its side in landscape. */
+#topbar{
+  padding-top:calc(10px + var(--sa-t));
+  padding-left:calc(22px + var(--sa-l));
+  padding-right:calc(22px + var(--sa-r));
+}
+/* On a wide screen the rail runs the full height beside it, and its top is
+   behind the same strip. */
+#rail{padding-top:var(--sa-t)}
 #topbar .spacer{flex:1}
 /* The bar could not shrink below what was in it, so on a 360px phone — most
    Androids, and an iPhone mini — the whole app scrolled sideways on every
@@ -311,6 +334,10 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 
 /* modal */
 #modal{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:16px;background:rgba(6,11,16,.72)}
+/* A tall dialog on a phone reaches the top of the screen, and the top of the
+   screen belongs to the clock and the battery. */
+#modal{padding:calc(16px + var(--sa-t)) calc(16px + var(--sa-r))
+       calc(16px + var(--sa-b)) calc(16px + var(--sa-l))}
 #modal.on{display:flex}
 #modal .box{background:var(--ink-2);border:1px solid var(--rule);border-radius:6px;max-width:760px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(0,0,0,.6)}
 #modal .mh{position:sticky;top:0;background:var(--ink-2);display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--rule);z-index:1}
@@ -689,8 +716,10 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 }
 @media (max-width:860px){
   #rail{display:none}
-  #view{padding:14px 13px 96px}
-  #topbar{padding:9px 13px;gap:10px}
+  #view{padding:14px calc(13px + var(--sa-r)) 96px calc(13px + var(--sa-l))}
+  #topbar{
+    padding:calc(9px + var(--sa-t)) calc(13px + var(--sa-r)) 9px calc(13px + var(--sa-l));
+    gap:10px}
   h1{font-size:23px}
   .g2,.g3,.g4{grid-template-columns:1fr}
   .grid.keep2{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -699,7 +728,9 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   #tabbar{
     display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:50;
     background:rgba(19,32,45,.97);backdrop-filter:blur(12px);border-top:1px solid var(--rule);
-    padding-bottom:env(safe-area-inset-bottom);
+    padding-bottom:var(--sa-b);
+    padding-left:var(--sa-l);
+    padding-right:var(--sa-r);
   }
   #tabbar{min-width:0}
   /* Five equal columns only divide evenly if they are allowed to be narrower
@@ -717,7 +748,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   #tabbar button .badge{position:absolute;top:3px;right:calc(50% - 22px);font-size:9.5px;padding:2px 5px}
   #sheet{position:fixed;inset:0;z-index:90;background:rgba(6,11,16,.7);align-items:flex-end}
   #sheet.on{display:flex}
-  #sheet .sb{background:var(--ink-2);width:100%;border-top:1px solid var(--rule);border-radius:12px 12px 0 0;padding:6px 0 calc(14px + env(safe-area-inset-bottom));max-height:76vh;overflow:auto}
+  #sheet .sb{background:var(--ink-2);width:100%;border-top:1px solid var(--rule);border-radius:12px 12px 0 0;padding:6px 0 calc(14px + var(--sa-b));max-height:76vh;overflow:auto}
   #sheet .grab{width:36px;height:4px;background:var(--rule);border-radius:2px;margin:8px auto 4px}
   /* A button keeps its words on one line, which is right on a desktop and
      wrong on a phone: one long label was enough to push every screen it
@@ -742,11 +773,19 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
      tab bar along the bottom. */
   .dmgrid .dmscroll{max-height:calc(100vh - 340px);min-height:180px}
   .dmgrid .dmcompose{position:sticky;bottom:0;background:var(--ink-2);
-    border-top:1px solid var(--rule);padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+    border-top:1px solid var(--rule);padding-bottom:calc(10px + var(--sa-b))}
   .dmgrid .dmcompose input{font-size:16px}  /* under 16px iOS zooms the page in */
 }
 @media (max-width:420px){
   .hide-xs{display:none}
+}
+/* Added to a home screen, the app is drawn right up under the clock — that is
+   what makes it look like an app rather than a web page, and it is why the bar
+   has to leave the strip alone. A phone with a notch says how deep that strip
+   is; an older one with a square top does not, and still has a status bar over
+   it, so there is a floor of twenty points. */
+@media (max-width:860px) and (display-mode:standalone){
+  :root{ --sa-t:max(env(safe-area-inset-top, 0px), 20px); }
 }
 /* Narrower than an iPhone mini: the cap chips come off the bar altogether. They
    are on the Cap screen, which is one tap away, and a bar that fits is worth
@@ -936,6 +975,37 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
   .scrollx > table > tbody > tr > td:first-child,
   .scrollx > table > tfoot > tr > td:first-child{max-width:52vw}
 }
+/* Where the first column is only a number — a standing, a rank — the name
+   beside it is what actually says whose row this is, so both are pinned. The
+   number's real width is measured after the page is drawn and put in --frz1,
+   which is where the name column then sits. */
+.scrollx.freeze2 > table > tbody > tr > td:nth-child(2),
+.scrollx.freeze2 > table > tfoot > tr > td:nth-child(2){
+  position:sticky;left:var(--frz1,44px);z-index:2;
+  background:var(--ink-2);
+  box-shadow:inset -1px 0 0 var(--rule)}
+.scrollx.freeze2 > table > thead > tr > th:nth-child(2){
+  position:sticky;left:var(--frz1,44px);z-index:4;
+  box-shadow:inset -1px 0 0 var(--rule), inset 0 -1px 0 var(--rule)}
+/* With the name pinned, the number no longer needs an edge of its own. */
+.scrollx.freeze2 > table > tbody > tr > td:first-child,
+.scrollx.freeze2 > table > tfoot > tr > td:first-child{box-shadow:none}
+.scrollx.freeze2 > table > thead > tr > th:first-child{box-shadow:inset 0 -1px 0 var(--rule)}
+/* And the highlighted rows keep their colour under it, exactly as the first
+   column already does. */
+.scrollx.freeze2 > table > tbody > tr:hover > td:nth-child(2){background:var(--ink-3)}
+.scrollx.freeze2 > table > tbody > tr.rzrow > td:nth-child(2){background:#2A1A20}
+.scrollx.freeze2 > table > tbody > tr.tot > td:nth-child(2),
+.scrollx.freeze2 > table > tfoot > tr.tot > td:nth-child(2){background:var(--ink-3)}
+/* The number is a number — it never needs to be wide. */
+.scrollx.freeze2 > table > thead > tr > th:first-child,
+.scrollx.freeze2 > table > tbody > tr > td:first-child{max-width:none;white-space:nowrap}
+.scrollx.freeze2 > table > thead > tr > th:nth-child(2),
+.scrollx.freeze2 > table > tbody > tr > td:nth-child(2){max-width:40vw}
+@media (max-width:520px){
+  .scrollx.freeze2 > table > thead > tr > th:nth-child(2),
+  .scrollx.freeze2 > table > tbody > tr > td:nth-child(2){max-width:46vw}
+}
 /* A short table needs no cap — let it stand at its own height. */
 .scrollx.short{max-height:none}
 .thinfo{text-decoration:underline dotted;text-underline-offset:3px;cursor:help;padding:6px 0}
@@ -963,7 +1033,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-23c · claims name their team';
+const APP_BUILD = '2026-09-24d · the tab you picked stays in view';
 
 /* ============================================================
    HOME LEAGUE
@@ -2599,6 +2669,27 @@ function gadsdenClaim(st){
   if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[want.id, wrong.id, c.fromTeam], players:[p.id],
     text:'Taxi claim on '+p.name+' moved from '+wrong.name+' to '+want.name+' — it was put in while standing in for them'});
 }
+/* Two listings put up to check Recently closed worked, and asked for by name
+   to be taken off it. Only the closed ones go — nothing live is touched, and
+   the transaction log keeps whatever actually happened. */
+function blockTestClear(st){
+  if(!st || !st.league || st.league.blockTestsCleared) return;
+  const sup = ((st.settings||{}).supa||{}).leagueId, sl = ((st.settings||{}).live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  if(!Array.isArray(st.players) || st.players.length < 100) return;
+  st.league.blockTestsCleared = '2026-09-23';
+  if(!Array.isArray(st.auctions) || !st.auctions.length) return;
+  const named = /mike\s+gesicki|jalen\s+coker/i;
+  const ids = (st.players||[]).filter(x=> named.test(x.name||'')).map(x=> x.id);
+  if(!ids.length) return;
+  const gone = st.auctions.filter(a=> ids.indexOf(a.playerId) >= 0 &&
+    (a.status === 'settled' || a.status === 'cancelled'));
+  if(!gone.length) return;
+  st.auctions = st.auctions.filter(a=> gone.indexOf(a) < 0);
+  const names = gone.map(a=> (st.players.find(x=> x.id===a.playerId)||{}).name || 'a player');
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
+    text:'Took '+names.join(' and ')+' off Recently closed — they were posted to test it'});
+}
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
   const pin = (st.league.commishOwner||'').trim().toLowerCase();
@@ -2959,6 +3050,7 @@ function render(){
   /* Mid-press: queue it and redraw the moment they let go. */
   if(pressing){ renderQueued = true; return; }
   const chatWas = grabChatScroll();
+  const tabsWere = grabTabScroll();
   clearCapCache(); dppCache = null;
   const ae = document.activeElement;
   const k = ae && ae.dataset ? (ae.dataset.k || ae.dataset.set || null) : null;
@@ -3004,9 +3096,63 @@ function render(){
     const el = $('#view [data-k="'+k+'"]') || $('#view [data-set="'+k+'"]');
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
   }
+  freezeCols();
+  putTabScroll(tabsWere);
   /* And put the chat back exactly where it was being read. */
   putChatScroll(chatWas);
 }
+/* ---- A row of tabs wider than the phone --------------------------------------
+   Roster, Squads, Values, Extensions, Coming free, Dead cap, Free agents, Draft
+   picks, Cap standings — more than fits across a phone, so the row scrolls
+   sideways. Drawing the page again builds that row from scratch and it comes
+   back at the left, which is why picking Draft picks looked as though it had
+   jumped back to Roster: the tab you pressed was off the end of the row. Where
+   the row sat is kept across the redraw, and then whichever tab is on is
+   brought into view if it is not already. */
+function tabKey(strip){
+  return [...strip.querySelectorAll('button')]
+    .map(x=> (x.dataset.s || x.dataset.r || x.textContent || '').trim()).join('|');
+}
+function grabTabScroll(){
+  const was = {};
+  $$('.tabs').forEach(strip=>{ if(strip.scrollLeft) was[tabKey(strip)] = strip.scrollLeft; });
+  return was;
+}
+function putTabScroll(was){
+  $$('.tabs').forEach(strip=>{
+    /* Nothing to do where the whole row fits across the screen. */
+    if(strip.scrollWidth <= strip.clientWidth + 1) return;
+    const back = was && was[tabKey(strip)];
+    if(back) strip.scrollLeft = back;
+    const on = strip.querySelector('button.on');
+    if(!on) return;
+    const sr = strip.getBoundingClientRect(), br = on.getBoundingClientRect();
+    /* Already in view: leave the row exactly where it was. */
+    if(br.left >= sr.left - 1 && br.right <= sr.right + 1) return;
+    /* Otherwise bring it to the middle, so what is either side of it shows too. */
+    strip.scrollLeft += (br.left - sr.left) - (sr.width - br.width)/2;
+  });
+}
+/* Where two columns are pinned, the second one has to sit exactly where the
+   first one ends — and that width depends on the figures in it, so it is
+   measured rather than guessed. */
+function freezeCols(){
+  $$('.scrollx.freeze2').forEach(box=>{
+    /* Only a cell that really is the first column counts. A note written across
+       the whole table is one cell wide as far as the browser is concerned, and
+       measuring that would push the name column off the screen. */
+    const ok = el => el && !(+el.getAttribute('colspan') > 1);
+    const head = ok(box.querySelector('table > thead > tr > th:first-child'))
+      ? box.querySelector('table > thead > tr > th:first-child') : null;
+    const cell = [...box.querySelectorAll('table > tbody > tr')]
+      .filter(tr=> tr.children.length > 1).map(tr=> tr.children[0]).find(ok);
+    const w = Math.round(Math.max(head?head.getBoundingClientRect().width:0,
+                                  cell?cell.getBoundingClientRect().width:0));
+    if(w > 0) box.style.setProperty('--frz1', w+'px');
+  });
+}
+/* A wider window can change what the number column needs. */
+addEventListener('resize', ()=>{ try{ freezeCols(); }catch(e){} });
 /* Where somebody sits between making an account and being given a team. */
 function seatView(){
   const others = waitingMembers().filter(m=> m.user_id!==(Supa.user||{}).id);
@@ -6876,7 +7022,7 @@ VIEWS.teams = function(){
       </div></div>` : ''}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Standings</h3><div class="spacer"></div>
         <span class="tiny dim">through week ${Math.max(0,(+S.live.week||1)-1)}</span></div>
-        <div class="pb tight scrollx"><table>
+        <div class="pb tight scrollx freeze2"><table>
         <thead><tr><th>#</th>${sortTh('std','name','Team')}${sortTh('std','w','W','right','w')}${sortTh('std','l','L','right','l')}
           ${sortTh('std','t','T','right','t')}${sortTh('std','pct','Pct','right','pct')}
           ${sortTh('std','pf','PF','right','pf')}${sortTh('std','pa','PA','right','pa')}
@@ -8321,6 +8467,7 @@ ACT.depthPull = async (quiet)=>{
   try{
     impProgress('Reading the player list\u2026', 40);
     const map = await sleeperPlayerMap();
+    stampEspnIds(map);
     let set = 0, moved = 0;
     S.players.forEach(pl=>{
       const src = pl.sleeperId ? map[String(pl.sleeperId)] : null;
@@ -9039,6 +9186,7 @@ ACT.matchSleeperIds = async (quiet)=>{
       if(id){ pl.sleeperId = String(id); hit++; }
       else miss.push(pl.name);
     });
+    stampEspnIds(all);
     ui.tmp.idBusy = false;
     ui.tmp.idMiss = miss;
     if(hit) save();
@@ -9327,6 +9475,7 @@ ACT.trendPull = async (quiet)=>{
         const id = byNamePos[k2+'|'+String(pl.pos||'').toUpperCase()] || byName[k2] || null;
         if(id){ pl.sleeperId = String(id); stamped++; }
       });
+      stampEspnIds(all);
       t.stamped = stamped;
     }
     const hits = S.players.filter(pl=> trendFor(pl)).length;
@@ -9361,7 +9510,9 @@ ACT.playerCard = (d)=>{
   ui.tmp.pcId = d.id;
   if(ui.tmp.pcYear && playerYears(byId(S.players,d.id)||{}).indexOf(ui.tmp.pcYear)<0) ui.tmp.pcYear = null;
   const p = byId(S.players, d.id); if(!p) return;
+  wantPlayerNews(p);
   const news = playerNews(p), m = matchupFor(p), b = valueBreakdown(p);
+  const feedState = playerFeedState(p);
   const c = p.contract;
   const stale = S.news.at ? Math.round((Date.now()-S.news.at)/60000) : null;
   modal(p.name, `
@@ -9369,7 +9520,7 @@ ACT.playerCard = (d)=>{
       ${posTag(p.pos)} <span class="muted">${esc(p.nfl||'free agent')} · age ${p.age||'—'}</span>
       ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${m?matchupChip(p,{rank:true}):''}
       <div class="spacer"></div>
-      <button class="btn sm ghost" data-a="pullNews">Refresh news</button>
+      <button class="btn sm ghost" data-a="pullNews" data-id="${esc(p.id)}">Refresh news</button>
     </div>
     <div class="grid g2" style="margin-bottom:12px">
       <div class="assetbox"><div class="flabel">Contract</div>
@@ -9393,15 +9544,27 @@ ACT.playerCard = (d)=>{
     <div class="hr"></div>
     <div class="flabel">Around the league</div>
     ${news.length
-      ? '<div class="stack">'+news.map(n=>`<a href="#" class="assetbox" style="display:block;text-decoration:none;color:inherit"
-          data-a="readNews" data-i="${newsIndex(n)}">
+      ? '<div class="stack">'+news.map(n=>{
+          const at = newsIndex(n);
+          const where = at>=0 ? 'data-a="readNews" data-i="'+at+'"'
+                              : 'data-a="readFeed" data-id="'+esc(p.id)+'" data-i="'+playerFeed(p).indexOf(n)+'"';
+          return `<a href="#" class="assetbox" style="display:block;text-decoration:none;color:inherit" ${where}>
           <div style="font-weight:500;margin-bottom:3px">${esc(n.headline)}</div>
           ${n.description?'<div class="tiny muted">'+esc(n.description.slice(0,180))+'…</div>':''}
           <div class="tiny dim" style="margin-top:4px">${n.published?dstr(new Date(n.published).getTime()):''} · open it</div>
-        </a>`).join('')+'</div>'
-      : '<div class="hint">'+(S.news.items.length
-          ? 'Nothing in the last '+S.news.items.length+' stories mentions him.'
-          : 'No news loaded yet. Press refresh above.')+'</div>'}
+        </a>`;}).join('')+'</div>'
+      : '<div class="hint">'+(
+          feedState==='busy' ? 'Reading his feed…'
+          : feedState==='bad' ? 'His own feed did not answer just now. Press refresh above to try again.'
+          : feedState==='off' ? (ESPN_IDS_BUSY
+              ? 'Looking him up at ESPN\u2026'
+              : (S.news.items.length
+                ? 'Nothing in the last '+S.news.items.length+' stories mentions him, and ESPN does not list him. '+
+                  'Press refresh above to look again.'
+                : 'No news loaded yet. Press refresh above.'))
+          : 'Nothing written about him lately.')+'</div>'}
+    ${news.length && feedState==='done' && playerFeed(p).length
+      ? '<div class="hint">Straight from his own feed.</div>' : ''}
     ${stale!=null?'<div class="hint">Feed last checked '+(stale<60?stale+' minutes':Math.round(stale/60)+' hours')+' ago.</div>':''}
 
     ${(()=>{
@@ -11485,17 +11648,29 @@ ACT.faOpen = (d)=>{
   notify('Free agent up', p.name+' is on the auction floor for '+f.clockHours+' hours.');
   closeModal(); save(); ui.sub='fa'; go('block');
 };
+/* Every bid in this league is in whole dollars — free agency and the blind bid
+   draft both. No cents, no halves. A floor that works out fractional goes up to
+   the next whole number, so clearing it still clears it, and a raise is always
+   at least a dollar even where the league has set no minimum raise at all. */
+function wholeBid(n){ return Math.max(0, Math.round(+n||0)); }
+function faFloor(a){
+  const f = S.settings.fa;
+  if(a && a.leading){
+    const step = Math.ceil(+a.leading.aav + (+f.minIncrement||0) - 1e-9);
+    return Math.max(step, Math.floor(+a.leading.aav) + 1, 1);
+  }
+  return Math.max(1, Math.ceil((+f.minBid||1) - 1e-9));
+}
 ACT.faBid = (d)=>{
-  const a = byId(S.faAuctions, d.id), p = byId(S.players, a.playerId), f = S.settings.fa;
-  const me = actingTeam();
-  const floor = a.leading ? fixInc(a.leading.aav + (+f.minIncrement||0)) : fixInc(+f.minBid||1);
-  ui.tmp.fab = { id:a.id, aav:Math.max(floor, marketPrice(p,0)), years:1, structId:'ev' };
+  const a = byId(S.faAuctions, d.id), p = byId(S.players, a.playerId);
+  const floor = faFloor(a);
+  ui.tmp.fab = { id:a.id, aav:Math.max(floor, wholeBid(marketPrice(p,0))), years:1, structId:'ev' };
   faBidModal();
 };
 function faBidModal(){
   const b = ui.tmp.fab, a = byId(S.faAuctions, b.id), p = byId(S.players, a.playerId);
   const me = actingTeam(), f = S.settings.fa;
-  const floor = a.leading ? fixInc(a.leading.aav + (+f.minIncrement||0)) : fixInc(+f.minBid||1);
+  const floor = faFloor(a);
   const sal = salariesFor(roundInc(b.aav*b.years), b.years, b.structId);
   const y1 = sal[0]||0;
   const budgetLeft = faLeft(me, a.id);
@@ -11517,7 +11692,8 @@ function faBidModal(){
       ${f.blind?'':' at <span class="money">'+money(a.leading.aav)+'</span> a year for '+a.leading.years}</div>`:''}
     <div class="grid g3">
       <label class="f"><span>Your bid, per year</span>
-        <input type="number" step="${S.settings.cap.increment}" min="${floor}" value="${b.aav}" data-oninput="fabField" data-f="aav" data-k="fabaav"></label>
+        <input type="number" step="1" min="${floor}" value="${b.aav}" data-oninput="fabField" data-f="aav" data-k="fabaav">
+        <span class="tiny dim">whole dollars</span></label>
       <label class="f"><span>Years (up to ${f.maxYears})</span>
         <input type="number" min="1" max="${f.maxYears}" value="${b.years}" data-oninput="fabField" data-f="years" data-k="fabyrs"></label>
       <label class="f"><span>Structure</span>
@@ -11539,7 +11715,8 @@ function faBidModal(){
       <tbody><tr><td class="dim">Salary</td>${sal.map(v=>'<td class="right money">'+money(v)+'</td>').join('')}</tr>
       <tr><td class="dim">Model</td>${sal.map((_,i)=>'<td class="right num dim">'+money(marketPrice(p,i))+'</td>').join('')}</tr>
       </tbody></table></div>`:''}
-    ${tooLow?'<div class="hint bad">The floor here is '+money(floor)+'.</div>':''}
+    ${tooLow?'<div class="hint bad">The floor here is '+money(floor)+
+      (a.leading?' — a dollar more than the bid in front':'')+'.</div>':''}
     ${overBudget?'<div class="hint bad">That is more free agent budget than you have left this season.</div>':''}
     ${overCap?'<div class="hint bad">That does not fit under your cap.</div>':''}
     ${(!overCap && squeeze)?'<div class="hint">Winning at this number leaves you '+money(capLeft-y1)+' for '+(openSpots-1)+
@@ -11552,18 +11729,19 @@ function faBidModal(){
 ACT.fabField = (d,el)=>{
   const b = ui.tmp.fab;
   if(d.f==='years') b.years = clamp(+el.value||1, 1, +S.settings.fa.maxYears||1);
-  else if(d.f==='aav') b.aav = Math.max(0, +el.value||0);
+  else if(d.f==='aav') b.aav = wholeBid(el.value);
   else b.structId = el.value;
   faBidModal();
 };
 ACT.faBidGo = ()=>{
-  const b = ui.tmp.fab, a = byId(S.faAuctions, b.id), f = S.settings.fa, me = actingTeam();
-  const floor = a.leading ? fixInc(a.leading.aav + (+f.minIncrement||0)) : fixInc(+f.minBid||1);
+  const b = ui.tmp.fab, a = byId(S.faAuctions, b.id), me = actingTeam();
+  b.aav = wholeBid(b.aav);
+  const floor = faFloor(a);
   if(b.aav < floor) return toast('The floor is '+money(floor),'bad');
   const y1 = faYearOne(b);
   if(y1 > faLeft(me, a.id)) return toast('Not enough free agent budget left','bad');
   if(y1 > capRoom(me, S.league.season)) return toast('That does not fit under your cap','bad');
-  const bid = {id:uid('b'), teamId:me, aav:fixInc(b.aav), years:b.years, structId:b.structId, at:Date.now()};
+  const bid = {id:uid('b'), teamId:me, aav:b.aav, years:b.years, structId:b.structId, at:Date.now()};
   a.bids.unshift(bid);
   a.leading = bid;
   const bumped = antiSnipe(a.clock);
@@ -11714,10 +11892,11 @@ ACT.bbdReset = ()=>{
   S.bbd = {status:'idle', round:1, clock:null, bids:[], rounds:[]};
   save(); render(); toast('Draft cleared');
 };
+/* Sealed bids have no raising, so the floor is simply the lowest the league
+   allows — taken up to the next whole dollar like everything else. */
+function bbdFloor(){ return Math.max(1, Math.ceil((+S.settings.bbd.minBid||1) - 1e-9)); }
 ACT.bbdAdd = ()=>{
-  const me = actingTeam();
-  const free = S.players.filter(p=> !p.contract).sort((a,b)=> marketPrice(b,0)-marketPrice(a,0));
-  ui.tmp.bb = {playerId:'', amount:+S.settings.bbd.minBid||1, years:1, structId:'ev', q:''};
+  ui.tmp.bb = {playerId:'', amount:bbdFloor(), years:1, structId:'ev', q:''};
   bbdBidModal();
 };
 function bbdBidModal(){
@@ -11742,8 +11921,9 @@ function bbdBidModal(){
       </div></div>
       <div class="grid g3">
         <label class="f"><span>Your bid, per year</span>
-          <input type="number" step="${S.settings.cap.increment}" min="${b.minBid}" value="${v.amount}"
-            data-oninput="bbField" data-f="amount" data-k="bbamt"></label>
+          <input type="number" step="1" min="${bbdFloor()}" value="${v.amount}"
+            data-oninput="bbField" data-f="amount" data-k="bbamt">
+          <span class="tiny dim">whole dollars</span></label>
         <label class="f"><span>Years (up to ${b.maxYears})</span>
           <input type="number" min="1" max="${b.maxYears}" value="${v.years}" data-oninput="bbField" data-f="years"></label>
         <label class="f"><span>Structure</span>
@@ -11781,13 +11961,13 @@ ACT.bbPick = (d)=>{
   ui.tmp.bb.playerId = d.id || '';
   if(d.id){
     const p = byId(S.players,d.id);
-    ui.tmp.bb.amount = Math.max(+S.settings.bbd.minBid||1, marketPrice(p,0));
+    ui.tmp.bb.amount = Math.max(bbdFloor(), wholeBid(marketPrice(p,0)));
   }
   bbdBidModal();
 };
 ACT.bbField = (d,el)=>{
   const v = ui.tmp.bb;
-  if(d.f==='amount') v.amount = Math.max(0, +el.value||0);
+  if(d.f==='amount') v.amount = wholeBid(el.value);
   else if(d.f==='years') v.years = clamp(+el.value||1, 1, +S.settings.bbd.maxYears||1);
   else if(d.f==='q'){ v.q = el.value; bbdBidModal(); return; }
   else v.structId = el.value;
@@ -11796,8 +11976,10 @@ ACT.bbField = (d,el)=>{
 ACT.bbSave = ()=>{
   const v = ui.tmp.bb, me = actingTeam();
   if(!v.playerId) return;
-  if(v.amount < (+S.settings.bbd.minBid||0)) return toast('The floor is '+money(S.settings.bbd.minBid),'bad');
-  S.bbd.bids.push({id:uid('bb'), teamId:me, playerId:v.playerId, amount:fixInc(v.amount),
+  v.amount = wholeBid(v.amount);
+  const floor = bbdFloor();
+  if(v.amount < floor) return toast('The floor is '+money(floor),'bad');
+  S.bbd.bids.push({id:uid('bb'), teamId:me, playerId:v.playerId, amount:v.amount,
     years:v.years, structId:v.structId, rank:myBids(me).length+1, at:Date.now()});
   closeModal(); save(); render(); toast('Sealed','good');
 };
@@ -11815,14 +11997,18 @@ ACT.bbMove = (d)=>{
 
 /* When a block listing closed. Older ones were never stamped when pulled or
    left to expire, so the newest line of their log stands in. */
+const BLOCK_KEEP = 7*86400000;   /* a week in Recently closed, then gone */
 function blockClosedAt(a){
   const logAt = Math.max(0, ...((a.log||[]).map(l=> +l.at||0)));
   return +a.settledAt || +a.endedAt || logAt || +a.at || 0;
 }
+/* The moment it leaves the list. */
+function blockDropsAt(a){ return blockClosedAt(a) + BLOCK_KEEP; }
 VIEWS.block = function(){
   const live = S.auctions.filter(a=> a.status==='open'||a.status==='running');
   /* Closed in the last week only — after that it is in Transactions, not here. */
-  const done = S.auctions.filter(a=> (a.status==='settled'||a.status==='cancelled') && Date.now() - blockClosedAt(a) < 7*86400000).slice(0,12);
+  const done = S.auctions.filter(a=> (a.status==='settled'||a.status==='cancelled') && blockDropsAt(a) > Date.now())
+    .sort((x,y)=> blockClosedAt(y) - blockClosedAt(x)).slice(0,12);
   const me = actingTeam(), t = S.settings.trades;
   return `
   <div class="section">
@@ -11898,11 +12084,14 @@ VIEWS.block = function(){
     }).join('') || '<div class="panel"><div class="empty-state"><h3>Nothing on the block</h3><p>Post a player with an asking price and the league can come to you.</p><button class="btn pri" data-a="pickToBlock" style="margin-top:10px">Post a player</button></div></div>'}
     </div>
 
-    ${done.length?`<div class="panel" style="margin-top:18px"><div class="ph"><h3>Recently closed</h3></div><div class="pb tight scrollx">
-      <table><thead><tr><th>Player</th><th>From</th><th>To</th><th class="right">Result</th></tr></thead><tbody>
+    ${done.length?`<div class="panel" style="margin-top:18px"><div class="ph"><h3>Recently closed</h3>
+      <div class="spacer"></div><span class="tiny dim">each one stays a week</span></div><div class="pb tight scrollx">
+      <table><thead><tr><th>Player</th><th>From</th><th>To</th><th class="right">Result</th><th class="right">Drops off in</th></tr></thead><tbody>
       ${done.map(a=>`<tr><td>${esc(playerName(a.playerId))}</td><td>${esc(teamName(a.sellerTeamId))}</td>
         <td>${a.leading?esc(teamName(a.leading.teamId)):'—'}</td>
-        <td class="right ${a.status==='settled'?'good':'dim'}">${a.status==='settled'?'Traded':'Withdrawn'}</td></tr>`).join('')}
+        <td class="right ${a.status==='settled'?'good':'dim'}">${a.status==='settled'?'Traded':'Withdrawn'}</td>
+        <td class="right"><span class="clock calm" style="font-size:15px"
+          data-until="${blockDropsAt(a)}">${hhmm(blockDropsAt(a)-Date.now())}</span></td></tr>`).join('')}
       </tbody></table></div></div>`:''}
     </div>
   </div>`;
@@ -12052,7 +12241,7 @@ function faSection(me){
                    ? '<span class="muted">A sealed bid is in from '+esc(teamName(a.leading.teamId))+'</span>'
                    : '<b>'+esc(teamName(a.leading.teamId))+'</b> — <span class="money">'+money(a.leading.aav)+'</span> a year for '+
                      a.leading.years+' <span class="dim tiny">('+money(faYearOne(a.leading))+' against '+S.league.season+')</span>')
-                : '<span class="dim tiny">nobody in yet — floor is '+money(f.minBid)+'</span>'}
+                : '<span class="dim tiny">nobody in yet — floor is '+money(faFloor(a))+'</span>'}
               ${mine?'<div class="tiny good" style="margin-top:5px">That is you.</div>':''}
             </div></div>
             <div><div class="flabel">What the model says</div><div class="assetbox">
@@ -18062,12 +18251,30 @@ function newsUrl(){
   return 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50';
 }
 const ESPN_NEWS = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=50';
+/* ESPN says, on each story, which players it is about — a categories list with
+   an athlete id and his name in it. That is far better than reading names out
+   of the headline, so it is kept. */
+function newsPeople(a){
+  const out = [];
+  (a && a.categories || []).forEach(c=>{
+    if(!c || String(c.type||'').toLowerCase() !== 'athlete') return;
+    const id = c.athleteId || (c.athlete && c.athlete.id) || c.id;
+    const nm = c.description || (c.athlete && c.athlete.description) || '';
+    if(!id && !nm) return;
+    out.push({id: id==null?'':String(id), name: String(nm)});
+  });
+  /* Some feeds hand the same man over twice. */
+  const seen = {}, keep = [];
+  out.forEach(x=>{ const k = x.id||x.name; if(seen[k]) return; seen[k]=1; keep.push(x); });
+  return keep;
+}
 function newsShape(raw){
   return (raw||[]).slice(0,80).map(a=>({
     headline: a.headline || a.title || '',
     description: a.description || (a.story ? String(a.story).slice(0,300) : ''),
     published: a.published || a.lastModified || '',
-    link: (a.links && a.links.web && a.links.web.href) || a.link || ''
+    link: (a.links && a.links.web && a.links.web.href) || a.link || '',
+    people: newsPeople(a)
   })).filter(x=> x.headline);
 }
 /* Try the league server first, since that is where a key would live, then ESPN
@@ -18099,8 +18306,10 @@ async function pullNews(loud){
       const items = newsShape(j && (j.items || j.articles));
       if(!items.length){ trouble.push(t.what+': no stories in the answer'); continue; }
 
-      S.news = {at:Date.now(), items, from:t.what};
+      S.news = {at:Date.now(), items, from:t.what, byPlayer:(S.news&&S.news.byPlayer)||{}};
       S.meta.newsTrouble = null;
+      pullEspnIds().then(()=>{}, ()=>{});
+      
       saveLocal(); render();
       if(loud) toast(items.length+' stories in','good');
       return;
@@ -18138,6 +18347,32 @@ function newsMatches(){
     /* Each story's text, lowercased once rather than per player. */
     const hays = items.map(x=> ((x.headline||'') + ' ' + (x.description||'')).toLowerCase());
     items.forEach(x=> byItem.set(x, []));
+
+    /* First pass: what ESPN itself says each story is about. This is the one
+       that actually works — the old headline scan missed nearly everybody,
+       because a story about a man rarely puts his full name in the headline. */
+    const mine = {byEspn:{}, byName:{}};
+    S.players.forEach(p=>{
+      if(!p) return;
+      if(p.espnId) (mine.byEspn[String(p.espnId)] = mine.byEspn[String(p.espnId)] || []).push(p);
+      const k = flatName(p.name||'');
+      if(k) (mine.byName[k] = mine.byName[k] || []).push(p);
+    });
+    const tagged = {};   /* player id -> stories, in feed order */
+    items.forEach(it=>{
+      (it.people||[]).forEach(who=>{
+        let hit = (who.id && mine.byEspn[String(who.id)]) || null;
+        if(!hit){
+          const k = flatName(who.name||'');
+          hit = k ? mine.byName[k] : null;
+        }
+        (hit||[]).forEach(p=>{
+          const list = tagged[p.id] = tagged[p.id] || [];
+          if(list.indexOf(it) < 0){ list.push(it); byItem.get(it).push(p); }
+        });
+      });
+    });
+
     S.players.forEach(p=>{
       if(!p || !p.name) return;
       const bits = String(p.name).split(/\s+/);
@@ -18156,26 +18391,218 @@ function newsMatches(){
         const surname = new RegExp('\\b'+lastL+'\\b','i');
         const initial = firstL ? new RegExp('\\b'+firstL[0]+'\\.','i') : null;
         if(full.test(hay) || (surname.test(hay) && initial && initial.test(hay))){
+          const already = tagged[p.id] && tagged[p.id].indexOf(items[i]) >= 0;
           (hits = hits || []).push(items[i]);
-          byItem.get(items[i]).push(p);
+          if(!already) byItem.get(items[i]).push(p);
         }
       }
-      if(hits) byPlayer[p.id] = hits.slice(0,6);
+      /* Tagged stories lead; anything the text scan turned up follows. */
+      const lead = tagged[p.id] || [];
+      const rest = (hits||[]).filter(x=> lead.indexOf(x) < 0);
+      const all = lead.concat(rest);
+      if(all.length) byPlayer[p.id] = all.slice(0,8);
     });
+    /* A man ESPN tagged but whose surname never appears in the text still
+       belongs in the list. */
+    Object.keys(tagged).forEach(pid=>{ if(!byPlayer[pid]) byPlayer[pid] = tagged[pid].slice(0,8); });
     return {byPlayer, byItem};
   });
 }
+/* ---- A feed for the one man ------------------------------------------------
+   The wire carries fifty stories about the whole league, so most players are
+   never in it. ESPN also keeps a feed per player, which is what a card wants.
+   It needs his ESPN id, which rides along on Sleeper's player list. */
+/* ---- Putting ESPN ids on our players ---------------------------------------
+   Sleeper used to carry each man's ESPN id and has stopped filling it in for
+   anybody recent, so it is read from ESPN's own fantasy player list instead:
+   one list, a name and a position each, about two thirds of a megabyte, asked
+   for once a day. Without it a card has no feed of its own to read. */
+const ESPN_POS = {1:'QB',2:'RB',3:'WR',4:'TE',5:'K',7:'P',9:'DT',10:'DE',11:'LB',
+                  12:'CB',13:'S',14:'DB',15:'DB',16:'DEF'};
+const ESPN_CLUB = {1:'ATL',2:'BUF',3:'CHI',4:'CIN',5:'CLE',6:'DAL',7:'DEN',8:'DET',9:'GB',
+                   10:'TEN',11:'IND',12:'KC',13:'LV',14:'LAR',15:'MIA',16:'MIN',17:'NE',
+                   18:'NO',19:'NYG',20:'NYJ',21:'PHI',22:'ARI',23:'PIT',24:'LAC',25:'SF',
+                   26:'SEA',27:'TB',28:'WAS',29:'CAR',30:'JAX',33:'BAL',34:'HOU'};
+const ESPN_IDS_FRESH = 24*60*60*1000;
+let ESPN_IDS_BUSY = null;
+function espnListUrl(season){
+  return 'https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/'+season+
+         '/players?scoringPeriodId=0&view=players_wl';
+}
+async function espnPlayerList(){
+  const yr = +(S.league && S.league.season) || new Date().getFullYear();
+  const filter = {'x-fantasy-filter': JSON.stringify({filterActive:{value:true}})};
+  for(const season of [yr, yr-1]){
+    for(const head of [filter, null]){
+      try{
+        const r = await fetch(espnListUrl(season), {headers: Object.assign({accept:'application/json'}, head||{})});
+        if(!r.ok) continue;
+        const j = await r.json();
+        if(Array.isArray(j) && j.length) return j;
+      }catch(e){}
+    }
+  }
+  return null;
+}
+/* ESPN and this app do not always use the same word for a defender — it says
+   cornerback where we say DB — so they are compared by family. */
+function posFamily(x){
+  const p2 = String(x||'').toUpperCase();
+  if(/^(CB|S|FS|SS|DB)$/.test(p2)) return 'DB';
+  if(/^(DT|DE|DL|EDGE|NT)$/.test(p2)) return 'DL';
+  if(/^(LB|ILB|OLB|MLB)$/.test(p2)) return 'LB';
+  if(/^(DEF|DST)$/.test(p2)) return 'DEF';
+  return p2;
+}
+/* A dozen men in that list share a name with another, so the position settles
+   it, and his club after that. Failing both, a lone candidate is taken as read. */
+function stampEspnFromList(list){
+  if(!list || !list.length) return 0;
+  const byName = {};
+  list.forEach(r=>{
+    const k = flatName(r && r.fullName || '');
+    /* Defences carry a made-up negative id and have no feed of their own. */
+    if(!k || !(+r.id > 0)) return;
+    (byName[k] = byName[k] || []).push(r);
+  });
+  let n = 0;
+  (S.players||[]).forEach(pl=>{
+    const k = flatName(pl.name||'');
+    const seen = k ? byName[k] : null;
+    if(!seen || !seen.length) return;
+    let pick = seen[0];
+    if(seen.length > 1){
+      const pos = String(pl.pos||'').toUpperCase(), club = String(pl.nfl||'').toUpperCase();
+      const fam = posFamily(pos);
+      const sameFam = seen.filter(r=> posFamily(ESPN_POS[r.defaultPositionId]) === fam);
+      /* Where two of a name play the same position, the one at his club wins,
+         and failing that the one who is on a club at all. */
+      pick = sameFam.find(r=> ESPN_CLUB[r.proTeamId] === club)
+          || sameFam.find(r=> ESPN_CLUB[r.proTeamId])
+          || sameFam[0]
+          || seen.find(r=> ESPN_CLUB[r.proTeamId] === club)
+          || null;
+    }
+    if(!pick) return;
+    const id = String(pick.id);
+    if(pl.espnId === id) return;
+    pl.espnId = id; n++;
+  });
+  return n;
+}
+/* Asked for once a day, and only ever once at a time. */
+function pullEspnIds(force){
+  const at = +((S.meta||{}).espnIdsAt) || 0;
+  if(!force && Date.now() - at < ESPN_IDS_FRESH) return Promise.resolve(0);
+  if(ESPN_IDS_BUSY) return ESPN_IDS_BUSY;
+  ESPN_IDS_BUSY = (async ()=>{
+    const list = await espnPlayerList();
+    const n = stampEspnFromList(list);
+    if(list){ S.meta.espnIdsAt = Date.now(); S.meta.espnIdsOn = (S.players||[]).filter(x=>x.espnId).length; }
+    ESPN_IDS_BUSY = null;
+    if(n){ save(); render(); }
+    return n;
+  })();
+  return ESPN_IDS_BUSY;
+}
+const ESPN_PLAYER_NEWS = id =>
+  'https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId='+
+  encodeURIComponent(id)+'&limit=10';
+const PNEWS_FRESH = 30*60*1000;   /* half an hour is plenty for a news feed */
+const PNEWS_BUSY = {};            /* ids being fetched right now */
+function pnewsBox(){
+  if(!S.news) S.news = {at:0, items:[]};
+  if(!S.news.byPlayer) S.news.byPlayer = {};
+  return S.news.byPlayer;
+}
+function playerFeed(p){
+  if(!p || !p.id) return [];
+  const got = pnewsBox()[p.id];
+  return (got && got.items) || [];
+}
+/* 'off' (no ESPN id), 'busy', 'done', 'cold' (never asked) or 'bad'. */
+function playerFeedState(p){
+  if(!p || !p.id) return 'off';
+  if(!p.espnId) return 'off';
+  if(PNEWS_BUSY[p.id]) return 'busy';
+  const got = pnewsBox()[p.id];
+  if(!got) return 'cold';
+  if(got.bad) return 'bad';
+  return 'done';
+}
+async function pullPlayerNews(p, force){
+  if(!p || !p.id || !p.espnId) return;
+  if(PNEWS_BUSY[p.id]) return;
+  const box = pnewsBox(), got = box[p.id];
+  if(!force && got && (Date.now() - (got.at||0)) < PNEWS_FRESH) return;
+  PNEWS_BUSY[p.id] = 1;
+  try{
+    const r = await fetch(ESPN_PLAYER_NEWS(p.espnId), {headers:{accept:'application/json'}});
+    const j = await r.json();
+    const items = newsShape(j && (j.feed || j.items || j.articles));
+    box[p.id] = {at:Date.now(), items};
+  }catch(e){
+    box[p.id] = {at:Date.now(), items:(got&&got.items)||[], bad:(e.message||'no answer')};
+  }
+  delete PNEWS_BUSY[p.id];
+  saveLocal(); render();
+}
+/* Asked for while a card is being drawn; it fills itself in a moment. */
+function wantPlayerNews(p){
+  if(!p || !p.id) return;
+  if(!p.espnId && p.sleeperId && SLEEPER_PLAYERS) stampEspnIds(SLEEPER_PLAYERS);
+  if(!p.espnId){
+    /* No id yet, so fetch the list and come back to him. */
+    if(!ESPN_IDS_BUSY && (Date.now() - (+((S.meta||{}).espnIdsAt)||0)) >= ESPN_IDS_FRESH){
+      pullEspnIds().then(n=>{ if(p.espnId) pullPlayerNews(p); }, ()=>{});
+    }
+    return;
+  }
+  if(playerFeedState(p) === 'cold'){
+    PNEWS_BUSY[p.id] = 1;               /* so the next draw does not ask again */
+    setTimeout(()=>{ delete PNEWS_BUSY[p.id]; pullPlayerNews(p); }, 0);
+  }
+}
 function playerNews(p){
   if(!p || !p.id) return [];
-  return newsMatches().byPlayer[p.id] || [];
+  const own = playerFeed(p);
+  const wire = newsMatches().byPlayer[p.id] || [];
+  if(!own.length) return wire;
+  /* His own feed leads. The wire may still add something ESPN did not file
+     under him, so anything with a different headline follows. */
+  const seen = {};
+  own.forEach(x=> seen[(x.headline||'').toLowerCase()] = 1);
+  return own.concat(wire.filter(x=> !seen[(x.headline||'').toLowerCase()])).slice(0,10);
 }
 /* Which players in this league a story is actually about. */
 function newsTouches(item){
-  return newsMatches().byItem.get(item) || [];
+  const got = newsMatches().byItem.get(item);
+  if(got) return got;
+  /* A story out of one man's own feed is not in the wire index, so read its
+     tags straight off. */
+  const out = [], seen = {};
+  ((item||{}).people||[]).forEach(who=>{
+    const k = flatName(who.name||'');
+    (S.players||[]).forEach(p=>{
+      if(!p || seen[p.id]) return;
+      if((who.id && p.espnId && String(p.espnId)===String(who.id)) || (k && flatName(p.name||'')===k)){
+        seen[p.id] = 1; out.push(p);
+      }
+    });
+  });
+  return out;
 }
 function newsIndex(item){ return (S.news.items||[]).indexOf(item); }
+ACT.readFeed = (d)=>{
+  const pl = byId(S.players, d.id);
+  const item = playerFeed(pl)[+d.i];
+  if(item) newsModal(item);
+};
 ACT.readNews = (d)=>{
   const item = (S.news.items||[])[+d.i];
+  if(item) newsModal(item);
+};
+function newsModal(item){
   if(!item) return;
   const hits = newsTouches(item);
   const when = item.published ? new Date(item.published).getTime() : 0;
@@ -18206,7 +18633,7 @@ ACT.readNews = (d)=>{
       write the stories, and the full article stays at the source.</div>`,
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
     (hits.length===1?'<button class="btn pri" data-a="playerCard" data-id="'+hits[0].id+'">Open '+esc(hits[0].name.split(' ').pop())+'</button>':''));
-};
+}
 /* ---- Who is hurt, and what to do about it -----------------------------------
    Sleeper marks a man questionable, doubtful or out. The first two are a worry;
    the last means he will not play at all. */
@@ -18751,7 +19178,13 @@ function injuryTag(p){
   return '<span class="pill '+(bad?'live':'warn')+'" title="'+esc(inj.status+(inj.body?' — '+inj.body:''))+'">'+
     esc(String(inj.status).slice(0,12))+'</span>';
 }
-ACT.pullNews = ()=> pullNews(true);
+ACT.pullNews = async (d)=>{
+  /* From a player card, his own feed is the point of pressing it. */
+  const pl = d && d.id ? byId(S.players, d.id) : null;
+  if(pl && !pl.espnId) await pullEspnIds(true).catch(()=>0);
+  if(pl) pullPlayerNews(pl, true);
+  return pullNews(true);
+};
 
 /* ============================================================
    VIEW · TRANSACTIONS
@@ -19957,6 +20390,19 @@ async function sleeperPlayerMap(){
   impProgress('Fetching the player list. About five megabytes, and only once.', 40);
   SLEEPER_PLAYERS = await getJSON(SLEEPER+'/players/nfl');
   return SLEEPER_PLAYERS;
+}
+/* Sleeper's player list carries each man's ESPN id as well as its own. That is
+   what ESPN's per-player news feed is keyed on, so it is worth keeping. */
+function stampEspnIds(map){
+  if(!map) return 0;
+  let n = 0;
+  (S.players||[]).forEach(pl=>{
+    if(pl.espnId || !pl.sleeperId) return;
+    const src = map[String(pl.sleeperId)];
+    const id = src && (src.espn_id || src.espnId);
+    if(id){ pl.espnId = String(id); n++; }
+  });
+  return n;
 }
 /* Sleeper lists bench, IR and taxi slots inline with the starters. */
 function slotsFromSleeper(positions){
@@ -21912,8 +22358,9 @@ VIEWS.settings = function(){
                     <input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.budget" value="${S.settings.fa.budget}"></label>`}
               <label class="f"><span>Auction clock (hours)</span><input type="number" min="1" data-set="settings.fa.clockHours" value="${S.settings.fa.clockHours}"></label>
               <label class="f"><span>Longest deal from an auction</span><input type="number" min="1" max="${ct.maxYears}" data-set="settings.fa.maxYears" value="${S.settings.fa.maxYears}"></label>
-              <label class="f"><span>Opening bid</span><input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.minBid" value="${S.settings.fa.minBid}"></label>
-              <label class="f"><span>Smallest raise</span><input type="number" min="0" step="${c.cap.increment}" data-set="settings.fa.minIncrement" value="${S.settings.fa.minIncrement}"></label>
+              <label class="f"><span>Opening bid</span><input type="number" min="1" step="1" data-set="settings.fa.minBid" value="${Math.max(1,Math.round(+S.settings.fa.minBid||1))}">
+                <span class="tiny dim">bids are in whole dollars</span></label>
+              <label class="f"><span>Smallest raise</span><input type="number" min="1" step="1" data-set="settings.fa.minIncrement" value="${Math.max(1,Math.round(+S.settings.fa.minIncrement||1))}"></label>
             </div>
             <label class="check"><input type="checkbox" data-set="settings.fa.blind" ${S.settings.fa.blind?'checked':''}>
               <span>Keep bid amounts sealed until the clock runs out</span></label>
@@ -21926,7 +22373,8 @@ VIEWS.settings = function(){
               <span>Run offseason blind bid rounds</span></label>
             <div class="grid g2">
               <label class="f"><span>Round length (hours)</span><input type="number" min="1" data-set="settings.bbd.roundHours" value="${S.settings.bbd.roundHours}"></label>
-              <label class="f"><span>Lowest bid allowed</span><input type="number" min="0" step="${c.cap.increment}" data-set="settings.bbd.minBid" value="${S.settings.bbd.minBid}"></label>
+              <label class="f"><span>Lowest bid allowed</span><input type="number" min="1" step="1" data-set="settings.bbd.minBid" value="${Math.max(1,Math.round(+S.settings.bbd.minBid||1))}">
+                <span class="tiny dim">bids are in whole dollars</span></label>
               <label class="f"><span>Most a team can win per round</span><input type="number" min="0" data-set="settings.bbd.maxPerRound" value="${S.settings.bbd.maxPerRound}"></label>
               <label class="f"><span>Rounds in the draft</span><input type="number" min="0" data-set="settings.bbd.maxRounds" placeholder="no limit" value="${S.settings.bbd.maxRounds||''}"></label>
               <label class="f"><span>Longest deal from the draft</span><input type="number" min="1" max="${ct.maxYears}" data-set="settings.bbd.maxYears" value="${S.settings.bbd.maxYears}"></label>
@@ -25720,6 +26168,7 @@ function migrate(j){
   b2bSeed(out);
   bengalsUndo(out);
   gadsdenClaim(out);
+  blockTestClear(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -25914,6 +26363,17 @@ function tickAll(){
     const gap = Math.max(5, +S.settings.sync.everySec||20)*1000;
     if(Date.now()-Sync.lastPull > gap && !Sync.busy){ Sync.lastPull = Date.now(); Sync.pull(); }
   }
+
+  /* A countdown to a fixed moment — nothing has to be ticked down for it, so
+     it is simply the clock on the wall against the time it ends. When one runs
+     out the page is redrawn, which is what takes the row off the list. */
+  $$('[data-until]').forEach(el=>{
+    const until = +el.dataset.until || 0;
+    const left = until - Date.now();
+    if(left <= 0){ el.textContent = hhmm(0); needsRender = true; return; }
+    el.textContent = hhmm(left);
+    el.className = 'clock ' + (left < 12*3600000 ? '' : 'calm');
+  });
 
   // paint the countdowns without rebuilding the page
   $$('[data-clock]').forEach(el=>{
