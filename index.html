@@ -1033,7 +1033,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24d · the tab you picked stays in view';
+const APP_BUILD = '2026-09-24g · the wire opens after the run';
 
 /* ============================================================
    HOME LEAGUE
@@ -1170,8 +1170,103 @@ const Store = {
 };
 const KEY = 'frontoffice.league.v1';
 const BAKS = 24;              /* the most we will ever keep */
-const BAK_BUDGET = 3200000;   /* copies are slimmed now, so more of them fit in the same corner */
+/* ---- Where the saved copies live -------------------------------------------
+   They used to sit in localStorage beside the league itself, which a browser
+   caps at about five megabytes for the whole address. A dynasty league with a
+   long log is most of a megabyte on its own, so after the live league and the
+   sign-in token there was room for two copies — which is what people saw, no
+   matter that the app said it kept twenty-four.
+
+   IndexedDB in the same browser has room for hundreds of megabytes, so that is
+   where they go now. Copies already in localStorage are moved across the first
+   time, and the space they were taking is handed back. Where IndexedDB cannot
+   be opened at all the old corner is still used, with the old small budget,
+   because two copies beat none. */
+const bakDB = {
+  open(){
+    return new Promise((res, rej)=>{
+      try{
+        const rq = indexedDB.open('frontoffice-backups', 1);
+        rq.onupgradeneeded = ()=> rq.result.createObjectStore('kv');
+        rq.onsuccess = ()=> res(rq.result);
+        rq.onerror = ()=> rej(rq.error);
+      }catch(e){ rej(e); }
+    });
+  },
+  async get(k){
+    const db = await this.open();
+    return await new Promise((res, rej)=>{
+      const rq = db.transaction('kv').objectStore('kv').get(k);
+      rq.onsuccess = ()=> res(rq.result == null ? null : rq.result);
+      rq.onerror = ()=> rej(rq.error);
+    });
+  },
+  async set(k, v){
+    const db = await this.open();
+    return await new Promise((res, rej)=>{
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(v, k);
+      tx.oncomplete = ()=> res(true); tx.onerror = ()=> rej(tx.error);
+    });
+  },
+  async del(k){
+    const db = await this.open();
+    return await new Promise((res)=>{
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').delete(k);
+      tx.oncomplete = ()=> res(true); tx.onerror = ()=> res(false);
+    });
+  }
+};
 const bakKey = (i)=> KEY + '.bak' + i;
+/* Roomy where IndexedDB works, cramped where it does not. Settled once, the
+   first time a copy is read or written. */
+let BAK_ROOMY = null;
+const BAK_BUDGET_BIG = 80000000;   /* eighty megabytes of history is plenty */
+const BAK_BUDGET_SMALL = 3200000;  /* the old corner of localStorage */
+function bakBudget(){ return BAK_ROOMY ? BAK_BUDGET_BIG : BAK_BUDGET_SMALL; }
+/* One drawer for copies, whichever it turns out to be, and the move across. */
+const Baks = {
+  async ready(){
+    if(BAK_ROOMY !== null) return BAK_ROOMY;
+    try{
+      await bakDB.set('probe', 1);
+      await bakDB.del('probe');
+      BAK_ROOMY = true;
+      await this.moveIn();
+    }catch(e){ BAK_ROOMY = false; }
+    return BAK_ROOMY;
+  },
+  /* Copies written before this change are still in localStorage. Bring them
+     over once, then give the space back. */
+  async moveIn(){
+    for(let i=1; i<=BAKS; i++){
+      let old = null;
+      try{ old = await Store.get(bakKey(i)); }catch(e){}
+      if(!old || !old.state) continue;
+      try{
+        const here = await bakDB.get(bakKey(i));
+        if(!here) await bakDB.set(bakKey(i), old);
+        await Store.del(bakKey(i));
+      }catch(e){}
+    }
+  },
+  async get(i){
+    await this.ready();
+    if(BAK_ROOMY){ try{ return await bakDB.get(bakKey(i)); }catch(e){ return null; } }
+    return await Store.get(bakKey(i));
+  },
+  async set(i, v){
+    await this.ready();
+    if(BAK_ROOMY){ try{ await bakDB.set(bakKey(i), v); return true; }catch(e){ return false; } }
+    return await Store.set(bakKey(i), v);
+  },
+  async del(i){
+    await this.ready();
+    if(BAK_ROOMY){ try{ await bakDB.del(bakKey(i)); return true; }catch(e){ return false; } }
+    return await Store.del(bakKey(i));
+  }
+};
 
 /* A rolling set of copies, kept every time the league is loaded and whenever
    anything drastic is about to happen. Nothing here is ever overwritten by an
@@ -1201,13 +1296,13 @@ function bakSize(o){ try{ return JSON.stringify(o).length; }catch(e){ return 0; 
 async function trimBackups(room){
   let total = 0, kept = [];
   for(let i=1; i<=BAKS; i++){
-    const b = await Store.get(bakKey(i));
+    const b = await Baks.get(i);
     if(b) kept.push({i, size:bakSize(b)});
   }
   kept.forEach(k=> total += k.size);
-  const budget = Math.max(0, BAK_BUDGET - (room||0));
+  const budget = Math.max(0, bakBudget() - (room||0));
   for(let n = kept.length-1; n >= 0 && total > budget; n--){
-    await Store.del(bakKey(kept[n].i));
+    await Baks.del(kept[n].i);
     total -= kept[n].size;
   }
 }
@@ -1220,6 +1315,8 @@ function slimForBackup(state){
   delete st.proj;            /* re-pulled */
   delete st.trend;           /* re-pulled */
   delete st.depth;           /* re-pulled */
+  delete st.news;            /* fetched again from the wire */
+  delete st.dvp;             /* worked out again */
   st.live = { week: (st.live||{}).week || 1, games:[], stats:{}, feed:[], matchups:[],
               talk:[], lastTick:0, kicks:(st.live||{}).kicks, gstate:(st.live||{}).gstate,
               lockedTeams:(st.live||{}).lockedTeams };
@@ -1235,24 +1332,25 @@ async function keepBackup(state, why){
   if(!state || !(state.teams||[]).length) return;
   const entry = {at:Date.now(), why:why||'', rev:state.rev||0, state:slimForBackup(state)};
   const size = bakSize(entry);
+  await Baks.ready();
   /* A single league bigger than the whole budget is not worth keeping copies of
      — the live save matters more than the history. */
-  if(size > BAK_BUDGET) return;
+  if(size > bakBudget()) return;
   try{
     await trimBackups(size);
     for(let i=BAKS-1; i>=1; i--){
-      const prev = await Store.get(bakKey(i));
-      if(prev) await Store.set(bakKey(i+1), prev);
+      const prev = await Baks.get(i);
+      if(prev) await Baks.set(i+1, prev);
     }
-    const ok = await Store.set(bakKey(1), entry);
-    if(!ok){ await trimBackups(size*2); await Store.set(bakKey(1), entry); }
+    const ok = await Baks.set(1, entry);
+    if(!ok){ await trimBackups(size*2); await Baks.set(1, entry); }
   }catch(e){}
 }
 async function listBackups(){
   const out = [];
   for(let i=1;i<=BAKS;i++){
     try{
-      const b = await Store.get(bakKey(i));
+      const b = await Baks.get(i);
       if(b && b.state && (b.state.teams||[]).length){
         out.push({slot:i, at:b.at, why:b.why||'', rev:b.rev||0,
           league:(b.state.league||{}).name || '—',
@@ -1519,6 +1617,10 @@ function defaultState(){
         /* Which days run a waiver, and at what time. Anything picked up on a day
            with no waiver is simply taken — no bid, no wait. */
         days:{0:false, 1:false, 2:true, 3:false, 4:false, 5:false, 6:false},
+        /* Off: the wire is waivers all week and every pickup is a bid. On: once
+           the run has been through, whoever is left can simply be taken for the
+           rest of that day, and it is waivers again from midnight. */
+        openAfterRun:false,
         runAt:'03:00', lastRun:0,
         /* A dropped player sits on waivers until this hour the next morning. */
         dropClearHour:8 },
@@ -3813,6 +3915,7 @@ const COL_INFO = {
   pa:   {name:'PA — Points against', what:'Every point your opponents have scored against you this season.'},
   sos:  {name:'SOS — Strength of schedule', what:'The wins of every team you have played, added up — a tie counts as half, and a team you have played twice counts twice. The higher it is, the tougher the teams you have faced. It is the tiebreaker after head to head: when teams finish level, the one with the harder schedule goes ahead.'},
   eff:  {name:'Eff — Lineup efficiency', what:'How much of your best possible score you actually started, averaged over the season. 100% means you started your best lineup every week.'},
+  vsp:  {name:'vs Proj — Against the projections', what:'What your starting lineups have actually scored, less what those same lineups were projected to score. Green means you are beating the projections; red means you are falling short of them. The projections are Sleeper\u2019s, scored on this league\u2019s own settings, and they are taken for the lineup you really started in each week that has finished \u2014 so a week you left a hurt man in counts against you exactly as it did on the field. A dash means no week has been recorded yet.'},
   slot: {name:'Draft slot', what:'Where you would pick in next year’s rookie draft if the season ended today.'},
   bill: {name:'Picks — Rookie draft cost', what:'What next year’s rookie picks you own would cost against the cap, at the league’s rookie scale.'}
 };
@@ -6796,6 +6899,19 @@ VIEWS.teams = function(){
 
     ${sub==='fa' ? `
       ${(()=>{
+        /* When the wire is open, that is the first thing anybody wants to know. */
+        if(!waiversOpenNow()) return '';
+        const shut = waiversShutAt();
+        return '<div class="panel" style="margin-bottom:14px;border-color:#2F5B3A"><div class="pb">'+
+          '<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">'+
+          '<div><b class="good">The wire is open.</b>'+
+          '<div class="tiny dim">Waivers have been through for today, so anybody still loose is yours for the '+
+          'taking \u2014 no bid, no wait. First come, first served.</div></div><div class="spacer"></div>'+
+          (shut ? '<div class="right"><div class="clock calm" style="font-size:17px" data-until="'+shut+'">'+
+            hhmm(shut - Date.now())+'</div><div class="tiny dim">back on waivers at midnight</div></div>' : '')+
+          '</div></div></div>';
+      })()}
+      ${(()=>{
         const mineT = actingTeam();
         const bids = myWaiverBids(mineT);
         const rank = waiverRank(mineT);
@@ -7027,12 +7143,13 @@ VIEWS.teams = function(){
           ${sortTh('std','t','T','right','t')}${sortTh('std','pct','Pct','right','pct')}
           ${sortTh('std','pf','PF','right','pf')}${sortTh('std','pa','PA','right','pa')}
           ${sortTh('std','opp','SOS','right','sos')}${sortTh('std','eff','Eff','right','eff')}
+          ${sortTh('std','vsp','vs Proj','right','vsp')}
           ${sortTh('std','slot','Draft slot','right','slot')}${sortTh('std','bill', nextY+' picks', 'right','bill')}</tr></thead><tbody>
-        <tr class="thhelp"><td colspan="12" class="tiny dim" style="padding:2px 8px 6px">Tap a heading’s name to see what it means.</td></tr>
+        <tr class="thhelp"><td colspan="13" class="tiny dim" style="padding:2px 8px 6px">Tap a heading’s name to see what it means.</td></tr>
         ${sortRows('std', table, {
             name:t=>t.name, w:t=>liveRecord(t).w, l:t=>liveRecord(t).l, t:t=>liveRecord(t).t,
             pct:t=>livePct(t), pf:t=>liveRecord(t).pf||0, pa:t=>liveRecord(t).pa||0,
-            opp:t=>liveOppPoints(t), eff:t=>liveEff(t), slot:t=>draftSlot(t.id),
+            opp:t=>liveOppPoints(t), eff:t=>liveEff(t), vsp:t=>vsProjNum(t), slot:t=>draftSlot(t.id),
             bill:t=>rookieBill(t.id, nextY)
           }).map((t,i)=>{
           const r = liveRecord(t), seed = inField[t.id];
@@ -7049,6 +7166,16 @@ VIEWS.teams = function(){
             <td class="right num ${r.live?'onnow':''}">${(r.pa||0).toFixed(2)}</td>
             <td class="right num">${liveOppPoints(t).toFixed(2)}</td>
             <td class="right num">${eff==null?'<span class="dim">—</span>':eff.toFixed(1)+'%'}</td>
+            <td class="right num">${(()=>{
+              const v = vsProjection(t);
+              if(!v) return '<span class="dim">—</span>';
+              const cls = v.diff > 0.05 ? 'good' : v.diff < -0.05 ? 'bad' : 'dim';
+              const sign = v.diff > 0 ? '+' : '';
+              return '<span class="'+cls+'" title="'+esc(v.act.toFixed(2)+' scored against '+
+                v.proj.toFixed(2)+' projected over '+v.weeks+' week'+(v.weeks===1?'':'s')+
+                (v.pct!=null ? ' — '+v.pct.toFixed(1)+'% of projection' : ''))+'">'+
+                sign+v.diff.toFixed(1)+'</span>';
+            })()}</td>
             <td class="right num">${order.findIndex(x=>x.id===t.id)+1}</td>
             <td class="right num">${(()=>{
               const run = pickRun(t.id, nextY);
@@ -7073,6 +7200,18 @@ VIEWS.teams = function(){
             return '<br><b>'+(running? running+' team'+(running===1?'':'s')+' still playing' : '')+
               (running&&settled? ' · ' : '')+
               (settled? settled+' settled' : '')+'.</b>';
+          })()}
+          ${(()=>{
+            const year = projHistYear();
+            const have = Object.keys(year).filter(w=> Object.keys(year[w]||{}).length).length;
+            const want = playedWeeks().length;
+            if(want && have < want) return '<br><b>vs Proj</b> covers '+have+' of '+want+' finished week'+
+              (want===1?'':'s') + '. ' + (isCommish()
+                ? '<button class="btn sm ghost" data-a="projHistFill">Record the rest</button>'
+                : 'A commissioner\u2019s device records the missing ones.') + ' ';
+            if(have) return '<br><b>vs Proj</b> is over '+have+' finished week'+(have===1?'':'s')+
+              ' — green is ahead of Sleeper\u2019s projections for the lineup you started, red is behind. ';
+            return '';
           })()}
           Level records break on ${tiebreakChain().map(k=>TIEBREAKS[k].label.toLowerCase()).join(', then ')} —
           and the row says which one actually did it. Draft order runs the other way, worst record first, and the last
@@ -7265,7 +7404,8 @@ ACT.claimPlayer = (d)=>{
       p.contract.faSigned = Date.now();
     }
     delete p.droppedAt;
-    logIt(teamName(tid)+' picked up '+p.name+' (no waiver day set)',
+    logIt(teamName(tid)+' picked up '+p.name+
+      (waiversOpenNow() ? ' off the open wire' : ' (no waiver day set)'),
       {type:'waiver', teams:[tid], players:[p.id]});
     save(); render();
     return toast(p.name+' is yours','good');
@@ -8624,6 +8764,118 @@ ACT.projPull = async ()=>{
     toast('Could not get projections — '+e.message,'bad');
   }
 };
+/* ---- Against the projections ------------------------------------------------
+   Sleeper publishes a projected stat line per player per week, and the app
+   already scores those on this league's own settings. What it did not do was
+   keep them: only the week in play was held, so there was nothing to look back
+   at. So, for every week with a result on the board, the lineup that was
+   actually started is scored against that week's projections and the one figure
+   — what the team was projected to score — is kept. Twelve numbers a week, which
+   is nothing, rather than a projection for every player for every week.
+
+   Then the column is simple: what you have scored, against what you were
+   projected to score, over the same weeks. */
+function projHistAll(){ S.projHist = S.projHist || {}; return S.projHist; }
+function projHistYear(season){
+  const all = projHistAll(), y = String(season || S.league.season);
+  all[y] = all[y] || {};
+  return all[y];
+}
+/* Weeks with a result on the board, in order. */
+function playedWeeks(){
+  return [...new Set((S.schedule||[]).filter(g=> g.hp!=null).map(g=> +g.week))].sort((a,b)=> a-b);
+}
+/* The men a team actually started that week — what was saved if it was saved,
+   and otherwise the lineup the app would have put out. */
+function startedIds(teamId, week){
+  const saved = ((S.lineups||{})[week]||{})[teamId];
+  if(saved && saved.length) return saved.filter(Boolean);
+  return bestLineup(teamId, week).starters.filter(x=> x.p).map(x=> x.p.id);
+}
+/* What a team scored in a week, off the fixture list. */
+function weekScored(teamId, week){
+  const g = (S.schedule||[]).find(x=> +x.week===+week && x.hp!=null &&
+    (x.home===teamId || x.away===teamId));
+  if(!g) return null;
+  return (g.home===teamId ? +g.hp : +g.ap) || 0;
+}
+/* Sleeper's projections for one week, scored on this league's settings. */
+async function weekProjections(week){
+  const season = S.league.season;
+  const tries = [
+    SLEEPER+'/projections/nfl/regular/'+season+'/'+week,
+    'https://api.sleeper.app/projections/nfl/'+season+'/'+week+'?season_type=regular'
+  ];
+  for(const u of tries){
+    try{
+      const j = await getJSON(u);
+      if(!j || !(Array.isArray(j) ? j.length : Object.keys(j).length)) continue;
+      const bySid = {};
+      if(Array.isArray(j)) j.forEach(r=>{ const k = r.player_id || (r.player||{}).player_id; if(k) bySid[String(k)] = r.stats || r; });
+      else Object.keys(j).forEach(k=>{ bySid[String(k)] = j[k] && j[k].stats ? j[k].stats : j[k]; });
+      const out = {};
+      S.players.forEach(p=>{
+        const line = p.sleeperId ? bySid[String(p.sleeperId)] : null;
+        if(line) out[p.id] = scoreLine(line, p);
+      });
+      if(Object.keys(out).length) return out;
+    }catch(e){}
+  }
+  return null;
+}
+/* Fill in any played week nobody has recorded yet. One device writes it and it
+   travels with the league, so nobody else fetches it again. */
+let projHistBusy = false, lastProjHist = 0;
+async function fillProjHistory(loud){
+  if(projHistBusy) return 0;
+  const year = projHistYear();
+  const want = playedWeeks().filter(w=> !year[w] || !Object.keys(year[w]).length);
+  if(!want.length){ if(loud) toast('Every played week is already recorded'); return 0; }
+  projHistBusy = true;
+  let done = 0;
+  try{
+    for(const w of want){
+      const proj = await weekProjections(w);
+      if(!proj) continue;
+      const row = {};
+      S.teams.forEach(t=>{
+        if(weekScored(t.id, w) == null) return;
+        const ids = startedIds(t.id, w);
+        row[t.id] = Math.round(sum(ids.map(id=> +proj[id] || 0)) * 100) / 100;
+      });
+      if(Object.keys(row).length){ year[w] = row; done++; }
+    }
+  }catch(e){}
+  projHistBusy = false;
+  if(done){
+    logIt('Recorded what each team was projected to score in week'+(done===1?' ':'s ')+
+      want.slice(0,done).join(', '), {type:'admin'});
+    save(); render();
+  }
+  if(loud) toast(done ? 'Recorded '+done+' week'+(done===1?'':'s') : 'No projections came back for those weeks',
+    done ? 'good' : 'warn');
+  return done;
+}
+ACT.projHistFill = ()=> fillProjHistory(true);
+/* Scored against projected, over the weeks we have both for. */
+function vsProjection(t){
+  if(!t) return null;
+  const year = projHistYear();
+  let proj = 0, act = 0, weeks = 0;
+  Object.keys(year).forEach(w=>{
+    const row = year[w];
+    if(!row || row[t.id] == null) return;
+    const got = weekScored(t.id, +w);
+    if(got == null) return;
+    proj += +row[t.id] || 0; act += got; weeks++;
+  });
+  if(!weeks) return null;
+  return {diff: Math.round((act - proj)*100)/100, proj:Math.round(proj*100)/100,
+          act:Math.round(act*100)/100, weeks,
+          pct: proj ? Math.round((act/proj)*1000)/10 : null};
+}
+/* The one number the column sorts on. Nothing recorded sorts last. */
+function vsProjNum(t){ const v = vsProjection(t); return v ? v.diff : null; }
 /* ---- Trending, from Sleeper ------------------------------------------------
    Sleeper publishes how many leagues added or dropped a player in the last day.
    A player can appear on both lists; whichever side is bigger is the direction
@@ -15816,14 +16068,15 @@ function waiverRunMins(){
    and only if the league runs waivers at all. */
 function onWaiversNow(at){
   if(!(S.settings.waivers||{}).on || !anyWaiverDays()) return false;
-  const now = at ? new Date(at) : new Date();
+  if(waiversOpenNow(at)) return false;      /* the run has been and gone today */
+  const now = new Date(at != null ? at : Date.now());
   /* If the next run is still ahead of us, anyone loose is on waivers. */
   return nextWaiverRun(now) != null;
 }
 /* When the next run falls, from a given moment. Null when no day is set. */
 function nextWaiverRun(from){
   if(!anyWaiverDays()) return null;
-  const start = from ? new Date(from) : new Date();
+  const start = new Date(from != null ? from : Date.now());
   const mins = waiverRunMins();
   for(let i=0; i<8; i++){
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i,
@@ -15832,6 +16085,28 @@ function nextWaiverRun(from){
     if(waiverRunsOn(d.getDay())) return d.getTime();
   }
   return null;
+}
+/* ---- The wire open for the rest of the day ---------------------------------
+   Waivers until the run, and then first come first served until midnight. It
+   only holds on a day that runs a waiver, and only once that day's run has
+   actually been through — a run nobody's device was awake for has not happened,
+   and the wire stays shut until it has. From midnight it is waivers again,
+   whatever day comes next. */
+function waiverOpenOn(){ return !!((S.settings.waivers||{}).openAfterRun); }
+function waiversOpenNow(at){
+  const w = S.settings.waivers || {};
+  if(!w.on || !w.openAfterRun || !anyWaiverDays()) return false;
+  const now = new Date(at != null ? at : Date.now());
+  if(!waiverRunsOn(now.getDay())) return false;
+  if(now.getHours()*60 + now.getMinutes() < waiverRunMins()) return false;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return (+w.lastRun || 0) >= today;
+}
+/* When it shuts: midnight at the end of the day it opened on. */
+function waiversShutAt(at){
+  if(!waiversOpenNow(at)) return null;
+  const now = new Date(at != null ? at : Date.now());
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()+1, 0, 0, 0, 0).getTime();
 }
 /* Anybody dropped goes on waivers until the following morning, so nobody can
    cut a man and have a friend pick him straight back up. */
@@ -15881,6 +16156,9 @@ function claimNeedsWaiver(p){
   if(p && lockedByDrop(p)) return true;
   if(p && lockedByKickoff(p)) return true;
   if(!anyWaiverDays()) return false;                  /* no waiver days at all */
+  /* The run has been through today and the league has said the wire opens up
+     afterwards, so he can simply be taken. */
+  if(waiversOpenNow()) return false;
   return true;
 }
 /* Why he cannot simply be taken, in a few words. */
@@ -15899,13 +16177,20 @@ function claimWhy(p){
 }
 /* A word on what happens if you go for somebody now. */
 function waiverNote(){
+  if(waiversOpenNow()){
+    const shut = waiversShutAt();
+    return 'Waivers have been through for today, so anybody still loose can simply be taken \u2014 '+
+      'no bid, no wait. The wire goes back on waivers at midnight'+
+      (shut ? ', in '+hhmm(shut - Date.now()).replace(/:\d\d$/,'') : '')+'.';
+  }
   if(!claimNeedsWaiver())
     return 'No waiver day is set, so anybody loose can simply be taken \u2014 no bid, no wait.';
   const at = nextWaiverRun();
   const when = at ? new Date(at) : null;
   const day = when ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][when.getDay()] : '';
   return 'Claims are settled '+(when? 'on '+day+' at '+(S.settings.waivers.runAt||'03:00') : 'at the next run')+
-    '. Highest bid wins'+(faabOn()? ', paid out of your season budget' : '')+'.';
+    '. Highest bid wins'+(faabOn()? ', paid out of your season budget' : '')+'.'+
+    (waiverOpenOn() ? ' After that run anybody left goes free for the rest of the day.' : '');
 }
 /* A bid on somebody, to be settled at the next run. */
 function placeWaiverBid(playerId, teamId, bid, years){
@@ -15965,7 +16250,17 @@ function waiverUsed(teamId){
 }
 function runWaivers(now){
   const bids = (S.waiverBids||[]).filter(b=> b.status==='open');
-  if(!bids.length) return 0;
+  if(!bids.length){
+    /* A quiet week is still a run. It has to be written down, or the league
+       never knows the wire has been through — which matters where the wire
+       opens up afterwards. */
+    S.settings.waivers.lastRun = Date.now();
+    if(waiverOpenOn()) notify('The wire is open',
+      'Waivers have been through and nobody claimed anyone. Whoever is loose can be taken without a bid '+
+      'until midnight.', 'good');
+    saveLocal();
+    return 0;
+  }
   const byPlayer = {};
   bids.forEach(b=>{ (byPlayer[b.playerId] = byPlayer[b.playerId] || []).push(b); });
   let won = 0;
@@ -16022,6 +16317,9 @@ function runWaivers(now){
       '. Your '+money(b.bid)+' was not spent.', 'info', [b.teamId]));
   });
   S.settings.waivers.lastRun = Date.now();
+  if(waiverOpenOn()) notify('The wire is open',
+    (won ? won+' claim'+(won===1?'':'s')+' settled. ' : '')+
+    'Whoever is still loose can be taken without a bid until midnight.', 'good');
   save();
   return won;
 }
@@ -18505,10 +18803,20 @@ function pullEspnIds(force){
   })();
   return ESPN_IDS_BUSY;
 }
+/* ESPN sends the whole text of every story whether or not it is asked to —
+   about sixty kilobytes before a single headline, and nine more apiece — and
+   there is no lighter version of it and no way to ask about two men at once.
+   So six stories a man, held for a couple of hours, and never fetched for
+   somebody nobody has touched. None of this goes near the league server: news
+   is kept on the phone that fetched it and is never sent up, so it costs the
+   league's own allowance nothing. */
 const ESPN_PLAYER_NEWS = id =>
   'https://site.api.espn.com/apis/fantasy/v2/games/ffl/news/players?playerId='+
-  encodeURIComponent(id)+'&limit=10';
-const PNEWS_FRESH = 30*60*1000;   /* half an hour is plenty for a news feed */
+  encodeURIComponent(id)+'&limit=6';
+const PNEWS_KEEP = 6;             /* stories held per man */
+const PNEWS_FRESH = 2*60*60*1000; /* a feed does not turn over faster than this */
+const PNEWS_OLD = 3*86400000;     /* untouched for three days: let it go */
+const PNEWS_MAX = 300;            /* men held at once */
 const PNEWS_BUSY = {};            /* ids being fetched right now */
 function pnewsBox(){
   if(!S.news) S.news = {at:0, items:[]};
@@ -18530,7 +18838,7 @@ function playerFeedState(p){
   if(got.bad) return 'bad';
   return 'done';
 }
-async function pullPlayerNews(p, force){
+async function pullPlayerNews(p, force, quiet){
   if(!p || !p.id || !p.espnId) return;
   if(PNEWS_BUSY[p.id]) return;
   const box = pnewsBox(), got = box[p.id];
@@ -18539,14 +18847,82 @@ async function pullPlayerNews(p, force){
   try{
     const r = await fetch(ESPN_PLAYER_NEWS(p.espnId), {headers:{accept:'application/json'}});
     const j = await r.json();
-    const items = newsShape(j && (j.feed || j.items || j.articles));
+    const items = newsShape(j && (j.feed || j.items || j.articles)).slice(0, PNEWS_KEEP);
     box[p.id] = {at:Date.now(), items};
+    prunePlayerNews();
   }catch(e){
     box[p.id] = {at:Date.now(), items:(got&&got.items)||[], bad:(e.message||'no answer')};
   }
   delete PNEWS_BUSY[p.id];
-  saveLocal(); render();
+  saveLocal();
+  /* Warming in the background must not make the page jump under anybody. But
+     if his card is the one open — the usual case, because the press that opened
+     it is what sent for the feed — it is redrawn so the stories appear in it. */
+  const modalOn = $('#modal') && $('#modal').classList.contains('on');
+  if(modalOn && ui.tmp.pcId === p.id){
+    /* His card is the one open — the usual case, since the press that opened it
+       is what sent for the feed — so it is drawn again and the stories appear
+       in it. Without this the card sat saying it was reading one. */
+    ACT.playerCard({id:p.id});
+  }else if(quiet !== true && !modalOn){
+    render();
+  }
 }
+/* The cache is only worth what it saves. Anything nobody has looked at for
+   days goes, and it never grows past a few hundred men. */
+function prunePlayerNews(){
+  const box = pnewsBox(), keys = Object.keys(box);
+  const now = Date.now();
+  keys.forEach(k=>{ if(now - (+((box[k]||{}).at)||0) > PNEWS_OLD) delete box[k]; });
+  const left = Object.keys(box);
+  if(left.length <= PNEWS_MAX) return;
+  left.sort((a2,b2)=> (+((box[a2]||{}).at)||0) - (+((box[b2]||{}).at)||0))
+      .slice(0, left.length - PNEWS_MAX)
+      .forEach(k=> delete box[k]);
+}
+/* ---- Having it ready before the card opens ---------------------------------
+   A feed takes a moment to come down, and a card that says it is reading one is
+   a card with nothing on it. Two things stop that happening.
+
+   The first is the id list. Without it no feed can be asked for at all, and it
+   is two thirds of a megabyte — so it is fetched quietly once a day shortly
+   after the app opens, rather than being discovered by the first card somebody
+   presses.
+
+   The second is the press itself. A finger goes down on a player's row well
+   before the card is drawn, so that is when his feed is sent for. By the time
+   the card is on the screen it is usually already there, and nothing is
+   fetched for a man nobody has touched. */
+let NEWS_WARMED = 0;
+function warmNewsIds(){
+  if(!(S.players||[]).length || (S.meta||{}).demo) return;
+  if(Date.now() - NEWS_WARMED < 60*60*1000) return;
+  NEWS_WARMED = Date.now();
+  pullEspnIds().then(()=>{}, ()=>{});
+}
+/* A finger on a player's row. Start his feed now, quietly. */
+function warmOnTouch(e){
+  const hit = e.target && e.target.closest && e.target.closest('[data-a="playerCard"][data-id]');
+  if(!hit) return;
+  const p = byId(S.players, hit.dataset.id);
+  if(!p || !p.espnId) return;
+  if(playerFeedState(p) !== 'cold') return;
+  pullPlayerNews(p, false, true);
+}
+document.addEventListener('pointerdown', warmOnTouch, true);
+document.addEventListener('touchstart', warmOnTouch, true);
+/* On a desktop there is no press to wait for, so resting on a name does
+   instead — but only resting. Running the mouse down a roster of fifty must
+   not send for fifty feeds, so it waits to see the pointer settle. */
+let hoverT = null;
+document.addEventListener('pointerover', (e)=>{
+  if(e.pointerType && e.pointerType !== 'mouse') return;
+  const hit = e.target && e.target.closest && e.target.closest('[data-a="playerCard"][data-id]');
+  clearTimeout(hoverT);
+  if(!hit) return;
+  hoverT = setTimeout(()=> warmOnTouch({target:hit}), 400);
+}, true);
+document.addEventListener('pointerout', ()=> clearTimeout(hoverT), true);
 /* Asked for while a card is being drawn; it fills itself in a moment. */
 function wantPlayerNews(p){
   if(!p || !p.id) return;
@@ -22418,9 +22794,16 @@ VIEWS.settings = function(){
                     (dropHoldHour()===h?' selected':'')+'>'+((h%12)||12)+(h>=12?'pm':'am')+' the next day</option>').join('')}
                 </select></label>
             </div>
+            ${anyWaiverDays()?`<label class="check"><input type="checkbox" data-set="settings.waivers.openAfterRun"
+              ${waiverOpenOn()?'checked':''}>
+              <span>Once the run has been through, the wire is open for the rest of the day
+                <span class="dim">\u2014 whoever is left can be taken without a bid, and it is waivers again at midnight</span></span></label>`:''}
             <div class="hint">${anyWaiverDays()
-              ? esc(waiverNote())+' On any other day a loose player is simply taken \u2014 nobody is asked for a bid.'
+              ? esc(waiverNote())+(waiverOpenOn()
+                  ? ' Outside that window \u2014 every other day, and every hour before the run \u2014 taking anybody means a bid.'
+                  : ' That holds every day of the week: while a run is ahead of you, taking anybody means a bid.')
               : 'No day is ticked, so there is no waiver wire at all: anybody loose can be picked up straight away.'}</div>
+            ${(anyWaiverDays() && waiverOpenOn())?'<div class="hint">A man dropped by his own team still sits out his hold, and anybody whose game has kicked off is still locked away \u2014 the open window is for the rest of the pool.</div>':''}
             <div class="hr"></div>
             <div class="flabel">Bidding budget</div>
             <label class="check"><input type="checkbox" data-set="settings.waivers.faab.on" ${faabOn()?'checked':''}>
@@ -25157,7 +25540,12 @@ ACT.openBackups = async ()=>{
   modal('Saved copies of your league',
     (list.length
       ? '<p class="muted" style="margin-top:0">A copy is kept every half hour while you are working, every time the '+
-        'app opens, and before anything drastic. The last '+BAKS+' are kept, newest at the top.</p>'+
+        'app opens, and before anything drastic. The last '+BAKS+' are kept, newest at the top — '+
+        list.length+' here now.</p>'+
+        (BAK_ROOMY === false
+          ? '<div class="hint">This browser would not give the app its roomy store, so copies are in the small '+
+            'corner beside the league itself and only two or three will fit. Everything else works as normal.</div>'
+          : '')+
         '<div class="scrollx"><table><thead><tr><th>When</th><th>League</th><th class="right">Teams</th>'+
         '<th class="right">Contracts</th><th class="right">Size</th><th></th></tr></thead><tbody>'+
         list.map(b=>'<tr><td class="tiny">'+dstr(b.at)+'<div class="dim">'+esc(b.why)+'</div></td>'+
@@ -25167,8 +25555,9 @@ ACT.openBackups = async ()=>{
           '<td class="right"><button class="btn sm" data-a="restoreBackup" data-slot="'+b.slot+'">Restore</button></td></tr>').join('')+
         '</tbody></table></div>'+
         '<div class="hint">Restoring replaces what is on screen, and a copy of that is kept too, so you can come back. '+
-        'Copies leave out projections, the live feed and chat pictures — all of which come back on their own — '+
-        'so that more of them fit.</div>'
+        'Copies leave out projections, news, the live feed and chat pictures — all of which come back on their '+
+        'own. They are kept in this browser’s roomy store rather than beside the league, which is why there is '+
+        'space for all '+BAKS+' of them now instead of two.</div>'
       : '<p>There are no copies yet. One is kept every time the app opens with a league loaded.</p>'+
         '<div class="hint">If your league has gone missing, check you are at the same web address as before — a browser '+
         'keeps its storage per address, so a different one looks empty even though nothing was lost.</div>'),
@@ -25176,7 +25565,7 @@ ACT.openBackups = async ()=>{
     '<button class="btn" data-a="exportJSON">Download the one on screen</button>');
 };
 ACT.restoreBackup = async (d)=>{
-  const b = await Store.get(bakKey(+d.slot));
+  const b = await Baks.get(+d.slot);
   if(!b || !b.state) return toast('That copy has gone','bad');
   await keepBackup(S, 'before restoring');
   try{
@@ -26292,6 +26681,16 @@ function tickAll(){
   try{ if(autoFillRun()) needsRender = true; }catch(e){}
   try{ if(waiverTick()) needsRender = true; }catch(e){}
   try{ if(autoCloseTick()) needsRender = true; }catch(e){}
+  /* The ESPN id list, quietly, so no card is ever the thing waiting for it. */
+  try{ warmNewsIds(); }catch(e){}
+  /* Any finished week nobody has recorded against the projections yet. One
+     device does it, it travels with the league, and it is a handful of numbers
+     a week — so it is worth having without anybody pressing anything. */
+  if(isCommish() && !projHistBusy && (S.players||[]).length > 100 && !(S.meta && S.meta.demo) &&
+     Date.now() - lastProjHist > (lastProjHist ? 30*60000 : 20000)){
+    const missing = playedWeeks().some(w=> !projHistYear()[w] || !Object.keys(projHistYear()[w]).length);
+    if(missing){ lastProjHist = Date.now(); fillProjHistory(false).then(()=>{}, ()=>{}); }
+  }
   /* Depth charts, once a week, so who is a named starter stays current. */
   if(isCommish() && !ui.tmp.depthBusy && (S.players||[]).length > 100 && !(S.meta && S.meta.demo) &&
      Date.now() - ((S.meta||{}).depthAt||0) > 7*86400000){
