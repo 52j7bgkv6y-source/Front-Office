@@ -1033,7 +1033,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24g · the wire opens after the run';
+const APP_BUILD = '2026-09-24h · pick which runs open the wire';
 
 /* ============================================================
    HOME LEAGUE
@@ -1617,10 +1617,12 @@ function defaultState(){
         /* Which days run a waiver, and at what time. Anything picked up on a day
            with no waiver is simply taken — no bid, no wait. */
         days:{0:false, 1:false, 2:true, 3:false, 4:false, 5:false, 6:false},
-        /* Off: the wire is waivers all week and every pickup is a bid. On: once
-           the run has been through, whoever is left can simply be taken for the
-           rest of that day, and it is waivers again from midnight. */
-        openAfterRun:false,
+        /* Which run days open the wire up afterwards. A day ticked here — it has
+           to be a waiver day as well — means that once its run has been through,
+           whoever is left can simply be taken for the rest of that day, and it
+           is waivers again from midnight. None ticked and the wire is waivers
+           all week, every pickup a bid. */
+        openDays:{0:false, 1:false, 2:false, 3:false, 4:false, 5:false, 6:false},
         runAt:'03:00', lastRun:0,
         /* A dropped player sits on waivers until this hour the next morning. */
         dropClearHour:8 },
@@ -16092,12 +16094,28 @@ function nextWaiverRun(from){
    actually been through — a run nobody's device was awake for has not happened,
    and the wire stays shut until it has. From midnight it is waivers again,
    whatever day comes next. */
-function waiverOpenOn(){ return !!((S.settings.waivers||{}).openAfterRun); }
+/* Which run days open up afterwards. A day only counts if it runs a waiver in
+   the first place — there is nothing to open after on a day with no run. */
+function waiverOpenDays(){ return ((S.settings.waivers||{}).openDays) || {}; }
+function waiverOpensOn(day){ return waiverOpenDays()[day] === true && waiverRunsOn(day); }
+function waiverOpenOn(){ return [0,1,2,3,4,5,6].some(waiverOpensOn); }
+/* The days it opens on, named, for saying so in a sentence. */
+/* "Tuesday", "Tuesday and Friday", "Sunday, Tuesday and Friday". */
+function listWords(a){
+  const x = (a||[]).filter(Boolean);
+  if(!x.length) return '';
+  if(x.length === 1) return x[0];
+  return x.slice(0,-1).join(', ') + ' and ' + x[x.length-1];
+}
+function waiverOpenDayNames(){
+  return [0,1,2,3,4,5,6].filter(waiverOpensOn)
+    .map(i=> ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][i]);
+}
 function waiversOpenNow(at){
   const w = S.settings.waivers || {};
-  if(!w.on || !w.openAfterRun || !anyWaiverDays()) return false;
+  if(!w.on || !anyWaiverDays()) return false;
   const now = new Date(at != null ? at : Date.now());
-  if(!waiverRunsOn(now.getDay())) return false;
+  if(!waiverOpensOn(now.getDay())) return false;
   if(now.getHours()*60 + now.getMinutes() < waiverRunMins()) return false;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   return (+w.lastRun || 0) >= today;
@@ -16190,7 +16208,8 @@ function waiverNote(){
   const day = when ? ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][when.getDay()] : '';
   return 'Claims are settled '+(when? 'on '+day+' at '+(S.settings.waivers.runAt||'03:00') : 'at the next run')+
     '. Highest bid wins'+(faabOn()? ', paid out of your season budget' : '')+'.'+
-    (waiverOpenOn() ? ' After that run anybody left goes free for the rest of the day.' : '');
+    (waiverOpenOn() ? ' After the '+listWords(waiverOpenDayNames())+' run'+
+      (waiverOpenDayNames().length===1?'':'s')+', anybody left goes free for the rest of that day.' : '');
 }
 /* A bid on somebody, to be settled at the next run. */
 function placeWaiverBid(playerId, teamId, bid, years){
@@ -22794,10 +22813,20 @@ VIEWS.settings = function(){
                     (dropHoldHour()===h?' selected':'')+'>'+((h%12)||12)+(h>=12?'pm':'am')+' the next day</option>').join('')}
                 </select></label>
             </div>
-            ${anyWaiverDays()?`<label class="check"><input type="checkbox" data-set="settings.waivers.openAfterRun"
-              ${waiverOpenOn()?'checked':''}>
-              <span>Once the run has been through, the wire is open for the rest of the day
-                <span class="dim">\u2014 whoever is left can be taken without a bid, and it is waivers again at midnight</span></span></label>`:''}
+            ${anyWaiverDays()?`
+            <div class="hr"></div>
+            <div class="flabel">And on which of those days the wire opens afterwards</div>
+            <div class="row" style="gap:10px;flex-wrap:wrap">
+              ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
+                waiverRunsOn(i)
+                  ? '<label class="check" style="margin:0"><input type="checkbox" data-set="settings.waivers.openDays.'+i+'"'+
+                    (waiverOpensOn(i)?' checked':'')+'><span>'+nm+'</span></label>'
+                  : '<label class="check lookonly" style="margin:0;opacity:.4" title="'+nm+' runs no waiver">'+
+                    '<input type="checkbox" disabled><span>'+nm+'</span></label>').join('')}
+            </div>
+            <div class="hint">Tick a day and, once that day\u2019s run has been through, whoever is still loose can
+              simply be taken for the rest of it \u2014 no bid, no wait. At midnight it is waivers again. Leave them all
+              clear and the wire is waivers all week.</div>`:''}
             <div class="hint">${anyWaiverDays()
               ? esc(waiverNote())+(waiverOpenOn()
                   ? ' Outside that window \u2014 every other day, and every hour before the run \u2014 taking anybody means a bid.'
@@ -26490,6 +26519,18 @@ function migrate(j){
      to be rebuilt, or every field inside them is unreachable. */
   reshape(out.settings.cap, 'rollover', d.settings.cap.rollover, (old)=> ({on: old===true}));
   reshape(out.settings, 'waivers', d.settings.waivers, (old)=> ({on: old===true}));
+  /* The wire opening after the run started as one tick for the whole week and
+     is now a day at a time. Anyone who had it on wanted it on every day they
+     run a waiver, so that is what they keep. */
+  if((j.settings||{}).waivers && (j.settings||{}).waivers.openAfterRun === true){
+    out.settings.waivers.openDays = Object.assign({}, out.settings.waivers.openDays);
+    Object.keys(out.settings.waivers.days||{}).forEach(k=>{
+      if(out.settings.waivers.days[k] === true) out.settings.waivers.openDays[k] = true;
+    });
+  }
+  delete out.settings.waivers.openAfterRun;
+  out.settings.waivers.openDays = Object.assign({0:false,1:false,2:false,3:false,4:false,5:false,6:false},
+    out.settings.waivers.openDays||{});
   ['taxi','rookie','playoffs','fa','bbd','value','comp','players','tag','loser']
     .forEach(k=> reshape(out.settings, k, d.settings[k], null));
   /* "Run a consolation bracket for everyone else" was a checkbox that never did
