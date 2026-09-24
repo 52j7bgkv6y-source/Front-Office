@@ -1033,7 +1033,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24h · pick which runs open the wire';
+const APP_BUILD = '2026-09-24k · every clock runs through the night';
 
 /* ============================================================
    HOME LEAGUE
@@ -1694,7 +1694,13 @@ function defaultState(){
         antiSnipeOn:true, antiSnipeWithinMin:15, antiSnipeExtendMin:30, antiSnipeUnit:'min',
         undoHours:0,
         allowCompeting:true, ownerMustAccept:true, mustMeetAsk:true,
-        quiet:{on:true, from:'23:00', to:'08:00'},
+        /* skip is how the pause window works: every countdown keeps counting
+           through the night, and the window's only job is that nothing is
+           allowed to run out inside it — a deadline in the small hours waits
+           for the morning. Turn it off and the old behaviour comes back, where
+           the clocks themselves stop and a 24-hour window takes a day and a
+           half. */
+        quiet:{on:true, from:'23:00', to:'08:00', skip:true},
         counters:{on:true, mustIncludeOriginal:true, side:'either', outcome:'replace'},
         vetoOn:false, vetoVotes:6, capMustBeLegal:true
       },
@@ -2315,6 +2321,84 @@ function cutBill(p, atWeek){
     total: Math.round((saved + forward + thisYear) * 100) / 100
   };
 }
+/* ---- Nobody pays for the same man twice in a season -------------------------
+   Cut a man, pick him back up off the wire, cut him again — the second cut used
+   to write a fresh dead cap row, so the same player cost the same team dead
+   money twice in one year. He does not. The first cut is the one that is paid
+   for; a later cut of the same man by the same team in the same season is free.
+
+   Rows written from now on carry the season the cut happened in, which is what
+   this reads. Rows written before this build have only the year they are charged
+   to, and a cut nearly always charges its own season first, so that stands in —
+   it can never forgive a cut it should have charged for, only the reverse, and
+   only for cuts made before this build. */
+function deadCutIn(d){ return d && (d.cutIn != null ? +d.cutIn : +d.year); }
+function deadPaidThisSeason(teamId, pid){
+  const t = byId(S.teams, teamId); if(!t) return false;
+  const y = S.league.season;
+  return (t.dead||[]).some(d=> d && d.playerId === pid && d.cut !== false && deadCutIn(d) === y);
+}
+/* The rows already on the books for that cut, for saying so on screen. */
+function deadPaidRows(teamId, pid){
+  const t = byId(S.teams, teamId); if(!t) return [];
+  const y = S.league.season;
+  return (t.dead||[]).filter(d=> d && d.playerId === pid && d.cut !== false && deadCutIn(d) === y);
+}
+function deadPaidTotal(teamId, pid){
+  return fixInc(sum(deadPaidRows(teamId, pid).map(d=> +d.amount || 0)));
+}
+/* When that cut was made, so an extension signed afterwards can be told apart
+   from the deal that was already paid for. Rows written before this build carry
+   no time, which is what the zero means. */
+function deadPaidAt(teamId, pid){
+  return Math.max(0, ...deadPaidRows(teamId, pid).map(d=> +d.at || 0));
+}
+/* ---- An extension is new money -----------------------------------------------
+   Cutting a man you have already been charged for this season is free — but not
+   if you extended him in between. An extension is a fresh commitment, so it is
+   charged, and only it: the years of the old deal have been settled once and are
+   not settled twice. */
+function extensionsSince(c, cutAt){
+  const list = (c && c.extensions) || [];
+  if(!list.length) return [];
+  /* No time on the cut to compare against, so every extension counts — the
+     exemption only ever covers what was certainly already paid for. */
+  if(!cutAt) return list.slice();
+  return list.filter(e=> (+e.at || 0) > cutAt);
+}
+const NO_BILL = {saved:0, forward:0, thisYear:0, total:0, base:0, left:0,
+                 backloaded:false, from:null, extYears:0, extOnly:true};
+function extCutBill(p, cutAt, atWeek){
+  const c = p && p.contract;
+  if(!c || !c.years) return NO_BILL;
+  const exts = extensionsSince(c, cutAt);
+  if(!exts.length) return NO_BILL;
+  const y = S.league.season;
+  const rate = (+S.settings.cap.deadCapPct||0)/100;
+  /* The extension years begin at the earliest one signed since the cut. */
+  const from = Math.min.apply(null, exts.map(e=> +e.from || (c.startYear + c.years)));
+  const slots = [];
+  for(let i=0;i<c.years;i++){
+    const yy = c.startYear + i;
+    if(yy >= from) slots.push({y:yy, amt:+c.salaries[i]||0});
+  }
+  if(!slots.length) return NO_BILL;
+  /* Its own base, not the whole deal's — what the extension itself pays a year. */
+  const base = Math.round((sum(slots.map(x=> x.amt)) / slots.length) * 100) / 100;
+  let saved = 0;
+  slots.forEach(x=>{ if(x.y <= y) saved += base - x.amt; });
+  saved = Math.max(0, Math.round(saved*100)/100);
+  const left = slots.filter(x=> x.y > y).length;
+  const forward = Math.round((base * left * rate) * 100) / 100;
+  const here = slots.find(x=> x.y === y);
+  const thisYear = !here ? 0
+    : (pastLateCut(atWeek) ? Math.round(here.amt*100)/100
+                           : Math.round((here.amt * rate)*100)/100);
+  return {saved, forward, thisYear, base, left, from, extYears:slots.length,
+          hereAmt: here ? Math.round(here.amt*100)/100 : 0,
+          backloaded: saved > 0.005, extOnly:true,
+          total: Math.round((saved + forward + thisYear) * 100) / 100};
+}
 function releasePlayer(pid, split){
   const p = byId(S.players,pid), c = p && p.contract; if(!c) return;
   const tm = byId(S.teams, c.teamId); if(!tm) { p.contract=null; return; }
@@ -2327,8 +2411,23 @@ function releasePlayer(pid, split){
   /* Worked out in one place: what the shape of the deal saved, the years still
      to come on the base salary, and this season's share. */
   const late = pastLateCut();
-  const bill = cutBill(p);
+  /* Already paid for him this season? Then only an extension signed since that
+     cut is chargeable, and the rest of the deal is not charged again. */
+  const paidBefore = deadPaidThisSeason(tm.id, pid);
+  const cutAt = paidBefore ? deadPaidAt(tm.id, pid) : 0;
+  const bill = paidBefore ? extCutBill(p, cutAt) : cutBill(p);
   const totalDead = fixInc(bill.total);
+  const extOnly = paidBefore && totalDead > 0;
+  const tail = extOnly ? ' \u2014 extension only' : '';
+  if(paidBefore && totalDead <= 0){
+    const paid = deadPaidTotal(tm.id, pid);
+    p.contract = null;
+    markDropped(p);
+    logIt(tm.name+' released '+p.name+' again — no dead cap, the '+money(paid)+
+      ' from cutting him earlier this season already covers him',
+      {type:'drop', teams:[tm.id], players:[pid]});
+    return;
+  }
   /* 'split' halves the hit across this year and next; 'now' loads it all onto
      this year. With neither passed, keep the old behaviour so any other caller
      is unaffected: the league's spread-over-remaining-years setting, or all now. */
@@ -2339,29 +2438,30 @@ function releasePlayer(pid, split){
        independently would overcharge by up to one increment. */
     const first = fixInc(totalDead/2);
     const second = fixInc(totalDead - first);
-    if(first>0)  tm.dead.push({year:y,   amount:first,  playerId:pid, name:p.name});
-    if(second>0) tm.dead.push({year:y+1, amount:second, playerId:pid, name:p.name+' (split)'});
+    if(first>0)  tm.dead.push({year:y,   amount:first,  playerId:pid, name:p.name+tail, cutIn:y, at:Date.now()});
+    if(second>0) tm.dead.push({year:y+1, amount:second, playerId:pid, name:p.name+tail+' (split)', cutIn:y, at:Date.now()});
   } else if(split==='now'){
-    if(totalDead>0) tm.dead.push({year:y, amount:totalDead, playerId:pid, name:p.name});
+    if(totalDead>0) tm.dead.push({year:y, amount:totalDead, playerId:pid, name:p.name+tail, cutIn:y, at:Date.now()});
   } else if(S.settings.cap.deadCapSpread){
     /* This season carries what was saved plus its own share; the years still to
        come each carry the base at the league's rate. */
     const nowAmt = fixInc(bill.saved + bill.thisYear);
-    if(nowAmt>0) tm.dead.push({year:y, amount:nowAmt, playerId:pid,
-      name:p.name + (bill.backloaded ? ' — back-loading settled' : '')});
+    if(nowAmt>0) tm.dead.push({year:y, amount:nowAmt, playerId:pid, cutIn:y, at:Date.now(),
+      name:p.name + tail + (bill.backloaded ? ' — back-loading settled' : '')});
     const per = bill.left ? fixInc(bill.forward / bill.left) : 0;
     let leftOver = fixInc(bill.forward);
     rows.filter(r=> r.y>y).forEach((r,i,arr)=>{
       const amt = (i===arr.length-1) ? fixInc(leftOver) : per;
       leftOver = fixInc(leftOver - amt);
-      if(amt>0) tm.dead.push({year:r.y, amount:amt, playerId:pid, name:p.name});
+      if(amt>0) tm.dead.push({year:r.y, amount:amt, playerId:pid, name:p.name+tail, cutIn:y, at:Date.now()});
     });
   } else {
-    if(totalDead>0) tm.dead.push({year:y, amount:totalDead, playerId:pid, name:p.name});
+    if(totalDead>0) tm.dead.push({year:y, amount:totalDead, playerId:pid, name:p.name+tail, cutIn:y, at:Date.now()});
   }
   p.contract = null;
   markDropped(p);
   logIt(tm.name+' released '+p.name+' — '+money(totalDead)+' dead cap'+
+    (extOnly ? ' on the extension only, the rest of his deal having been paid for earlier this season' : '')+
     (split==='split'?', split over '+y+' and '+(y+1):split==='now'?', all on '+y:''),
     {type:'drop', teams:[tm.id], players:[pid]});
 }
@@ -2397,13 +2497,46 @@ function addActiveMs(from, activeMs, q){
   for(let i=0;i<52;i++){ const mid=(lo+hi)/2; if(activeMsBetween(from,mid,q) < activeMs) lo=mid; else hi=mid; }
   return Math.round(hi);
 }
-function isQuietNow(q){
+/* Is a given moment inside the pause window. */
+function inQuiet(ms, q){
   q = q || S.settings.trades.quiet;
   if(!q || !q.on) return false;
   const from=parseHM(q.from), to=parseHM(q.to); if(from===to) return false;
-  const d=new Date(), m=d.getHours()*60+d.getMinutes();
+  const d=new Date(ms), m=d.getHours()*60+d.getMinutes();
   return from<to ? (m>=from && m<to) : (m>=from || m<to);
 }
+function isQuietNow(q){ return inQuiet(Date.now(), q); }
+/* The first moment at or after this one that is outside the window. */
+function quietEndsAfter(ms, q){
+  q = q || S.settings.trades.quiet;
+  if(!inQuiet(ms, q)) return ms;
+  const to = parseHM(q.to), d = new Date(ms);
+  const out = new Date(d.getFullYear(), d.getMonth(), d.getDate(), Math.floor(to/60), to%60, 0, 0);
+  if(out.getTime() <= ms) out.setDate(out.getDate()+1);
+  return out.getTime();
+}
+/* ---- Running through the night ----------------------------------------------
+   By default a clock stops during the pause window and picks up in the morning,
+   which makes a 24-hour window take a day and a half. With this on it counts
+   straight through, and the window's only job is that nothing is allowed to
+   expire inside it — a deadline that lands in the small hours waits for the
+   morning instead. */
+function quietSkips(){
+  const q = S.settings.trades.quiet;
+  return !!(q && q.on && q.skip);
+}
+/* Nothing settles inside the pause window. Every countdown in the app asks this
+   before it does anything, which is the whole of the rule. */
+function holdForQuiet(){ return quietSkips() && isQuietNow(); }
+/* Has this clock actually finished? Run out is not the same as finished where
+   the deadline would fall inside the pause window. */
+function clockDone(c){
+  if(!c) return false;
+  if(c.remain > 0) return false;
+  return !holdForQuiet();
+}
+/* Run out, but holding for the morning. */
+function clockHeld(c){ return !!(c && c.remain <= 0 && holdForQuiet()); }
 function quietResumesAt(){
   const q=S.settings.trades.quiet, to=parseHM(q.to), d=new Date();
   const r=new Date(d); r.setHours(Math.floor(to/60), to%60, 0, 0);
@@ -2414,11 +2547,19 @@ function newClock(hours){ return { remain: Math.max(0, (+hours||0)*3600000), las
 function tickClock(c){
   if(!c) return 0;
   const now = Date.now();
-  if(now > c.lastAt) c.remain = Math.max(0, c.remain - activeMsBetween(c.lastAt, now, S.settings.trades.quiet));
+  if(now > c.lastAt){
+    const used = quietSkips() ? (now - c.lastAt)
+                              : activeMsBetween(c.lastAt, now, S.settings.trades.quiet);
+    c.remain = Math.max(0, c.remain - used);
+  }
   c.lastAt = now;
   return c.remain;
 }
-function clockEta(c){ return addActiveMs(Date.now(), c.remain, S.settings.trades.quiet); }
+function clockEta(c){
+  if(!c) return Date.now();
+  if(quietSkips()) return quietEndsAfter(Date.now() + c.remain);
+  return addActiveMs(Date.now(), c.remain, S.settings.trades.quiet);
+}
 function snipeMs(v){ return (+v||0) * (S.settings.trades.antiSnipeUnit==='hr' ? 3600000 : 60000); }
 function antiSnipe(c){
   const t = S.settings.trades;
@@ -2794,6 +2935,17 @@ function blockTestClear(st){
   if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
     text:'Took '+names.join(' and ')+' off Recently closed — they were posted to test it'});
 }
+/* Every league that already has a pause window saved was saved when the window
+   stopped the clocks. The rule is now that the clocks keep counting and only the
+   deadline waits, so the switch is turned on once. A league that turns it back
+   off afterwards keeps it off. */
+function quietSkipOn(st){
+  if(!st || !st.league || st.league.quietSkipSet) return;
+  st.league.quietSkipSet = '2026-09-24';
+  const t = (st.settings||{}).trades;
+  if(!t || !t.quiet) return;
+  if(t.quiet.skip === undefined || t.quiet.skip === false) t.quiet.skip = true;
+}
 function pinCommish(st){
   if(!st || !st.league || !Array.isArray(st.teams) || !st.teams.length) return null;
   const pin = (st.league.commishOwner||'').trim().toLowerCase();
@@ -3026,7 +3178,11 @@ function renderShell(){
     '<div><div class="eyebrow">'+esc(NAV.find(n=>n.id===route).label)+'</div>'+
     '<div style="font:600 15px/1.2 var(--body)">'+esc(t?t.name:'—')+'</div></div>'+
     '<div class="spacer"></div>'+
-    (isQuietNow() ? '<span class="pauseflag hide-xs">⏸ Clocks paused · resume '+fmtHM(S.settings.trades.quiet.to)+'</span>' : '')+
+    (isQuietNow()
+      ? (quietSkips()
+          ? '<span class="pauseflag hide-xs">\u23F8 Nothing processes until '+fmtHM(S.settings.trades.quiet.to)+'</span>'
+          : '<span class="pauseflag hide-xs">\u23F8 Clocks paused \u00b7 resume '+fmtHM(S.settings.trades.quiet.to)+'</span>')
+      : '')+
     (Sync.ready() ? '<span class="pill hide-xs '+(Sync.status==='bad'?'live':Sync.status==='warn'?'warn':'ok')+'" title="'+esc(Sync.msg)+'">'+
       (Sync.status==='bad'?'Offline':'Synced')+'</span>' : '')+
     ((S.settings.supa && S.settings.supa.on && S.settings.supa.url && !Supa.user)
@@ -5860,7 +6016,9 @@ ACT.splitOutDead = (d)=>{
   c.salaries[i] = Math.round(((+c.salaries[i]||0) - amt)*100)/100;
   c.total = fixInc(sum(c.salaries));
   t.dead = t.dead||[];
-  t.dead.push({year:S.league.season, amount:fixInc(amt), playerId:p.id, name:p.name});
+  /* Not a cut — the man is still on the roster — so it must not stand in the way
+     of charging for one later. */
+  t.dead.push({year:S.league.season, amount:fixInc(amt), playerId:p.id, name:p.name, cut:false});
   clearCapCache();
   logIt(teamName(t.id)+' moved '+money(amt)+' back off '+p.name+"'s salary into dead cap",
     {type:'admin', teams:[t.id], players:[p.id]});
@@ -6408,6 +6566,7 @@ VIEWS.teams = function(){
               const p2 = c.playerId ? byId(S.players, c.playerId) : null;
               const mineFrom = c.fromTeam===tid;
               const left = Math.max(0, surDue(c));
+              const held = left <= 0 && holdForQuiet();
               const stage = c.status==='naming' ? (mineFrom? 'name the man you are giving up'
                                                            : 'waiting for them to name one')
                 : c.status==='deciding' ? (mineFrom? 'waiting for them to accept or reject'
@@ -6417,7 +6576,8 @@ VIEWS.teams = function(){
                                             : 'you claimed off '+teamName(c.fromTeam))+'</td>'+
                 '<td>'+(p2? esc(p2.name) : '<span class="dim">not named yet</span>')+'</td>'+
                 '<td class="tiny">'+esc(stage)+'</td>'+
-                '<td class="right tiny '+(left<3600000?'bad':'dim')+'">'+hhmm(left)+'</td>'+
+                '<td class="right tiny '+(held?'dim':left<3600000?'bad':'dim')+'">'+
+                  (held ? 'holds until '+fmtHM(S.settings.trades.quiet.to) : hhmm(left))+'</td>'+
                 '<td class="right nowrap">'+
                   (mineFrom && c.status==='naming' && canManage(tid)
                     ? '<button class="btn sm pri" data-a="surName" data-id="'+c.id+'">Name him</button>' : '')+
@@ -7696,6 +7856,9 @@ function surSettle(c){
 function surTick(){
   const r = surRules();
   if(!r.on) return 0;
+  /* This one keeps its own deadline rather than a ticking clock, so it asks the
+     same question by hand: nothing settles in the small hours. */
+  if(holdForQuiet()) return 0;
   let moved = 0;
   surClaims().forEach(c=>{
     if(['naming','deciding','moving'].indexOf(c.status) < 0) return;
@@ -8235,13 +8398,36 @@ ACT.release = (d)=>{
   const gross = p.contract ? fixInc(sum(p.contract.salaries.map((v,i)=>
     (p.contract.startYear+i) >= y ? +v||0 : 0))) : 0;
   const late = pastLateCut();
-  const bill = cutBill(p);
+  /* The same choice the release itself makes: the whole deal, or — where he has
+     already been paid for this season — an extension signed since that cut. */
+  const paidAlready = !!(p.contract && deadPaidThisSeason(p.contract.teamId, p.id));
+  const cutAt = paidAlready ? deadPaidAt(p.contract.teamId, p.id) : 0;
+  const bill = paidAlready ? extCutBill(p, cutAt) : cutBill(p);
   const thisYr = p.contract ? fixInc(grossHit(p, y)) : 0;
   const laterYrs = fixInc(Math.max(0, gross - thisYr));
   const dead = fixInc(bill.total);
   const half = fixInc(dead/2), half2 = fixInc(dead-half);
   ui.tmp.cutSplit = ui.tmp.cutSplit || 'now';
   const mode = ui.tmp.cutSplit;
+  /* Already paid for this season and nothing signed since: nothing to decide. */
+  if(paidAlready && dead <= 0){
+    const paid = deadPaidTotal(p.contract.teamId, p.id);
+    const rows = deadPaidRows(p.contract.teamId, p.id);
+    return modal('Release '+p.name,
+      '<div class="assetbox" style="border-color:#2F5B3A;margin-bottom:10px">'+
+      '<b class="good">No dead cap.</b>'+
+      '<div class="tiny" style="margin-top:4px">You already cut him this season and took the '+
+      money(paid)+'. Nobody pays for the same man twice in a year, so letting him go again costs '+
+      'you nothing \u2014 you are freeing a roster place and that is all.</div></div>'+
+      '<div class="kv">'+rows.map(d2=>'<dt>'+d2.year+'</dt><dd>'+money(+d2.amount||0)+
+        '<div class="tiny dim">'+esc(d2.name||p.name)+'</div></dd>').join('')+'</div>'+
+      (p.contract ? '<div class="hint">His '+money(thisYr)+' for '+y+
+        ' comes off your books as usual. What is already dead stays dead. Extend him, though, '+
+        'and the extension is fresh money \u2014 cutting him after that is charged for, on the '+
+        'extension alone.</div>' : ''),
+      '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
+      '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release him \u2014 no dead cap</button>');
+  }
   modal('Release '+p.name,
     (late
       ? '<div class="assetbox" style="border-color:#5C3227;margin-bottom:10px">'+
@@ -8252,21 +8438,37 @@ ACT.release = (d)=>{
         '<br>And if you put anybody in his place you are worse off, because that man costs '+
         money(+S.settings.waivers.salary||1)+' or more on top.</div></div>'
       : '')+
-    '<p>Releasing him leaves <b>'+money(dead)+'</b> of dead cap.</p>'+
+    (paidAlready
+      ? '<div class="assetbox" style="border-color:#5C4526;margin-bottom:10px">'+
+        '<b>The extension only.</b>'+
+        '<div class="tiny" style="margin-top:4px">You cut him earlier this season and took '+
+        money(deadPaidTotal(p.contract.teamId, p.id))+' for the deal he was on then, and that is not '+
+        'charged twice. But you extended him afterwards, and an extension is fresh money \u2014 so the '+
+        (bill.extYears||0)+' year'+((bill.extYears||0)===1?'':'s')+' from '+bill.from+
+        ' onwards are what you are being billed for below.</div></div>'
+      : '')+
+    '<p>Releasing him leaves <b>'+money(dead)+'</b> of dead cap'+
+      (paidAlready ? ' on the extension' : '')+'.</p>'+
     '<div class="kv" style="margin-bottom:8px">'+
       (bill.backloaded
         ? '<dt>Back-loading settled</dt><dd class="bad">'+money(bill.saved)+
-          '<div class="tiny dim">what the shape of the deal has saved you so far, against a base of '+
-          money(bill.base)+' a year</div></dd>'
+          '<div class="tiny dim">what the shape of the '+(paidAlready?'extension':'deal')+
+          ' has saved you so far, against a base of '+money(bill.base)+' a year</div></dd>'
         : '')+
-      '<dt>'+y+'</dt><dd>'+money(bill.thisYear)+
-        '<div class="tiny dim">'+(late
-          ? 'in full — past week '+lateCutWeek()
-          : pct(S.settings.cap.deadCapPct)+' of his '+money(thisYr))+'</div></dd>'+
+      ((paidAlready && bill.from > y)
+        ? '<dt>'+y+'</dt><dd class="dim">nothing<div class="tiny dim">the extension does not start until '+
+          bill.from+', so this season is the deal you have already paid for</div></dd>'
+        : '<dt>'+y+'</dt><dd>'+money(bill.thisYear)+
+          '<div class="tiny dim">'+(late
+            ? 'in full — past week '+lateCutWeek()
+            : pct(S.settings.cap.deadCapPct)+' of '+
+              (paidAlready ? 'the '+money(bill.hereAmt)+' the extension pays this year'
+                           : 'his '+money(thisYr)))+'</div></dd>')+
       (bill.left
         ? '<dt>'+bill.left+' year'+(bill.left===1?'':'s')+' still to run</dt><dd>'+money(bill.forward)+
           '<div class="tiny dim">'+pct(S.settings.cap.deadCapPct)+' of the '+money(bill.base)+
-          ' base, not the '+money(fixInc(laterYrs))+' written into the back of the deal</div></dd>'
+          ' base'+(paidAlready ? ' the extension was signed at' :
+            ', not the '+money(fixInc(laterYrs))+' written into the back of the deal')+'</div></dd>'
         : '')+
     '</div>'+
     '<div class="flabel">How to take the hit</div>'+
@@ -11544,7 +11746,7 @@ function askForm(){
   </div>
   <div class="hint" style="margin-top:6px" id="askRetHint">${askRetLine(a)}</div>
   </div>
-  <div class="hint">Ask value ${money(askValue(a))} · the clock runs ${S.settings.trades.auctionHours} hours once someone meets it${S.settings.trades.quiet.on?', pausing overnight':''}.</div>`;
+  <div class="hint">Ask value ${money(askValue(a))} · the clock runs ${S.settings.trades.auctionHours} hours once someone meets it${S.settings.trades.quiet.on?(quietSkips()?', running through the night but never settling in it':', pausing overnight'):''}.</div>`;
 }
 function retainYearOptions(playerId, sel){
   const p = byId(S.players, playerId), c = p && p.contract;
@@ -12869,7 +13071,12 @@ function tradeForm(){
   <div id="capBoardBox">${capBoard(builderTrade())}</div>
   <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>
   <div class="hint">Once the other side accepts, the trade sits in a ${S.settings.trades.reviewHours}-hour review window
-  ${S.settings.trades.counters.on?'during which any other team can counter it':''}${S.settings.trades.quiet.on?'. The window stops counting overnight':''}.</div>`;
+  ${S.settings.trades.counters.on?'during which any other team can counter it':''}${S.settings.trades.quiet.on
+    ? (quietSkips()
+        ? '. The window counts straight through the night, but nothing ever processes between '+
+          fmtHM(S.settings.trades.quiet.from)+' and '+fmtHM(S.settings.trades.quiet.to)
+        : '. The window stops counting overnight')
+    : ''}.</div>`;
 }
 /* Both builders now keep per-year figures. Anything proposed before that change
    still carries {pct, through} and has to keep working — an old shape is one
@@ -13198,7 +13405,7 @@ ACT.multiAccept = (d)=>{
   tr.log.unshift({at:Date.now(), text:teamName(me)+' accepted'});
   const left = multiWaiting(tr);
   if(!left.length){
-    tr.status='review'; tr.clock = newClock(S.settings.trades.reviewHours);
+    tr.status='review'; tr.acceptedAt = Date.now(); tr.clock = newClock(S.settings.trades.reviewHours);
     tr.log.unshift({at:Date.now(), text:'Everybody in — review has started'});
     notify('Trade in review', tr.teams.map(teamName).join(', ')+' all agreed.','warn', tr.teams);
   } else {
@@ -13371,20 +13578,41 @@ ACT.sendCounter = ()=>{
 };
 ACT.acceptCounter = (d)=>{
   const tr = byId(S.trades,d.id), ct = byId(tr.counters,d.cid), c = S.settings.trades.counters;
-  ct.status='accepted'; tr.counters.forEach(x=>{ if(x!==ct && x.status==='pending') x.status='declined'; });
+  ct.status='accepted';
+  ct.acceptedAt = Date.now();
+  tr.counters.forEach(x=>{ if(x!==ct && x.status==='pending') x.status='declined'; });
+  /* A counter does not restart the review window and does not move the time the
+     trade was originally accepted. It carries the clock as it stands, and only
+     tops it up where it was inside the last stretch — the same anti-snipe rule
+     a late bid gets. */
+  const carried = tr.clock ? {remain: Math.max(0, +tr.clock.remain||0), lastAt: Date.now()}
+                           : newClock(S.settings.trades.reviewHours);
+  const bumped = antiSnipe(carried);
   if(c.outcome==='replace'){
     tr.status='replaced'; tr.log.unshift({at:Date.now(), text:'Voided — replaced by '+teamName(ct.byTeamId)+"'s counter"});
     const nt = {id:uid('tr'), type:'standard',
       a:{teamId:ct.byTeamId, players:ct.gives.players, picks:ct.gives.picks, cash:ct.gives.cash||0},
       b:{teamId:tr[ct.side].teamId, players:ct.wants.players, picks:ct.wants.picks, cash:0},
-      status:'review', createdAt:Date.now(), acceptedAt:Date.now(), clock:newClock(S.settings.trades.reviewHours), counters:[],
-      log:[{at:Date.now(), text:'Created from a counter that replaced an earlier trade'}]};
+      status:'review', createdAt: tr.createdAt || Date.now(),
+      /* When the trade it grew out of was accepted, kept as it was. */
+      acceptedAt: tr.acceptedAt || Date.now(),
+      counterAcceptedAt: Date.now(),
+      fromTrade: tr.id,
+      clock: carried, counters:[],
+      log:[{at:Date.now(), text:'Created from a counter that replaced an earlier trade'+
+        (bumped ? ' — inside the last '+snipeLabel()+', so the clock was put back to '+snipeLabel() : '')}]};
     S.trades.unshift(nt);
-    notify('Trade replaced', teamName(ct.byTeamId)+' stepped in. New review window open.','warn');
+    notify('Trade replaced', teamName(ct.byTeamId)+' stepped in. '+
+      (bumped ? 'The counter landed late, so the clock is back to '+snipeLabel()+'.'
+              : 'The original review window carries on.'),'warn');
   } else {
-    tr.log.unshift({at:Date.now(), text:'Counter from '+teamName(ct.byTeamId)+' accepted — it processes right after the original'});
-    antiSnipe(tr.clock);
-    notify('Counter accepted', 'It will process immediately after the original trade clears.','warn');
+    tr.counterAcceptedAt = Date.now();
+    tr.clock = carried;
+    tr.log.unshift({at:Date.now(), text:'Counter from '+teamName(ct.byTeamId)+
+      ' accepted — it processes right after the original'+
+      (bumped ? ', and the clock was put back to '+snipeLabel() : '')});
+    notify('Counter accepted', 'It will process immediately after the original trade clears'+
+      (bumped ? ', with the clock back to '+snipeLabel() : '')+'.','warn');
   }
   save(); render(); toast('Counter accepted','good');
 };
@@ -14197,6 +14425,7 @@ VIEWS.trades = function(){
       <div class="ph"><h3>${(tr.teams||[]).length}-team deal</h3><div class="spacer"></div>
         <span class="pill ${tr.status==='review'?'warn':tr.status==='approved'?'ok':''}">${esc(tr.status)}</span>
         ${tr.clock?'<span class="clock" data-clock="tr:'+tr.id+'">'+hhmm(tr.clock.remain)+'</span>':''}</div>
+      ${tradeTimes(tr)}
       <div class="pb">
         <div class="stack">
         ${(tr.legs||[]).map(l=>`<div class="assetbox">
@@ -14224,6 +14453,20 @@ VIEWS.trades = function(){
         <div class="log" style="margin-top:10px">${(tr.log||[]).slice(0,4).map(x=>'<div><span class="dim">'+dstr(x.at)+'</span> '+esc(x.text)+'</div>').join('')}</div>
       </div></div>`;
   };
+  /* When it was accepted, and — separately — when a counter was taken. The
+     original time never moves, so a trade that has been through a counter still
+     says when the two sides first shook hands on it. */
+  const tradeTimes = (tr)=>{
+    if(!tr) return '';
+    const bits = [];
+    if(tr.acceptedAt) bits.push('<span><span class="dim">accepted</span> '+dstr(tr.acceptedAt)+'</span>');
+    if(tr.counterAcceptedAt) bits.push('<span><span class="dim">counter accepted</span> '+
+      dstr(tr.counterAcceptedAt)+'</span>');
+    if(!bits.length && tr.createdAt) bits.push('<span><span class="dim">offered</span> '+dstr(tr.createdAt)+'</span>');
+    if(!bits.length) return '';
+    return '<div class="pb" style="padding-top:0"><div class="tiny dim" style="display:flex;gap:14px;flex-wrap:wrap">'+
+      bits.join('')+'</div></div>';
+  };
   const card = (tr)=>{
     if(tr.type==='multi') return multiCard(tr);
     const canCounter = c.counters.on && tr.status==='review' && me!==tr.a.teamId && me!==tr.b.teamId;
@@ -14232,9 +14475,16 @@ VIEWS.trades = function(){
       <div class="ph"><div style="flex:1;min-width:0">
         <div class="eyebrow">${tr.status==='review'?'In review':tr.status==='proposed'?'Waiting on '+teamName(tr.b.teamId):tr.status}</div>
         <div style="font:700 17px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(teamName(tr.a.teamId))} ⇄ ${esc(teamName(tr.b.teamId))}</div></div>
-        ${tr.clock&&tr.status==='review'?`<div class="right"><div class="clock ${isQuietNow()?'paused':'calm'}" data-clock="trade:${tr.id}">${hhmm(tr.clock.remain)}</div>
-          <div class="tiny dim">${isQuietNow()?'paused until '+fmtHM(c.quiet.to):'processes '+dstr(clockEta(tr.clock))}</div></div>`:''}
+        ${tr.clock&&tr.status==='review'?`<div class="right">
+          <div class="clock ${clockHeld(tr.clock)?'paused':(isQuietNow()&&!quietSkips())?'paused':'calm'}"
+            data-clock="trade:${tr.id}">${hhmm(clockHeld(tr.clock)?Math.max(0,quietResumesAt()-Date.now()):tr.clock.remain)}</div>
+          <div class="tiny dim">${clockHeld(tr.clock)
+            ? 'ran out overnight — goes through at '+fmtHM(c.quiet.to)
+            : (isQuietNow() && !quietSkips())
+              ? 'paused until '+fmtHM(c.quiet.to)
+              : 'processes '+dstr(clockEta(tr.clock))}</div></div>`:''}
       </div>
+      ${tradeTimes(tr)}
       <div class="pb">
         <div class="grid g2">
           <div><div class="flabel">${esc(teamName(tr.a.teamId))} sends</div><div class="assetbox">${assetChips(tr.a)}</div></div>
@@ -14311,12 +14561,29 @@ VIEWS.trades = function(){
       </div></div>
       <div class="panel"><div class="ph"><h3>Overnight pause</h3></div><div class="pb">
         <label class="check" style="margin-bottom:10px"><input type="checkbox" data-set="settings.trades.quiet.on" ${c.quiet.on?'checked':''}>
-          <span>Stop every countdown overnight. Offers, acceptances and counters still work — the clock just holds.</span></label>
+          <span>Keep a window overnight where nothing settles
+            <span class="dim">— countdowns keep counting through it, but anything that would run out inside it
+            waits for the morning, so nobody has a trade, an auction or a claim go through while they are asleep</span></span></label>
         <div class="grid g2">
           <label class="f"><span>Clocks stop at</span><input type="time" data-set="settings.trades.quiet.from" value="${esc(c.quiet.from)}"></label>
           <label class="f"><span>and start again at</span><input type="time" data-set="settings.trades.quiet.to" value="${esc(c.quiet.to)}"></label>
         </div>
-        <div class="hint">${c.quiet.on?'Right now the clocks are '+(isQuietNow()?'paused, resuming at '+fmtHM(c.quiet.to):'running, and will pause at '+fmtHM(c.quiet.from))+'.':'Clocks run around the clock.'}</div>
+        ${c.quiet.on?`<label class="check"><input type="checkbox" data-set="settings.trades.quiet.skip"
+          ${c.quiet.skip?'checked':''}>
+          <span>Clocks keep counting through the window
+            <span class="dim">\u2014 clear this to stop the countdowns themselves overnight instead, the old way,
+            where a ${c.reviewHours}-hour window takes rather longer than ${c.reviewHours} hours to run
+            out</span></span></label>`:''}
+        <div class="hint">${!c.quiet.on ? 'Nothing is held back: a countdown runs out whenever it runs out, at any hour.'
+          : c.quiet.skip
+            ? 'Every countdown in the app counts straight through the night, so a '+c.reviewHours+
+              '-hour window really is '+c.reviewHours+' hours. Anything that would run out between '+
+              fmtHM(c.quiet.from)+' and '+fmtHM(c.quiet.to)+' goes through at '+fmtHM(c.quiet.to)+
+              ' instead. That covers trades, block auctions, free agent auctions, blind bid rounds, '+
+              'taxi claims, tag offers and contract decisions.'
+            : 'The old way: the countdowns themselves are '+(isQuietNow()?'paused, resuming at '+fmtHM(c.quiet.to)
+                :'running, and will pause at '+fmtHM(c.quiet.from))+', so a '+c.reviewHours+
+              '-hour window takes longer than '+c.reviewHours+' hours to run out.'}</div>
       </div></div>
       <div class="panel"><div class="ph"><h3>Auction behaviour</h3></div><div class="pb stack">
         <label class="check"><input type="checkbox" data-set="settings.trades.allowCompeting" ${c.allowCompeting?'checked':''}>
@@ -16647,7 +16914,7 @@ function applyBackload(p, teamId){
       t.dead.push({name:p.name+' — back-loading settled', year:y, amount:amt});
     });
   } else {
-    t.dead.push({name:p.name+' — back-loading settled', year:S.league.season, amount:b.owed});
+    t.dead.push({name:p.name+' — back-loading settled', year:S.league.season, amount:b.owed, cut:false});
   }
   return b.owed;
 }
@@ -26599,6 +26866,7 @@ function migrate(j){
   bengalsUndo(out);
   gadsdenClaim(out);
   blockTestClear(out);
+  quietSkipOn(out);
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
@@ -26636,48 +26904,48 @@ function tickAll(){
     const before = a.clock.remain;
     tickClock(a.clock);
     if(a.clock.remain !== before) dirty = true;
-    if(a.clock.remain<=0){ settleAuction(a); needsRender = true; settled = true; }
+    if(clockDone(a.clock)){ settleAuction(a); needsRender = true; settled = true; }
   });
   (S.tagOffers||[]).forEach(o=>{
     if(o.status!=='open' || !o.clock) return;
     const before = o.clock.remain;
     tickClock(o.clock);
     if(o.clock.remain !== before) dirty = true;
-    if(o.clock.remain<=0){ settleTagOffer(o); needsRender = true; settled = true; }
+    if(clockDone(o.clock)){ settleTagOffer(o); needsRender = true; settled = true; }
   });
   (S.pending||[]).forEach(q=>{
     if(q.status!=='open' || !q.clock) return;
     const before = q.clock.remain;
     tickClock(q.clock);
     if(q.clock.remain !== before) dirty = true;
-    if(q.clock.remain<=0){ settlePending(q); needsRender = true; settled = true; }
+    if(clockDone(q.clock)){ settlePending(q); needsRender = true; settled = true; }
   });
   (S.taxiClaims||[]).forEach(c=>{
     if(c.status!=='open' || !c.clock) return;
     const before = c.clock.remain;
     tickClock(c.clock);
     if(c.clock.remain !== before) dirty = true;
-    if(c.clock.remain<=0){ settleTaxiClaim(c); needsRender = true; settled = true; }
+    if(clockDone(c.clock)){ settleTaxiClaim(c); needsRender = true; settled = true; }
   });
   if(S.bbd && S.bbd.status==='open' && S.bbd.clock){
     const before = S.bbd.clock.remain;
     tickClock(S.bbd.clock);
     if(S.bbd.clock.remain !== before) dirty = true;
-    if(S.bbd.clock.remain<=0){ resolveRound(); needsRender = true; settled = true; }
+    if(clockDone(S.bbd.clock)){ resolveRound(); needsRender = true; settled = true; }
   }
   (S.faAuctions||[]).forEach(a=>{
     if(a.status!=='open' || !a.clock) return;
     const before = a.clock.remain;
     tickClock(a.clock);
     if(a.clock.remain !== before) dirty = true;
-    if(a.clock.remain<=0){ settleFA(a); needsRender = true; settled = true; }
+    if(clockDone(a.clock)){ settleFA(a); needsRender = true; settled = true; }
   });
   S.trades.forEach(t=>{
     if(t.status!=='review' || !t.clock) return;
     const before = t.clock.remain;
     tickClock(t.clock);
     if(t.clock.remain !== before) dirty = true;
-    if(t.clock.remain<=0){ processTrade(t); needsRender = true; settled = true; }
+    if(clockDone(t.clock)){ processTrade(t); needsRender = true; settled = true; }
   });
 
   liveBeat++;
@@ -26823,9 +27091,16 @@ function tickAll(){
             : kind==='pd' ? byId(S.pending,id) : kind==='to' ? byId(S.tagOffers,id)
             : byId(S.trades,id);
     if(!o || !o.clock) return;
+    if(clockHeld(o.clock)){
+      /* Run out in the small hours: it goes through when the window ends, so
+         that is what the countdown should be showing. */
+      el.textContent = hhmm(Math.max(0, quietResumesAt() - Date.now()));
+      el.className = 'clock paused';
+      return;
+    }
     el.textContent = hhmm(o.clock.remain);
     const near = o.clock.remain <= snipeMs(S.settings.trades.antiSnipeWithinMin);
-    el.className = 'clock ' + (isQuietNow() ? 'paused' : near ? '' : 'calm');
+    el.className = 'clock ' + (isQuietNow() && !quietSkips() ? 'paused' : near ? '' : 'calm');
   });
 
   /* A countdown ticking is not a change to the league — every phone counts it
