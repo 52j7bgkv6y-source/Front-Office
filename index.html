@@ -1112,7 +1112,7 @@ h1.fitname{line-height:1.08;word-break:break-word}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24p · every saved copy in reach';
+const APP_BUILD = '2026-09-24q · counters start from the original trade';
 
 /* ============================================================
    HOME LEAGUE
@@ -12129,11 +12129,15 @@ function weekPointsChip(p){
     pts.toFixed(1)+' '+tag+'</span>';
 }
 function assetChips(o, opts){
-  const rm = opts && opts.rm;
-  const bits = (o.players||[]).map(id=>{ const p=byId(S.players,id); return p?'<span class="chip">'+posTag(p.pos)+' '+esc(p.name)+weekPointsChip(p)+(rm?'<button data-a="'+rm+'" data-kind="players" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; })
-    .concat((o.picks||[]).map(id=>{ const k=byId(S.picks,id); return k?'<span class="chip">'+esc(pickLabel(k))+(rm?'<button data-a="'+rm+'" data-kind="picks" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; }))
+  const rm0 = opts && opts.rm, lock = (opts && opts.lock) || {};
+  const LOCK = '<span class="tiny dim" title="Part of the original trade — it has to stay in" style="margin-left:4px">🔒</span>';
+  const bits = (o.players||[]).map(id=>{ const p=byId(S.players,id); const rm = lock[id] ? '' : rm0;
+    return p?'<span class="chip">'+posTag(p.pos)+' '+esc(p.name)+weekPointsChip(p)+(lock[id]?LOCK:'')+(rm?'<button data-a="'+rm+'" data-kind="players" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; })
+    .concat((o.picks||[]).map(id=>{ const k=byId(S.picks,id); const rm = lock[id] ? '' : rm0;
+      return k?'<span class="chip">'+esc(pickLabel(k))+(lock[id]?LOCK:'')+(rm?'<button data-a="'+rm+'" data-kind="picks" data-id="'+id+'" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>':''; }))
     .filter(Boolean);
-  if(+o.cash) bits.push('<span class="chip money">'+money(+o.cash)+' cap'+
+  const rm = lock.cash ? '' : rm0;
+  if(+o.cash) bits.push('<span class="chip money">'+money(+o.cash)+' cap'+(lock.cash?LOCK:'')+
     (rm?'<button data-a="'+rm+'" data-kind="cash" data-id="cash" data-side="'+(opts.side||'')+'">×</button>':'')+'</span>');
   return bits.join('') || '<span class="dim tiny">nothing yet</span>';
 }
@@ -14077,13 +14081,49 @@ ACT.undoTradeGo = (d)=>{
 /* counters ---------------------------------------------------------------- */
 ACT.counter = (d)=>{
   const tr = byId(S.trades,d.id), side = d.side;
-  ui.tmp.ct = {tradeId:tr.id, side, wants:{players:[],picks:[]}, gives:{players:[],picks:[],cash:0}};
+  if(!tr || !tr[side]) return toast('That trade has gone','bad');
+  /* The counter starts with the original trade on the board: everything the
+     team being countered was putting in is already asked for (with any cap
+     dollars and retained salary it had agreed to), and you add to it. When the
+     counter would replace the original, those pieces are locked in if the
+     league says counters must carry the original. */
+  const o = tr[side], start = counterStarts(tr);
+  ui.tmp.ct = {tradeId:tr.id, side,
+    wants:{players: start ? (o.players||[]).slice() : [], picks: start ? (o.picks||[]).slice() : [],
+           cash: start ? (+o.cash||0) : 0},
+    retain: start ? deep(o.retain||{}) : {},
+    gives:{players:[],picks:[],cash:0}};
   modal('Counter '+teamName(tr[side].teamId), counterForm(),
     '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="sendCounter">Send the counter</button>');
 };
+/* Whether a counter starts from the original trade. When the counter replaces
+   the original, the countered team still holds everything it was putting in,
+   so that is where the counter begins. When the original goes through first,
+   those pieces will have left, so it starts empty. */
+function counterStarts(tr){ return (S.settings.trades.counters||{}).outcome !== 'chain'; }
+/* What the countering team can ask the countered team for. */
+function counterAvail(tr, side){
+  if(!counterStarts(tr)) return sideAssetsAfter(tr, side);
+  const teamId = tr[side].teamId;
+  return {players: teamPlayers(teamId).map(p=> p.id),
+          picks: S.picks.filter(k=> k.ownerTeamId===teamId).map(k=> k.id)};
+}
+function counterLocks(tr, side){
+  const c = S.settings.trades.counters || {}, out = {};
+  if(!c.mustIncludeOriginal || !counterStarts(tr)) return out;
+  const o = tr[side] || {};
+  (o.players||[]).forEach(id=> out[id]=1); (o.picks||[]).forEach(id=> out[id]=1);
+  if(+o.cash) out.cash = 1;
+  return out;
+}
 function counterForm(){
   const ct = ui.tmp.ct, tr = byId(S.trades,ct.tradeId), me = actingTeam();
-  const avail = sideAssetsAfter(tr, ct.side), orig = originalAssets(tr);
+  const orig = originalAssets(tr), locks = counterLocks(tr, ct.side);
+  const avail0 = counterAvail(tr, ct.side);
+  /* Anything already on the board is not offered again. */
+  const onBoard = {}; [].concat(ct.wants.players, ct.wants.picks).forEach(id=> onBoard[id]=1);
+  const avail = {players: avail0.players.filter(id=> !onBoard[id]), picks: avail0.picks.filter(id=> !onBoard[id])};
+  const givenIds = {}; [].concat(ct.gives.players, ct.gives.picks).forEach(id=> givenIds[id]=1);
   const c = S.settings.trades.counters;
   const hits = [].concat(ct.wants.players, ct.wants.picks).filter(id=> orig[id]).length;
   const inTrade = (id)=> orig[id] ? ' ★' : '';
@@ -14093,7 +14133,8 @@ function counterForm(){
   <div class="assetbox" style="margin-bottom:12px"><div class="tiny dim">On the table</div><div style="margin-top:6px">${tradeLine(tr)}</div></div>
   <div class="grid g2">
     <div><div class="flabel">What you want from ${esc(teamName(tr[ct.side].teamId))}</div>
-      <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.wants,{rm:'ctRm', side:'wants'})}</div>
+      <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.wants,{rm:'ctRm', side:'wants', lock:locks})}</div>
+        ${retainNote({retain:ct.retain||{}})}
         <div class="row"><select id="ctwp" style="flex:1;min-width:130px"><option value="">Player…</option>
           ${avail.players.map(id=>{const p=byId(S.players,id);return p?'<option value="'+id+'">'+esc(p.name)+inTrade(id)+'</option>':'';}).join('')}</select>
           <button class="btn sm" data-a="ctAdd" data-side="wants" data-kind="players">Add</button></div>
@@ -14104,10 +14145,10 @@ function counterForm(){
     <div><div class="flabel">What you send</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.gives,{rm:'ctRm', side:'gives'})}</div>
         <div class="row"><select id="ctgp" style="flex:1;min-width:130px"><option value="">Player…</option>
-          ${ownedPlayers(me).map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+money(capHit(p,S.league.season))+'</option>').join('')}</select>
+          ${ownedPlayers(me).filter(p=> !givenIds[p.id]).map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+money(capHit(p,S.league.season))+'</option>').join('')}</select>
           <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="players">Add</button></div>
         <div class="row" style="margin-top:6px"><select id="ctgk" style="flex:1;min-width:130px"><option value="">Pick…</option>
-          ${ownedPicks(me).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
+          ${ownedPicks(me).filter(k=> !givenIds[k.id]).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
           <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="picks">Add</button></div>
         <div class="row" style="margin-top:6px">
           <input type="number" id="ctgc" min="0" step="${S.settings.cap.increment}"
@@ -14120,10 +14161,12 @@ function counterForm(){
     const gone = c.mustIncludeOriginal ? counterMissing(byId(S.trades, ct.tradeId), ct) : [];
     const note = c.mustIncludeOriginal
       ? (gone.length
-          ? 'Everything from the original trade has to be in your counter. Still missing: '+
+          ? 'Everything '+esc(teamName(tr[ct.side].teamId))+' was putting into the original trade has to be in your counter. Still missing: '+
             gone.map(esc).join(', ')+'.'
-          : 'Everything from the original trade is in \u2014 you can add to it, but not take from it.')
-      : 'Counters may ask for anything that side holds.';
+          : (counterStarts(tr)
+              ? 'The original trade is on the board, marked 🔒 \u2014 you can add to it, but not take from it.'
+              : 'The original goes through first, so ask for anything '+esc(teamName(tr[ct.side].teamId))+' will hold after it.'))
+      : (counterStarts(tr) ? 'The original trade is on the board \u2014 add to it, or take things off.' : 'Counters may ask for anything that side holds.');
     const outcome = c.outcome==='chain'
       ? ' If accepted, the original trade processes first and your counter goes through right behind it.'
       : ' If accepted, the original trade is voided and yours replaces it.';
@@ -14138,6 +14181,11 @@ ACT.ctAdd = (d)=>{
   $('#modalBox .mb').innerHTML = counterForm();
 };
 ACT.ctRm = (d)=>{
+  const tr0 = byId(S.trades, ui.tmp.ct.tradeId);
+  if(tr0 && counterLocks(tr0, ui.tmp.ct.side)[d.kind==='cash' ? 'cash' : d.id])
+    return toast('That is part of the original trade, so it stays in','bad');
+  if(d.kind==='cash' && d.side==='wants'){ ui.tmp.ct.wants.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
+  if(d.kind!=='cash' && d.side==='wants' && ui.tmp.ct.retain) delete ui.tmp.ct.retain[d.id];
   if(d.kind==='cash'){ ui.tmp.ct.gives.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
   const arr=ui.tmp.ct[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=counterForm(); };
 /* Everything the countered side put into the original trade. A counter has to
@@ -14150,17 +14198,17 @@ function originalSideAssets(tr, side){
 /* Anything from the original that a counter has left out. */
 function counterMissing(tr, ct){
   const c = S.settings.trades.counters || {};
-  if(!c.mustIncludeOriginal) return [];
+  if(!c.mustIncludeOriginal || !counterStarts(tr)) return [];
   const out = [];
-  /* Both sides of the original have to survive: what you are asking for must
-     include everything that side was already giving, and what you are putting
-     in must include everything the other side was already giving. */
+  /* What you ask for has to carry everything the team you are countering was
+     already putting in. What you send is yours to choose: the other team's side
+     of the original was never yours to give. (It used to demand that too, which
+     no counter could ever meet.) */
   const askedFrom = originalSideAssets(tr, ct.side);
-  const givenBy   = originalSideAssets(tr, ct.side==='a' ? 'b' : 'a');
   askedFrom.players.forEach(id=>{ if((ct.wants.players||[]).indexOf(id)<0) out.push(nameOfAsset(id)); });
   askedFrom.picks.forEach(id=>{   if((ct.wants.picks||[]).indexOf(id)<0)   out.push(nameOfAsset(id)); });
-  givenBy.players.forEach(id=>{   if((ct.gives.players||[]).indexOf(id)<0) out.push(nameOfAsset(id)); });
-  givenBy.picks.forEach(id=>{     if((ct.gives.picks||[]).indexOf(id)<0)   out.push(nameOfAsset(id)); });
+  const oc = +(tr[ct.side]||{}).cash || 0;
+  if(oc && (+ct.wants.cash||0) < oc) out.push(money(oc)+' in cap dollars');
   return out;
 }
 function nameOfAsset(id){
@@ -14180,7 +14228,12 @@ ACT.sendCounter = ()=>{
     const bad = [].concat(ct.wants.players, ct.wants.picks).some(id=> incoming.players.indexOf(id)>=0 || incoming.picks.indexOf(id)>=0);
     if(bad) return toast('That asset only arrives if the original trade goes through — switch counters to follow-on mode in Settings','bad');
   }
-  tr.counters.unshift({id:uid('c'), byTeamId:actingTeam(), side:ct.side, wants:deep(ct.wants), gives:deep(ct.gives), at:Date.now(), status:'pending'});
+  if(!(ct.gives.players||[]).length && !(ct.gives.picks||[]).length && !(+ct.gives.cash))
+    return toast('Add what you are sending for it','bad');
+  const keptRetain = {};
+  Object.keys(ct.retain||{}).forEach(pid=>{ if((ct.wants.players||[]).indexOf(pid)>=0) keptRetain[pid] = ct.retain[pid]; });
+  tr.counters.unshift({id:uid('c'), byTeamId:actingTeam(), side:ct.side, wants:deep(ct.wants), gives:deep(ct.gives),
+    retain:keptRetain, at:Date.now(), status:'pending'});
   tr.log.unshift({at:Date.now(), text:teamName(actingTeam())+' countered '+teamName(tr[ct.side].teamId)});
   notify('Counter filed', teamName(actingTeam())+' is trying to break into the '+teamName(tr.a.teamId)+'/'+teamName(tr.b.teamId)+' trade.','warn');
   closeModal(); save(); render(); toast('Counter filed','good');
@@ -14201,7 +14254,8 @@ ACT.acceptCounter = (d)=>{
     tr.status='replaced'; tr.log.unshift({at:Date.now(), text:'Voided — replaced by '+teamName(ct.byTeamId)+"'s counter"});
     const nt = {id:uid('tr'), type:'standard',
       a:{teamId:ct.byTeamId, players:ct.gives.players, picks:ct.gives.picks, cash:ct.gives.cash||0},
-      b:{teamId:tr[ct.side].teamId, players:ct.wants.players, picks:ct.wants.picks, cash:0},
+      b:{teamId:tr[ct.side].teamId, players:ct.wants.players, picks:ct.wants.picks, cash:+ct.wants.cash||0,
+         retain:deep(ct.retain||{})},
       status:'review', createdAt: tr.createdAt || Date.now(),
       /* When the trade it grew out of was accepted, kept as it was. */
       acceptedAt: tr.acceptedAt || Date.now(),
@@ -15208,7 +15262,8 @@ VIEWS.trades = function(){
         <label class="check"><input type="checkbox" data-set="settings.trades.counters.on" ${c.counters.on?'checked':''}>
           <span>Allow other teams to counter a trade during its review window</span></label>
         <label class="check"><input type="checkbox" data-set="settings.trades.counters.mustIncludeOriginal" ${c.counters.mustIncludeOriginal?'checked':''}>
-          <span>Counters must include everything from the original trade's side</span></label>
+          <span>Counters must include everything from the original trade's side
+            <span class="tiny dim">— the counter starts with it on the board, locked in, and you add to it</span></span></label>
         <label class="f"><span>Which side can be countered</span>
           <select data-set="settings.trades.counters.side">
             <option value="either"${c.counters.side==='either'?' selected':''}>Either side</option>
