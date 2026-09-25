@@ -149,6 +149,7 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
    behind the same strip. */
 #rail{padding-top:var(--sa-t)}
 #topbar .spacer{flex:1}
+#topbar .teampic.badge.sm{width:26px;height:26px}
 /* The bar could not shrink below what was in it, so on a 360px phone — most
    Androids, and an iPhone mini — the whole app scrolled sideways on every
    single screen. It may shrink now, and the cap figures give way first. */
@@ -339,7 +340,11 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 #modal{padding:calc(16px + var(--sa-t)) calc(16px + var(--sa-r))
        calc(16px + var(--sa-b)) calc(16px + var(--sa-l))}
 #modal.on{display:flex}
-#modal .box{background:var(--ink-2);border:1px solid var(--rule);border-radius:6px;max-width:760px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 30px 70px rgba(0,0,0,.6)}
+#modal .box{background:var(--ink-2);border:1px solid var(--rule);border-radius:6px;max-width:760px;width:100%;max-height:88vh;overflow:auto;overscroll-behavior:contain;box-shadow:0 30px 70px rgba(0,0,0,.6)}
+/* The dialog is sized from what you can see, less the padding it sits in. */
+@supports (height:100dvh){
+  #modal .box{max-height:calc(100dvh - 32px - var(--sa-t) - var(--sa-b))}
+}
 #modal .mh{position:sticky;top:0;background:var(--ink-2);display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--rule);z-index:1}
 #modal .mb{padding:16px}
 #modal .mf{position:sticky;bottom:0;background:var(--ink-2);display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--rule)}
@@ -716,7 +721,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 }
 @media (max-width:860px){
   #rail{display:none}
-  #view{padding:14px calc(13px + var(--sa-r)) 96px calc(13px + var(--sa-l))}
+  #view{padding:14px calc(13px + var(--sa-r)) calc(var(--tabbar-h, 56px) + 44px) calc(13px + var(--sa-l))}
   #topbar{
     padding:calc(9px + var(--sa-t)) calc(13px + var(--sa-r)) 9px calc(13px + var(--sa-l));
     gap:10px}
@@ -748,7 +753,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   #tabbar button .badge{position:absolute;top:3px;right:calc(50% - 22px);font-size:9.5px;padding:2px 5px}
   #sheet{position:fixed;inset:0;z-index:90;background:rgba(6,11,16,.7);align-items:flex-end}
   #sheet.on{display:flex}
-  #sheet .sb{background:var(--ink-2);width:100%;border-top:1px solid var(--rule);border-radius:12px 12px 0 0;padding:6px 0 calc(14px + var(--sa-b));max-height:76vh;overflow:auto}
+  #sheet .sb{background:var(--ink-2);width:100%;border-top:1px solid var(--rule);border-radius:12px 12px 0 0;padding:6px 0 calc(14px + var(--sa-b));max-height:76vh;overflow:auto;overscroll-behavior:contain}
   #sheet .grab{width:36px;height:4px;background:var(--rule);border-radius:2px;margin:8px auto 4px}
   /* A button keeps its words on one line, which is right on a desktop and
      wrong on a phone: one long label was enough to push every screen it
@@ -758,6 +763,9 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .capchip{padding:2px 8px}
   .capchip .v{font-size:13px}
   #modal .box{max-height:92vh}
+  @supports (height:100dvh){
+    #modal .box{max-height:calc(100dvh - 32px - var(--sa-t) - var(--sa-b))}
+  }
   #toasts{right:10px;left:10px;bottom:78px;max-width:none}
   th,td{padding:7px 8px;font-size:12.5px}
 }
@@ -771,7 +779,8 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
   .dmgrid.reading .dmback{display:inline-flex}
   /* Room for the thread now that it has the width to itself, and clear of the
      tab bar along the bottom. */
-  .dmgrid .dmscroll{max-height:calc(100vh - 340px);min-height:180px}
+  .dmgrid .dmscroll{max-height:calc(100vh - 340px);min-height:180px;overscroll-behavior:contain}
+  @supports (height:100dvh){ .dmgrid .dmscroll{max-height:calc(100dvh - 340px)} }
   .dmgrid .dmcompose{position:sticky;bottom:0;background:var(--ink-2);
     border-top:1px solid var(--rule);padding-bottom:calc(10px + var(--sa-b))}
   .dmgrid .dmcompose input{font-size:16px}  /* under 16px iOS zooms the page in */
@@ -804,7 +813,7 @@ th.sortable .sarr{font-style:normal;font-size:9px;margin-left:4px;opacity:.85}
 
 /* League chat */
 .chatpanel{display:flex;flex-direction:column;max-height:calc(100vh - 200px)}
-.chatscroll{display:flex;flex-direction:column;gap:8px;overflow-y:auto;max-height:52vh;padding:4px 2px}
+.chatscroll{display:flex;flex-direction:column;gap:8px;overflow-y:auto;overscroll-behavior:contain;max-height:52vh;padding:4px 2px}
 .chatrow{display:flex}
 .chatrow.me{justify-content:flex-end}
 .chatbub{max-width:76%;background:#16232F;border:1px solid #22384A;border-radius:12px;padding:8px 11px}
@@ -946,7 +955,44 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
    column — the name, the team, the year, whatever identifies the row — at the
    left, so you always know what you are looking at. Both are solid, and the
    heading sits on top of the first column where the two meet. */
-.scrollx{overflow:auto;max-height:72vh}
+/* ---- Reaching the bottom of a table ------------------------------------------
+   A table scrolls inside its own box so its headings can stay pinned. Two things
+   used to spoil the bottom of it on a phone:
+
+   The box was sized in vh. On an iPhone, 100vh is the screen with the browser's
+   toolbar tucked away — taller than what you can actually see while it is
+   showing — so a box put just under the top bar could run on behind the tab bar
+   and the toolbar, and its last rows were somewhere you could not get them.
+   It is now sized from the band you can really see: the dynamic viewport, less
+   the bar at the top and the bar at the bottom as they actually measure, less a
+   strip left over so there is always a piece of page to take hold of.
+
+   And a flick that reached the end of the table carried on into the page, which
+   dragged the table away from you just as you got there. Every box you scroll
+   inside now stops at its own end. */
+:root{ --topbar-h:61px; --tabbar-h:0px; --grab:56px; }
+.scrollx{overflow:auto;overscroll-behavior:contain;
+  max-height:calc(100vh - var(--topbar-h) - var(--tabbar-h) - var(--grab))}
+@supports (height:100dvh){
+  .scrollx{max-height:calc(100dvh - var(--topbar-h) - var(--tabbar-h) - var(--grab))}
+}
+/* A little room under the last row, so it never sits hard against the edge. */
+.scrollx::after{content:"";display:block;height:10px}
+/* Inside a dialog the dialog itself is what scrolls. A table in there with its
+   own height limit was a box inside a box: on a phone your swipe got caught by
+   the table and never reached the rest of the dialog, so a long list (the saved
+   copies) seemed to stop partway down. */
+#modal .scrollx{max-height:none;overscroll-behavior-y:auto}
+/* Saved copies, one row each, readable on a phone without sideways scrolling. */
+.bakrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--rule)}
+.bakrow:last-child{border-bottom:0}
+.bakrow .bakwhen{flex:1 1 auto;min-width:0}
+.bakrow .bakwhen b{font-weight:600}
+.bakrow .baknum{flex:0 0 auto;width:26px;text-align:right;color:var(--dim, #8a8f98);font-variant-numeric:tabular-nums}
+.bakrow .btn{flex:0 0 auto}
+.bakgroup{border:1px solid var(--rule);border-radius:6px;padding:2px 10px;margin:8px 0 14px}
+.bakgroup.newest{border-color:var(--acc, var(--rule))}
+.bakhead{margin:14px 0 2px;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
 .scrollx > table{border-collapse:separate;border-spacing:0}
 .scrollx > table > thead > tr > th{
   position:sticky;top:0;z-index:3;
@@ -970,7 +1016,6 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 .scrollx > table > tbody > tr > td:first-child,
 .scrollx > table > tfoot > tr > td:first-child{max-width:44vw}
 @media (max-width:520px){
-  .scrollx{max-height:66vh}
   .scrollx > table > thead > tr > th:first-child,
   .scrollx > table > tbody > tr > td:first-child,
   .scrollx > table > tfoot > tr > td:first-child{max-width:52vw}
@@ -1006,6 +1051,40 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
   .scrollx.freeze2 > table > thead > tr > th:nth-child(2),
   .scrollx.freeze2 > table > tbody > tr > td:nth-child(2){max-width:46vw}
 }
+/* ---- A team's own picture --------------------------------------------------
+   The picture is painted as a background rather than dropped in as an <img>, so
+   how it sits in its frame is three numbers — how big, and where — which is what
+   makes a crop something you can drag. A GIF keeps animating either way. */
+.teampic{background-repeat:no-repeat;background-color:var(--ink-3);border:1px solid var(--rule);
+  border-radius:var(--r);flex:0 0 auto}
+.teampic.badge{width:52px;height:52px;border-radius:10px}
+.teampic.badge.sm{width:30px;height:30px;border-radius:7px}
+.teampic.wide{width:100%;height:150px;border-radius:var(--r)}
+/* The crop frame: drag the picture about inside it. */
+.cropbox{position:relative;width:100%;max-width:340px;aspect-ratio:1/1;margin:0 auto;
+  border:1px solid var(--rule);border-radius:var(--r);overflow:hidden;cursor:grab;
+  background:var(--ink-3);touch-action:none;background-repeat:no-repeat}
+.cropbox.dragging{cursor:grabbing;border-color:var(--brass)}
+.cropbox.wide{aspect-ratio:16/7}
+.cropbox .cropgrid{position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(to right, transparent 33%, rgba(255,255,255,.14) 33%, rgba(255,255,255,.14) 33.4%, transparent 33.4%,
+                    transparent 66.6%, rgba(255,255,255,.14) 66.6%, rgba(255,255,255,.14) 67%, transparent 67%),
+    linear-gradient(to bottom, transparent 33%, rgba(255,255,255,.14) 33%, rgba(255,255,255,.14) 33.4%, transparent 33.4%,
+                    transparent 66.6%, rgba(255,255,255,.14) 66.6%, rgba(255,255,255,.14) 67%, transparent 67%)}
+/* ---- A player's face and his club's badge -------------------------------------- */
+.pface{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  border-radius:50%;overflow:hidden;background:var(--ink-3);border:1px solid var(--rule);vertical-align:middle}
+.pface img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 22%}
+.pface.def img{object-fit:contain;padding:3px;object-position:center}
+.pface .pinit{font:600 10px/1 var(--disp);letter-spacing:.04em;color:var(--dim);text-transform:uppercase}
+.pface img + .pinit{visibility:hidden}
+.plogo{display:inline-block;vertical-align:middle;object-fit:contain;flex:0 0 auto}
+.pname{display:flex;align-items:center;gap:8px;min-width:0}
+.pname > .pn{min-width:0}
+.clubtag{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+/* A long name shrinks rather than pushing the page about. */
+h1.fitname{line-height:1.08;word-break:break-word}
 /* A short table needs no cap — let it stand at its own height. */
 .scrollx.short{max-height:none}
 .thinfo{text-decoration:underline dotted;text-underline-offset:3px;cursor:help;padding:6px 0}
@@ -1033,7 +1112,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 #E4586F}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24k · every clock runs through the night';
+const APP_BUILD = '2026-09-24p · every saved copy in reach';
 
 /* ============================================================
    HOME LEAGUE
@@ -1642,7 +1721,9 @@ function defaultState(){
         /* Most years of NFL experience a player may have and still be taxi
            eligible. '' means no limit. */
         maxExp:3 },
-      ir:{ mode:'games', fixed:0 },
+      /* 'cutoff': all or nothing on games played. Under the threshold the whole
+         salary comes back; at it or past it, nothing does. */
+      ir:{ mode:'games', fixed:0, cutoffGames:4 },
       join:{ holdForCommish:true },
       rookie:{ on:true, handSet:false, rounds:4, top:25, decay:0.955, growthPct:2.5, baseSeason:season,
                roundYears:{1:4, 2:3, 3:3, 4:2}, structId:'ev', minSalary:1, overrides:{},
@@ -1939,10 +2020,21 @@ function irRelief(p, year){
              missed time gets more back than the calendar alone would give.
      weeks — the share of the season still to come, whoever has played what.
      fixed — the same figure every time, capped at what he actually costs. */
+/* The games-played line, for the all-or-nothing rule. */
+function irCutoff(){ return Math.max(1, Math.round(+((S.settings.ir||{}).cutoffGames) || 4)); }
 function irBasis(p){
   const y = S.league.season, weeks = seasonWeeks();
   const gross = fixInc(Math.max(0, grossHit(p,y) - retainedOn(p,y)));
   const mode = (S.settings.ir||{}).mode || 'games';
+  if(mode==='cutoff'){
+    /* All or nothing. Play the games and the money stays on your cap; go down
+       before you have played them and the whole lot comes back. */
+    const cut = irCutoff();
+    const played = clamp(gamesIn(p.id, y), 0, 30);
+    const saves = played < cut;
+    return {mode, gross, weeks, played, left:Math.max(0, weeks-played), pct: saves?1:0,
+            cut, saves, relief: saves ? gross : 0, capped:false};
+  }
   if(mode==='fixed'){
     const set = Math.max(0, +((S.settings.ir||{}).fixed)||0);
     return {mode, gross, weeks, played:null, left:null, pct:null,
@@ -1956,6 +2048,10 @@ function irBasis(p){
   return {mode, gross, weeks, played, left, pct, relief: fixInc(gross*pct), capped:false};
 }
 function irModeLine(b){
+  if(b.mode==='cutoff') return b.saves
+    ? 'he played '+b.played+' game'+(b.played===1?'':'s')+', under the '+b.cut+
+      ' that would have kept the money on your cap, so all of it comes back'
+    : 'he played '+b.played+' game'+(b.played===1?'':'s')+', '+b.cut+' or more, so none of it comes back';
   if(b.mode==='fixed') return 'A flat '+money(b.set)+' back on any season-ending injury'+
     (b.capped? ', trimmed to '+money(b.relief)+' because that is all he costs' : '');
   return b.mode==='weeks'
@@ -2358,20 +2454,22 @@ function deadPaidAt(teamId, pid){
    if you extended him in between. An extension is a fresh commitment, so it is
    charged, and only it: the years of the old deal have been settled once and are
    not settled twice. */
-function extensionsSince(c, cutAt){
+function extensionsSince(c){
   const list = (c && c.extensions) || [];
   if(!list.length) return [];
-  /* No time on the cut to compare against, so every extension counts — the
-     exemption only ever covers what was certainly already paid for. */
-  if(!cutAt) return list.slice();
-  return list.filter(e=> (+e.at || 0) > cutAt);
+  /* Being charged for him means the deal he was on was torn up — a cut takes the
+     contract away entirely. So the deal he is on now was signed after that cut,
+     and every extension on it is new money. Comparing timestamps was no help
+     here: a man can be cut and put back on a deal inside the same millisecond,
+     and then the extension looked older than the cut. */
+  return list.slice();
 }
 const NO_BILL = {saved:0, forward:0, thisYear:0, total:0, base:0, left:0,
                  backloaded:false, from:null, extYears:0, extOnly:true};
-function extCutBill(p, cutAt, atWeek){
+function extCutBill(p, atWeek){
   const c = p && p.contract;
   if(!c || !c.years) return NO_BILL;
-  const exts = extensionsSince(c, cutAt);
+  const exts = extensionsSince(c);
   if(!exts.length) return NO_BILL;
   const y = S.league.season;
   const rate = (+S.settings.cap.deadCapPct||0)/100;
@@ -2414,8 +2512,7 @@ function releasePlayer(pid, split){
   /* Already paid for him this season? Then only an extension signed since that
      cut is chargeable, and the rest of the deal is not charged again. */
   const paidBefore = deadPaidThisSeason(tm.id, pid);
-  const cutAt = paidBefore ? deadPaidAt(tm.id, pid) : 0;
-  const bill = paidBefore ? extCutBill(p, cutAt) : cutBill(p);
+  const bill = paidBefore ? extCutBill(p) : cutBill(p);
   const totalDead = fixInc(bill.total);
   const extOnly = paidBefore && totalDead > 0;
   const tail = extOnly ? ' \u2014 extension only' : '';
@@ -3174,9 +3271,15 @@ function renderShell(){
     '<br><span class="dim" style="font-size:10px">'+APP_BUILD+'</span>';
 
   const space = t ? capSpace(t.id, y) : 0;
+  /* The bar has the least room of anywhere, so a long name is shrunk hardest
+     here — and the badge, if there is one, sits in front of it. */
+  const barName = t ? t.name : '\u2014';
   $('#topbar').innerHTML =
-    '<div><div class="eyebrow">'+esc(NAV.find(n=>n.id===route).label)+'</div>'+
-    '<div style="font:600 15px/1.2 var(--body)">'+esc(t?t.name:'—')+'</div></div>'+
+    (t ? teamBadge(t, 'sm') : '')+
+    '<div style="min-width:0"><div class="eyebrow">'+esc(NAV.find(n=>n.id===route).label)+'</div>'+
+    '<div style="font-weight:600;line-height:1.2;font-family:var(--body);font-size:'+
+      nameSize(barName, 15)+'px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+
+      esc(barName)+'</div></div>'+
     '<div class="spacer"></div>'+
     (isQuietNow()
       ? (quietSkips()
@@ -3357,6 +3460,7 @@ function render(){
     if(el){ el.focus(); try{ el.setSelectionRange(ss,se); }catch(e){} }
   }
   freezeCols();
+  measureBars();
   putTabScroll(tabsWere);
   /* And put the chat back exactly where it was being read. */
   putChatScroll(chatWas);
@@ -3411,8 +3515,18 @@ function freezeCols(){
     if(w > 0) box.style.setProperty('--frz1', w+'px');
   });
 }
+/* The two bars, as they actually measure — a long team name, a badge or a
+   notch changes the top one, and the bottom one only exists on a phone. */
+function measureBars(){
+  const root = document.documentElement.style;
+  const tb = document.getElementById('topbar'), nb = document.getElementById('tabbar');
+  const th = tb ? Math.round(tb.getBoundingClientRect().height) : 0;
+  const nh = (nb && getComputedStyle(nb).display !== 'none') ? Math.round(nb.getBoundingClientRect().height) : 0;
+  if(th) root.setProperty('--topbar-h', th+'px');
+  root.setProperty('--tabbar-h', nh+'px');
+}
 /* A wider window can change what the number column needs. */
-addEventListener('resize', ()=>{ try{ freezeCols(); }catch(e){} });
+addEventListener('resize', ()=>{ try{ freezeCols(); measureBars(); }catch(e){} });
 /* Where somebody sits between making an account and being given a team. */
 function seatView(){
   const others = waitingMembers().filter(m=> m.user_id!==(Supa.user||{}).id);
@@ -4169,7 +4283,7 @@ VIEWS.dash = function(){
           const home = m.home===t.id;
           const opp = home ? m.away : m.home;
           const mine = fieldedTotal(t.id), theirs = fieldedTotal(opp);
-          const live = (S.live.games||[]).some(g=> g.status==='live') ||
+          const live = (!realLeague() && (S.live.games||[]).some(g=> g.status==='live')) ||
             Object.values(((S.live.gstate||{})[w])||{}).some(x=> x && x.state==='in');
           return '<div class="tiny">Week '+w+' '+(home?'at home to':'away at')+' <b>'+esc(teamName(opp))+'</b>'+
             (live || mine.got || theirs.got
@@ -4709,7 +4823,12 @@ function scoringTeamFor(p, week){
   return lockTeamFor(p.id, week) || (p.contract ? p.contract.teamId : null);
 }
 function lineupLockNote(){
-  const games = S.live.games || [];
+  /* The real games in a real league — the invented ones are always "pre", so
+     this used to say nothing had kicked off on a Sunday afternoon. */
+  const w = +S.live.week || 1;
+  const games = realLeague()
+    ? realCard(w).map(g=>{ const st = gameState(g.home, w); return {status: st && st.state!=='pre' ? 'on' : 'pre'}; })
+    : (S.live.games || []);
   const started = games.filter(g=> g.status!=='pre').length;
   if(!started) return '';
   const total = games.length;
@@ -4933,14 +5052,24 @@ async function pollSleeperStats(){
   }catch(e){ /* a missed poll is not worth interrupting anyone over */ }
   sleeperBusy = false;
 }
-/* Projections for the current week, fetched once per week automatically. */
+/* Projections for the current week. Fetched as soon as the week changes, and
+   again every six hours while it runs — Sleeper moves them as injuries and
+   depth charts come in during the week, and a Tuesday projection for a man
+   ruled out on Friday is no projection at all. About 600 KB from Sleeper
+   each time, never through the league server. */
+const PROJ_FRESH = 6*60*60*1000;
+let projTryAt = 0;
 async function autoProjections(){
   const week = S.live.week || 1;
-  if(lastProjWeek === week) return;
   const st = projStore();
-  if(st.week === week && st.byPlayer && Object.keys(st.byPlayer).length){ lastProjWeek = week; return; }
-  lastProjWeek = week;                       /* only one attempt per week */
-  try{ await ACT.projPull(); }catch(e){}
+  const have = st.week === week && st.season === S.league.season && st.byPlayer && Object.keys(st.byPlayer).length;
+  const stale = !have || (Date.now() - (+st.at||0)) > PROJ_FRESH;
+  if(!stale){ lastProjWeek = week; return; }
+  /* One try at a time, and not more than every ten minutes if Sleeper is not answering. */
+  if(Date.now() - projTryAt < 10*60000) return;
+  projTryAt = Date.now();
+  lastProjWeek = week;
+  try{ await ACT.projPull(true); }catch(e){}
 }
 async function pollEndpoint(){
   const u = statsUrl();
@@ -5445,6 +5574,392 @@ ACT.taunt = (d)=>{
   }
   save(); render();
 };
+/* ============================================================
+   A TEAM'S OWN NAME AND PICTURE, AND A PLAYER'S NICKNAME
+   ============================================================ */
+/* ---- A player's face, and his club's badge -------------------------------------
+   Both come straight from ESPN's own image server, which resizes a picture to
+   whatever size it is asked for — so a head drawn at thirty pixels is fetched
+   at about four kilobytes and a badge at under two, where the full-size ones run
+   to twenty. The browser keeps them after the first time, only the rows actually
+   on the screen fetch theirs, and none of it goes anywhere near the league
+   server. Where ESPN has no picture of a man, Sleeper's is tried, and failing
+   that his initials stand in. */
+const CLUB_CODE_FIX = {LVR:'lv', JAC:'jax', WSH:'was'};
+/* ESPN's picture names are the club letters in lower case, with a couple of
+   clubs that go by more than one set of letters folded together. (Named apart
+   from clubCode, which the schedule already uses and which keeps capitals.) */
+function espnClub(code){
+  const c = String(code||'').trim().toUpperCase();
+  return c ? (CLUB_CODE_FIX[c] || c).toLowerCase() : '';
+}
+/* Twice the drawn size, so it stays sharp on a phone's screen. */
+function clubLogoUrl(code, px){
+  const c = espnClub(code); if(!c) return '';
+  const n = Math.round((px||20)*2);
+  return 'https://a.espncdn.com/combiner/i?img=/i/teamlogos/nfl/500/'+c+'.png&w='+n+'&h='+n;
+}
+function faceUrls(p, px){
+  const n = Math.round((px||30)*2);
+  const out = [];
+  if(!p) return out;
+  if(String(p.pos||'').toUpperCase()==='DEF'){ const u = clubLogoUrl(p.nfl, px); if(u) out.push(u); return out; }
+  if(p.espnId && +p.espnId > 0)
+    out.push('https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/'+encodeURIComponent(p.espnId)+
+      '.png&w='+n+'&h='+Math.round(n*0.73)+'&scale=crop&cb=1');
+  if(p.sleeperId) out.push('https://sleepercdn.com/content/nfl/players/thumb/'+encodeURIComponent(p.sleeperId)+'.jpg');
+  return out;
+}
+function initialsOf(name){
+  const bits = String(name||'').replace(/\b(jr|sr|ii|iii|iv)\.?$/i,'').trim().split(/\s+/).filter(Boolean);
+  return ((bits[0]||'')[0]||'') + ((bits.length>1 ? bits[bits.length-1] : '')[0]||'');
+}
+/* When one picture will not load, try the next; when none will, the initials
+   underneath are simply left showing. */
+function faceFail(img){
+  try{
+    const rest = String(img.dataset.next||'').split('|').filter(Boolean);
+    if(rest.length){ img.dataset.next = rest.slice(1).join('|'); img.src = rest[0]; return; }
+    img.remove();
+  }catch(e){}
+}
+function playerFace(p, px){
+  px = px || 30;
+  const urls = faceUrls(p, px);
+  const def = String((p&&p.pos)||'').toUpperCase()==='DEF';
+  return '<span class="pface'+(def?' def':'')+'" style="width:'+px+'px;height:'+px+'px" aria-hidden="true">'+
+    (urls.length ? '<img src="'+esc(urls[0])+'" data-next="'+esc(urls.slice(1).join('|'))+
+      '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="faceFail(this)">' : '')+
+    '<span class="pinit">'+esc(initialsOf(p && p.name))+'</span></span>';
+}
+/* His club, as a badge with its letters beside it. Free agents have none. */
+function clubLogo(code, px){
+  const u = clubLogoUrl(code, px || 16); if(!u) return '';
+  return '<img class="plogo" src="'+esc(u)+'" width="'+(px||16)+'" height="'+(px||16)+
+    '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.remove()">';
+}
+function clubTag(code, px){
+  if(!code) return '';
+  return '<span class="clubtag dim tiny">'+clubLogo(code, px||14)+esc(String(code).toUpperCase())+'</span>';
+}
+/* ---- Nicknames --------------------------------------------------------------
+   What the league actually calls him, under his real name in brackets. Kept on
+   the player, so it follows him around the app and across a trade. */
+function nickOf(p){ return (p && typeof p.nick === 'string') ? p.nick.trim() : ''; }
+function nickLine(p, cls){
+  const n = nickOf(p);
+  if(!n) return '';
+  return '<div class="'+(cls||'tiny dim')+'">('+esc(n)+')</div>';
+}
+/* Beside a name on one line, where there is no room underneath. */
+function nickTag(p){
+  const n = nickOf(p);
+  return n ? ' <span class="dim">(' + esc(n) + ')</span>' : '';
+}
+ACT.nickSet = (d, el)=>{
+  const p = byId(S.players, d.id); if(!p) return;
+  const was = nickOf(p);
+  const now = String(el.value||'').slice(0, 28).trim();
+  if(now === was) return;
+  if(now) p.nick = now; else delete p.nick;
+  save();
+};
+ACT.nickClear = (d)=>{
+  const p = byId(S.players, d.id); if(!p) return;
+  delete p.nick; save(); ACT.playerCard({id:p.id}); render();
+};
+
+/* ---- A long team name -------------------------------------------------------
+   Anybody may call their team whatever they like, and the app will not break
+   over it: past a comfortable length the heading steps down a size at a time
+   rather than shoving the rest of the page about. */
+const NAME_EASY = 22;        /* fits at full size */
+const NAME_SHRINK_AT = 22;   /* past here the text is made smaller */
+const NAME_MAX = 64;
+function nameSize(name, big){
+  const n = String(name||'').length;
+  const top = big || 30;
+  if(n <= NAME_EASY) return top;
+  /* One point off for every two characters past the easy length, to a floor. */
+  return Math.max(Math.round(top*0.52), Math.round(top - (n - NAME_EASY)/2));
+}
+/* A heading that carries a team name. */
+function teamH1(name, big){
+  return '<h1 class="fitname" style="font-size:'+nameSize(name, big)+'px">'+esc(name||'')+'</h1>';
+}
+/* ---- The picture ------------------------------------------------------------
+   Held as {src, kind, fit, zoom, x, y}. 'fit' is how it sits when nobody has
+   touched it: cover fills the frame and crops what will not fit, contain shows
+   the whole thing. Once somebody crops it by hand, zoom and x/y take over. */
+function teamPic(t){ return (t && t.pic && t.pic.src) ? t.pic : null; }
+function picDefaults(){ return {fit:'cover', zoom:100, x:50, y:50}; }
+/* The three CSS values that put it where it belongs. */
+function picStyle(pic){
+  if(!pic || !pic.src) return '';
+  const q = Object.assign(picDefaults(), pic);
+  /* Single quotes inside, because this whole string goes into a style="..."
+     attribute — a double quote in here closed the attribute and threw the rest
+     of the rule away, so nothing was ever fitted or positioned. */
+  const url = String(q.src).replace(/\\/g,'%5C').replace(/'/g,'%27').replace(/"/g,'%22')
+    .replace(/[()\s]/g, c=> ({'(':'%28',')':'%29'}[c] || encodeURIComponent(c)));
+  const src = "background-image:url('"+url+"')";
+  if(q.fit === 'contain') return src+';background-size:contain;background-position:center';
+  if(q.fit === 'crop'){
+    const z = Math.max(100, Math.min(400, +q.zoom||100));
+    return src+';background-size:'+z+'% auto;background-position:'+
+      Math.max(0,Math.min(100,+q.x||50))+'% '+Math.max(0,Math.min(100,+q.y||50))+'%';
+  }
+  return src+';background-size:cover;background-position:center';
+}
+/* A team's badge wherever one belongs. Nothing at all when no picture is set —
+   the mascot is still the league's own artwork. */
+function teamBadge(t, cls){
+  const pic = teamPic(t);
+  if(!pic) return '';
+  return '<div class="teampic badge '+(cls||'')+'" style="'+picStyle(pic)+'" title="'+esc(t.name||'')+'"></div>';
+}
+/* ---- Your team: the name and the picture ----------------------------------- */
+function teamPicSize(src){ return Math.round(String(src||'').length/1024); }
+ACT.teamSetup = (d)=>{
+  const t = (d && d.id ? byId(S.teams, d.id) : myTeam()) || myTeam();
+  if(!t) return;
+  if(!canManage(t.id) && !isCommish()) return toast('That is somebody else\u2019s team','bad');
+  const v = ui.tmp.tset = ui.tmp.tset || {};
+  if(v.teamId !== t.id){
+    ui.tmp.tset = {teamId:t.id, name:t.name||'',
+      pic: t.pic ? Object.assign(picDefaults(), t.pic) : null, link:''};
+  }
+  teamSetupModal();
+};
+function teamSetupModal(){
+  const v = ui.tmp.tset, t = byId(S.teams, v.teamId); if(!t) return;
+  const pic = v.pic && v.pic.src ? v.pic : null;
+  const long = (v.name||'').length > NAME_SHRINK_AT;
+  const kb = pic ? teamPicSize(pic.src) : 0;
+  const isData = pic && /^data:/.test(String(pic.src));
+  modal('Your team', `
+    <label class="f"><span>Team name</span>
+      <input type="text" maxlength="${NAME_MAX}" data-oninput="tsetName" data-k="tsetname"
+        value="${esc(v.name||'')}" placeholder="Call it whatever you like"></label>
+    <div class="hint ${long?'':'dim'}">${long
+      ? '<b>Past this point the text will be shrunk to fit your name.</b> '+(v.name||'').length+
+        ' characters — the heading drops to '+nameSize(v.name)+'px so it still fits on a phone without '+
+        'pushing anything off the screen. Nothing is cut off; it just gets smaller the longer it runs.'
+      : 'Up to '+NAME_SHRINK_AT+' characters sits at full size. Past that the text is shrunk to fit — '+
+        'you will be told when you cross it.'}</div>
+    <div class="hr"></div>
+    <div class="flabel">Team picture</div>
+    <p class="muted tiny" style="margin:0 0 8px">Paste a link to a picture or a GIF and there is nothing to
+      resize — it is fitted for you. Or choose one off this device.</p>
+    <div class="row" style="gap:6px;margin-bottom:8px">
+      <input type="text" style="flex:1;min-width:200px" data-oninput="tsetLink" data-k="tsetlink"
+        value="${esc(v.link||'')}" placeholder="https://… .jpg .png .gif">
+      <button class="btn" data-a="tsetUseLink">Use it</button>
+    </div>
+    <div class="row" style="gap:6px;margin-bottom:10px">
+      <label class="btn sm">Choose a file
+        <input type="file" accept="image/*" data-a="tsetFile" style="display:none"></label>
+      ${pic?'<button class="btn sm ghost danger" data-a="tsetRemove">Take the picture off</button>':''}
+      <div class="spacer"></div>
+      ${pic&&isData?'<span class="tiny dim">'+kb+' KB saved with the league</span>':''}
+    </div>
+    ${v.err?'<div class="hint bad">'+esc(v.err)+'</div>':''}
+    ${pic ? `
+      <div class="flabel">How it sits</div>
+      <div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn sm ${pic.fit==='cover'?'pri':'ghost'}" data-a="tsetFit" data-f="cover">Auto fit</button>
+        <button class="btn sm ${pic.fit==='contain'?'pri':'ghost'}" data-a="tsetFit" data-f="contain">The whole picture</button>
+        <button class="btn sm ${pic.fit==='crop'?'pri':'ghost'}" data-a="tsetFit" data-f="crop">Crop it myself</button>
+      </div>
+      <div class="hint dim">${pic.fit==='cover'
+        ? 'Filled and centred. Anything that will not fit the frame is cropped off the edges — this is the one that always looks right.'
+        : pic.fit==='contain'
+          ? 'The original, whole, nothing cut off. A tall or wide picture will have space either side of it.'
+          : 'Drag the picture to choose what shows, and zoom in to take a smaller piece of it.'}</div>
+      <div class="cropbox" data-k="cropbox"
+        style="${picStyle(pic)}">${pic.fit==='crop'?'<div class="cropgrid"></div>':''}</div>
+      ${pic.fit==='crop'?`
+        <div class="grid g3" style="margin-top:10px">
+          <label class="f"><span>Zoom</span>
+            <input type="range" min="100" max="400" step="5" value="${Math.round(pic.zoom||100)}"
+              data-oninput="tsetZoom" data-norender></label>
+          <label class="f"><span>Across</span>
+            <input type="range" min="0" max="100" step="1" value="${Math.round(pic.x||50)}"
+              data-oninput="tsetX" data-norender></label>
+          <label class="f"><span>Up and down</span>
+            <input type="range" min="0" max="100" step="1" value="${Math.round(pic.y||50)}"
+              data-oninput="tsetY" data-norender></label>
+        </div>
+        <div class="row" style="gap:6px"><button class="btn sm ghost" data-a="tsetCentre">Back to the middle</button></div>`:''}
+      <div class="flabel" style="margin-top:12px">As it will look</div>
+      <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+        <div class="teampic badge" style="${picStyle(pic)}"></div>
+        <div class="teampic badge sm" style="${picStyle(pic)}"></div>
+        <div style="flex:1;min-width:180px"><div class="teampic wide" style="${picStyle(pic)}"></div></div>
+      </div>
+    ` : '<div class="hint">No picture yet. Your mascot is shown instead, which is the league\u2019s own artwork.</div>'}
+    <div class="hr"></div>
+    <div class="hint">A pasted link costs the league nothing \u2014 it is a few hundred characters, and the
+      picture stays wherever it lives. A file off this device is kept <i>inside</i> the league, which is sent
+      to the server every time anybody saves, so stills are shrunk to about ${Math.round(PIC_MAX_BYTES/1024)} KB
+      on the way in and a GIF has to be under ${Math.round(GIF_MAX_BYTES/1024)} KB to begin with.
+      ${(()=>{ const all = picBytesAll();
+        return all ? 'The league is carrying '+Math.round(all/1024)+' KB of pictures at the moment.' : ''; })()}</div>`,
+    '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    '<button class="btn pri" data-a="tsetSave">Save</button>');
+}
+ACT.tsetName = (d, el)=>{
+  const v = ui.tmp.tset; if(!v) return;
+  const was = (v.name||'').length > NAME_SHRINK_AT;
+  v.name = String(el.value||'').slice(0, NAME_MAX);
+  /* Only redraw when the warning itself changes, so typing stays smooth. */
+  if(((v.name||'').length > NAME_SHRINK_AT) !== was) teamSetupModal();
+};
+ACT.tsetLink = (d, el)=>{ const v = ui.tmp.tset; if(v) v.link = String(el.value||'').trim(); };
+ACT.tsetUseLink = ()=>{
+  const v = ui.tmp.tset; if(!v) return;
+  const u = String(v.link||'').trim();
+  if(!/^https?:\/\//i.test(u)){ v.err = 'Paste a link that starts with http.'; return teamSetupModal(); }
+  v.err = null;
+  v.pic = Object.assign(picDefaults(), {src:u, kind: /\.gif(\?|$)/i.test(u) ? 'gif' : 'image'});
+  v.link = '';
+  teamSetupModal();
+};
+ACT.tsetFit = (d)=>{
+  const v = ui.tmp.tset; if(!v || !v.pic) return;
+  v.pic.fit = d.f;
+  if(d.f === 'crop' && !(+v.pic.zoom > 100)) v.pic.zoom = 130;
+  teamSetupModal();
+};
+ACT.tsetCentre = ()=>{ const v = ui.tmp.tset; if(!v||!v.pic) return; v.pic.x = 50; v.pic.y = 50; teamSetupModal(); };
+ACT.tsetZoom = (d, el)=>{ const v=ui.tmp.tset; if(!v||!v.pic) return; v.pic.zoom = +el.value||100; paintCrop(); };
+ACT.tsetX = (d, el)=>{ const v=ui.tmp.tset; if(!v||!v.pic) return; v.pic.x = +el.value||0; paintCrop(); };
+ACT.tsetY = (d, el)=>{ const v=ui.tmp.tset; if(!v||!v.pic) return; v.pic.y = +el.value||0; paintCrop(); };
+/* Repaint the frame and the previews without rebuilding the dialog, so a slider
+   or a drag stays under your finger. */
+function paintCrop(){
+  const v = ui.tmp.tset; if(!v || !v.pic) return;
+  const css = picStyle(v.pic);
+  const box = $('#modalBox .cropbox'); if(box) box.setAttribute('style', css);
+  $$('#modalBox .teampic').forEach(el=> el.setAttribute('style', css));
+}
+/* Dragging the picture about inside the frame. A press, not a click, so it has
+   its own listener rather than going through the usual dispatcher. */
+document.addEventListener('pointerdown', (e)=>{
+  const box = e.target && e.target.closest && e.target.closest('.cropbox');
+  if(box) startCropDrag(box, e);
+});
+function startCropDrag(el, ev){
+  const v = ui.tmp.tset; if(!v || !v.pic || v.pic.fit !== 'crop') return;
+  const box = el;
+  const r = box.getBoundingClientRect();
+  const start = {x:(ev&&ev.clientX)||0, y:(ev&&ev.clientY)||0, px:+v.pic.x||50, py:+v.pic.y||50};
+  /* A step across the frame moves the picture by the part of it that hangs over
+     the edge, which is what makes the drag feel one-to-one. */
+  const over = Math.max(1, (+v.pic.zoom||100) - 100);
+  box.classList.add('dragging');
+  const move = (e)=>{
+    const dx = ((e.clientX - start.x) / Math.max(1, r.width)) * 100;
+    const dy = ((e.clientY - start.y) / Math.max(1, r.height)) * 100;
+    v.pic.x = Math.max(0, Math.min(100, start.px - dx * (100/over)));
+    v.pic.y = Math.max(0, Math.min(100, start.py - dy * (100/over)));
+    paintCrop();
+    if(e.preventDefault) e.preventDefault();
+  };
+  const up = ()=>{
+    box.classList.remove('dragging');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    teamSetupModal();
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+/* ---- A picture off this device ----------------------------------------------
+   Stored inside the league, so a still picture is shrunk to something sensible
+   on the way in. A GIF cannot be shrunk without losing the animation, so it is
+   kept exactly as it is and simply has to be small enough. */
+/* A picture off the device rides inside the league, and the league is sent to
+   the server every time anything is saved — so a megabyte of team pictures is a
+   megabyte on every save, for everybody, forever. Stills are therefore shrunk
+   hard, a GIF that cannot be shrunk has to be small to begin with, and a pasted
+   link is always the better answer: it is a few hundred characters. */
+const PIC_MAX_SIDE = 512;
+const PIC_MAX_BYTES = 92000;         /* about 90 KB of stored characters */
+const GIF_MAX_BYTES = 200000;        /* a GIF cannot be shrunk without killing it */
+/* What the league is carrying in pictures all told. */
+function picBytesAll(){
+  return (S.teams||[]).reduce((n,t)=>
+    n + (t.pic && /^data:/.test(String(t.pic.src||'')) ? String(t.pic.src).length : 0), 0);
+}
+ACT.tsetFile = (d, el)=>{
+  const v = ui.tmp.tset; if(!v) return;
+  const f = el && el.files && el.files[0]; if(!f) return;
+  el.value = '';
+  if(!/^image\//.test(f.type||'')){ v.err = 'Pick a picture or a GIF.'; return teamSetupModal(); }
+  const isGif = /gif/i.test(f.type||'') || /\.gif$/i.test(f.name||'');
+  const rd = new FileReader();
+  rd.onerror = ()=>{ v.err = 'That file could not be read.'; teamSetupModal(); };
+  rd.onload = ()=>{
+    const raw = String(rd.result||'');
+    if(isGif){
+      if(raw.length > GIF_MAX_BYTES){
+        v.err = 'That GIF is '+Math.round(raw.length/1024)+' KB. A GIF cannot be made smaller without '+
+          'killing the animation, and anything over '+Math.round(GIF_MAX_BYTES/1024)+' KB is too much to '+
+          'carry inside the league — it would be sent to the server on every save. Put it on the web '+
+          'anywhere and paste the link instead: that costs nothing at all.';
+        return teamSetupModal();
+      }
+      v.err = null;
+      v.pic = Object.assign(picDefaults(), {src:raw, kind:'gif'});
+      return teamSetupModal();
+    }
+    /* A still picture: draw it smaller and keep that. */
+    const img = new Image();
+    img.onerror = ()=>{ v.err = 'That picture could not be opened.'; teamSetupModal(); };
+    img.onload = ()=>{
+      try{
+        const scale = Math.min(1, PIC_MAX_SIDE / Math.max(img.width||1, img.height||1));
+        const w = Math.max(1, Math.round((img.width||1)*scale));
+        const h = Math.max(1, Math.round((img.height||1)*scale));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        cv.getContext('2d').drawImage(img, 0, 0, w, h);
+        /* Step the quality down until it fits, rather than guessing once. */
+        let out = '';
+        for(const q of [0.82, 0.7, 0.58, 0.46, 0.34]){
+          out = cv.toDataURL('image/jpeg', q);
+          if(out.length <= PIC_MAX_BYTES) break;
+        }
+        v.err = out.length > PIC_MAX_BYTES
+          ? 'Even shrunk this is '+Math.round(out.length/1024)+' KB. It will work, but a pasted link '+
+            'costs the league nothing at all.'
+          : null;
+        v.pic = Object.assign(picDefaults(), {src:out, kind:'image'});
+      }catch(e){
+        v.err = 'That picture could not be shrunk here, so it is kept as it is.';
+        v.pic = Object.assign(picDefaults(), {src:raw, kind:'image'});
+      }
+      teamSetupModal();
+    };
+    img.src = raw;
+  };
+  rd.readAsDataURL(f);
+};
+ACT.tsetRemove = ()=>{ const v = ui.tmp.tset; if(!v) return; v.pic = null; v.err = null; teamSetupModal(); };
+ACT.tsetSave = ()=>{
+  const v = ui.tmp.tset, t = byId(S.teams, v.teamId); if(!t) return;
+  const name = String(v.name||'').trim();
+  if(!name) return toast('A team needs a name','bad');
+  const was = t.name;
+  t.name = name;
+  if(v.pic && v.pic.src) t.pic = Object.assign(picDefaults(), v.pic);
+  else delete t.pic;
+  if(was !== name) logIt('“'+was+'” is now “'+name+'”', {type:'admin', teams:[t.id]});
+  ui.tmp.tset = null;
+  closeModal(); save(); render();
+  toast('Saved','good');
+};
 ACT.pickMascot = ()=>{
   const t = myTeam(); if(!t) return;
   t.kit = t.kit || {};
@@ -5531,7 +6046,9 @@ VIEWS.live = function(){
   /* What each side actually has starting — the saved lineup, or the best one
      if nobody set it. lineupFor() already resolves that. */
   const A = lineupFor(meId), B = oppId ? lineupFor(oppId) : null;
-  const live = S.live.games.filter(g=>g.status==='live').length;
+  const live = realLeague()
+    ? realCard(+S.live.week||1).filter(g=>{ const st = gameState(g.home); return st && st.state==='in'; }).length
+    : S.live.games.filter(g=>g.status==='live').length;
 
   const lineupRows = A.slots.map((s,i)=>{
     const o = B ? B.slots[i] : null;
@@ -5540,8 +6057,9 @@ VIEWS.live = function(){
     const onAir = (s.p && gameLive(s.p.nfl)) || (o && o.p && gameLive(o.p.nfl));
     const rz = (s.p && inRedZone(s.p.nfl)) || (o && o.p && inRedZone(o.p.nfl));
     return `<tr class="${rz?'rzrow':onAir?'liverow':''}">
-      <td style="width:38%">${s.p?`<div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>
-        ${injuryTag(s.p)} ${matchupChip(s.p)} ${wxChip(s.p)}</div>${statLine(s.p)}${swapLine(meId, s.p)}${pendingSwapLine(meId, s.p)}`:'<span class="dim">empty</span>'}</td>
+      <td style="width:38%">${s.p?`<div class="pname" style="align-items:flex-start">${playerFace(s.p, 30)}<div class="pn">
+        <div style="font-weight:500"><a href="#" data-a="playerCard" data-id="${s.p.id}" style="color:inherit">${esc(s.p.name)}</a>${nickTag(s.p)}
+        ${clubLogo(s.p.nfl, 14)} ${injuryTag(s.p)} ${matchupChip(s.p)} ${wxChip(s.p)}</div>${statLine(s.p)}${swapLine(meId, s.p)}${pendingSwapLine(meId, s.p)}</div></div>`:'<span class="dim">empty</span>'}</td>
       <td class="right num" style="width:10%">${s.p
         ? '<a href="#" data-a="scoreCard" data-id="'+s.p.id+'" data-w="'+(+S.live.week||1)+
           '" class="scorelink" title="how he scored it">'+s.pts.toFixed(2)+'</a>'
@@ -5715,6 +6233,11 @@ VIEWS.live = function(){
                                        (g.clockText? ' '+esc(g.clockText) : '')+
                                        ' '+ballTag({nfl:g.home})+ballTag({nfl:g.away}))
                 : kickoffLabel(g.home) || 'Kickoff pending'}</td></tr>`).join('');
+            if(realLeague()){
+              keepCardLoaded();
+              return '<tr><td colspan="3" class="dim tiny" style="padding:14px 8px">Fetching week '+
+                (+S.live.week||1)+'\u2019s games\u2026</td></tr>';
+            }
             return (S.live.games||[]).map(g=>`<tr><td class="num">${esc(g.away)} @ ${esc(g.home)}</td>
               <td class="right num">${g.as}\u2013${g.hs}</td>
               <td class="right tiny ${g.status==='live'?'bad':'dim'}">${g.status==='final'?'Final':g.status==='pre'?'Kickoff pending':'Q'+g.q+' '+Math.floor(Math.max(0,g.clock)/60)+':'+String(Math.floor(Math.max(0,g.clock)%60)).padStart(2,'0')}</td></tr>`).join('')
@@ -6243,6 +6766,15 @@ function autoCloseTick(){
      come down from Sleeper by two in the morning, the week was written off and
      never closed at all — which is how a week ends up being closed by hand. */
   if(!anyPoints) return 0;
+  /* Never ahead of the NFL: if any of this week's real games is still to finish,
+     wait — and fetch the card again so the next look sees the final whistles. */
+  if(realLeague() && realCard(w).length && !nflWeekDone(w)){
+    if(Date.now() - (ui.tmp.closeCardAt||0) > 5*60000){
+      ui.tmp.closeCardAt = Date.now();
+      pullKickoffs(w).then(()=>{}, ()=>{});
+    }
+    return 0;
+  }
   S.settings.live.lastAutoClose = due;
   const closed = w;
   doCloseWeek(true);
@@ -6251,7 +6783,27 @@ function autoCloseTick(){
     'Closed on its own, as the league is set to. Week '+(closed+1)+' is under way.', 'info');
   return 1;
 }
-ACT.closeWeek = ()=>{ doCloseWeek(false); };
+ACT.closeWeek = ()=>{
+  /* Closing a week the NFL is still playing would put the league ahead of it,
+     and everything read off "this week" would be for a week not yet played. */
+  const w = +S.live.week || 1, nfl = realNflWeek();
+  if(realLeague() && nfl != null && w >= nfl && !nflWeekDone(w)){
+    const left = realCard(w).filter(g=>{ const st = gameState(g.home, w); return !(st && (st.done || st.state==='post')); });
+    return modal('Week '+w+' is still being played',
+      '<p style="margin-top:0">The NFL is on week '+nfl+(left.length
+        ? ', and '+left.length+' of its games '+(left.length===1?'has':'have')+' not finished:'
+        : '.')+'</p>'+
+      (left.length ? '<div class="tiny dim" style="margin-bottom:10px">'+
+        left.slice(0,8).map(g=> esc(g.away)+' @ '+esc(g.home)+' \u2014 '+esc(gameWhen(g.home, w)||'to come')).join('<br>')+
+        (left.length>8?'<br>and '+(left.length-8)+' more':'')+'</div>' : '')+
+      '<p class="muted tiny">The league moves on to week '+(w+1)+' by itself the moment the NFL does, with every '+
+      'result taken from Sleeper, so there is nothing you need to do.</p>',
+      '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
+      '<button class="btn danger" data-a="closeWeekForce">Close it anyway</button>');
+  }
+  doCloseWeek(false);
+};
+ACT.closeWeekForce = ()=>{ closeModal(); doCloseWeek(false); };
 function doCloseWeek(quiet){
   /* Work out the loser of each matchup first, so the brawl can lay that mascot
      out on the floor until the next kickoff. */
@@ -6340,8 +6892,11 @@ VIEWS.teams = function(){
   return `
   <div class="section">
     <header>
-      <div><div class="eyebrow">${esc(t.owner||'Owner')} · ${roster.length} under contract${
-        mine ? '' : ' · <span class="warn">looking only</span>'}</div><h1>${esc(t.name)}</h1></div>
+      ${teamBadge(t)}
+      <div style="min-width:0"><div class="eyebrow">${esc(t.owner||'Owner')} · ${roster.length} under contract${
+        mine ? '' : ' · <span class="warn">looking only</span>'}</div>${teamH1(t.name)}</div>
+      ${(canManage(tid)||isCommish()) ? '<button class="btn sm ghost" data-a="teamSetup" data-id="'+tid+
+        '" title="name and picture">Name &amp; picture</button>' : ''}
       <div class="spacer"></div>
       ${(!canManage(tid) && tid !== mySeatId()) ? '<span class="pill" title="'+
         (isCommish()
@@ -6477,8 +7032,10 @@ VIEWS.teams = function(){
         {key:'name',dir:1}).map(p=>{
         const c=p.contract, st=structById(c.structId);
         return `<tr>
-          <td><a href="#" data-a="playerCard" data-id="${p.id}" style="font-weight:500;color:inherit">${esc(p.name)}</a>
-            ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${pendingTag(p)} ${tagTag(p)} ${orphanTag(p)} ${redshirtTag(p)} <span class="dim tiny">${esc(p.nfl)}</span></td>
+          <td><div class="pname">${playerFace(p, 32)}<div class="pn">
+            <a href="#" data-a="playerCard" data-id="${p.id}" style="font-weight:500;color:inherit">${esc(p.name)}</a>
+            ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${pendingTag(p)} ${tagTag(p)} ${orphanTag(p)} ${redshirtTag(p)} ${clubTag(p.nfl)}
+            ${nickLine(p)}</div></div></td>
           <td>${posTag(p.pos)}</td><td class="hide-xs num">${p.age||'—'}</td>
           <td class="tiny">${sparkFor(c.structId,c.years)} <span class="muted">${esc(st.name.replace(' — ',' '))}</span></td>
           <td class="right num">${yearsLeft(c)}</td>
@@ -6700,7 +7257,10 @@ VIEWS.teams = function(){
               ? '<span class="pill">out until '+(S.league.season+1)+'</span>'+(isCommish()?' <button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="active">Override</button>':'')
               : (mine ? '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>' : '<span class="tiny dim">—</span>')), 'sqI')}
           </tbody></table></div>
-          <div class="pb"><div class="hint">A plain IR spot frees a roster place but the salary still counts. Season-ending
+          <div class="pb"><div class="hint">${(S.settings.ir||{}).mode==='cutoff'
+            ? 'This league gives back all of a man\u2019s salary or none of it: under '+irCutoff()+
+              ' games played, all of it; at '+irCutoff()+' or more, none. '
+            : ''}A plain IR spot frees a roster place but the salary still counts. Season-ending
             gives back the share of the year he will not play — right now that would be ${pct(weeksLeft()/seasonWeeks()*100)}
             with ${weeksLeft()} of ${seasonWeeks()} weeks left.</div></div></div>
 
@@ -6874,8 +7434,9 @@ VIEWS.teams = function(){
           ppg:p=>{ const k=lastKnownPPG(p); return k? k.ppg : -1; },
           last:p=>p.contract.startYear + p.contract.years - 1
         }, {key:'ppg',dir:-1}).map(p=>`<tr>
-          <td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
-            ${injuryTag(p)} ${slotTag(p)}</td>
+          <td><div class="pname">${playerFace(p, 28)}<div class="pn">
+            <a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
+            ${injuryTag(p)} ${slotTag(p)} ${clubTag(p.nfl)}${nickLine(p)}</div></div></td>
           <td>${posTag(p.pos)}</td>
           <td class="right num">${p.age? (+p.age + (yr - S.league.season)) : '—'}</td>
           <td class="right num">${(()=>{
@@ -7318,7 +7879,8 @@ VIEWS.teams = function(){
           const eff = liveEff(t);
           return `<tr class="${t.id===tid?'me':''}">
             <td class="num">${seed?'<span class="pill ok">'+seed+'</span>':'<span class="dim">'+(i+1)+'</span>'}</td>
-            <td><b style="font-weight:500">${esc(t.name)}</b>${seed&&seed<=P.byes?' <span class="tiny good">bye</span>':''}
+            <td><div class="row" style="gap:7px;align-items:center;flex-wrap:nowrap">${teamBadge(t,'sm')}
+              <b style="font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</b>${seed&&seed<=P.byes?' <span class="tiny good">bye</span>':''}</div>
               ${commishLabel(t.id)}
               ${phantomWins(t)?'<span class="pill warn" title="commissioner win — draft order only">+'+phantomWins(t)+' phantom</span>':''}
               ${t._why?'<div class="tiny dim">tie broken on '+esc(t._why)+'</div>':''}</td>
@@ -7513,8 +8075,9 @@ function faRows(list){
     if(ba === 2) return 0;
     return ((trendFor(b)||{}).count||0) - ((trendFor(a)||{}).count||0);
   }).slice(0, 60);      /* and only now take the first sixty */
-  return rows.map(p=>`<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
-    ${trendTag(p)} ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}</td><td>${posTag(p.pos)}</td><td class="hide-xs num">${esc(p.nfl||'')}</td>
+  return rows.map(p=>`<tr><td><div class="pname">${playerFace(p, 28)}<div class="pn">
+    <a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
+    ${trendTag(p)} ${injuryTag(p)} ${waiverTag(p)} ${orphanTag(p)}${nickLine(p)}</div></div></td><td>${posTag(p.pos)}</td><td class="hide-xs">${clubTag(p.nfl)}</td>
     <td class="right num">${p.age||'—'}</td>
     <td class="right num dim">${(()=>{ const v=projFor(p, faWeek()); return v==null?'—':v.toFixed(1); })()}</td>
     <td class="right num">${(()=>{ const v=weekPoints(p, faWeek());
@@ -8091,6 +8654,7 @@ function lineupForm(teamId, week){
         return `<div style="border-bottom:1px solid var(--line);padding:6px 0">
           <div class="row" style="gap:8px">
           <span class="tiny dim" style="width:56px">${esc(x.slot)}</span>
+          ${x.p ? playerFace(x.p, 28) : '<span class="pface" style="width:28px;height:28px"></span>'}
           <select data-oninput="luSet" data-team="${teamId}" data-w="${week}" data-i="${i}" ${heldLocked?'disabled':''} style="flex:1;min-width:150px">
             <option value="">— empty —</option>
             ${opts}
@@ -8354,16 +8918,31 @@ ACT.seasonIR = (d)=>{
   if(!p || !p.contract) return;
   const y = S.league.season, b = irBasis(p);
   modal('Season-ending injury — '+p.name, `
-    <p>${esc(p.name)} is done for ${y}. ${b.mode==='fixed'
-      ? 'This league hands back a set figure whenever that happens.'
-      : 'This league hands back the share of the year he will not play — '+esc(irModeLine(b))+', so <b>'+pct(b.pct*100)+'</b> comes off.'}</p>
+    ${b.mode==='cutoff'
+      ? '<div class="assetbox" style="margin-bottom:10px;border-color:'+(b.saves?'#2F5B3A':'#5C3227')+'">'+
+        '<b class="'+(b.saves?'good':'bad')+'">'+(b.saves
+          ? 'All of it comes back \u2014 '+money(b.gross)+'.'
+          : 'This saves you nothing.')+'</b>'+
+        '<div class="tiny" style="margin-top:4px">He has played <b>'+b.played+'</b> game'+
+        (b.played===1?'':'s')+' this season. '+(b.saves
+          ? 'The line is '+b.cut+', and under it the whole salary comes off your cap.'
+          : 'The line is '+b.cut+' games: at it or past it the whole salary stays on your cap. The IR spot '+
+            'still frees a roster place, and that is all you are getting.')+'</div></div>'
+      : ''}
+    <p>${esc(p.name)} is done for ${y}. ${b.mode==='cutoff'
+      ? 'This league gives back all of a man\u2019s salary or none of it, on the games he played.'
+      : b.mode==='fixed'
+        ? 'This league hands back a set figure whenever that happens.'
+        : 'This league hands back the share of the year he will not play — '+esc(irModeLine(b))+', so <b>'+pct(b.pct*100)+'</b> comes off.'}</p>
     <div class="kv" style="margin:12px 0">
       <dt>His ${y} salary</dt><dd>${money(b.gross)}</dd>
-      ${b.mode==='fixed'
-        ? '<dt>Set relief</dt><dd>'+money(b.set)+(b.capped?' <span class="tiny dim">more than he costs</span>':'')+'</dd>'
-        : (b.mode==='weeks'
-            ? '<dt>Weeks remaining</dt><dd>'+b.left+' of '+b.weeks+'</dd>'
-            : '<dt>Games played</dt><dd>'+b.played+' of '+b.weeks+'</dd>')}
+      ${b.mode==='cutoff'
+        ? '<dt>Games played</dt><dd>'+b.played+' <span class="tiny dim">the line is '+b.cut+'</span></dd>'
+        : b.mode==='fixed'
+          ? '<dt>Set relief</dt><dd>'+money(b.set)+(b.capped?' <span class="tiny dim">more than he costs</span>':'')+'</dd>'
+          : (b.mode==='weeks'
+              ? '<dt>Weeks remaining</dt><dd>'+b.left+' of '+b.weeks+'</dd>'
+              : '<dt>Games played</dt><dd>'+b.played+' of '+b.weeks+'</dd>')}
       <dt>Relief</dt><dd class="good">${money(b.relief)}</dd>
       <dt>Still on your books</dt><dd>${money(fixInc(b.gross-b.relief))}</dd>
     </div>
@@ -8372,7 +8951,10 @@ ACT.seasonIR = (d)=>{
       : ''}
     <p class="muted tiny">He holds an IR spot and cannot be activated again until ${y+1}. Later years of the deal are untouched.</p>`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
-    '<button class="btn pri" data-a="seasonIRGo" data-id="'+p.id+'">Put him on season-ending IR</button>');
+    '<button class="btn pri" data-a="seasonIRGo" data-id="'+p.id+'">'+
+    (b.mode==='cutoff' && !b.saves
+      ? 'Put him on IR anyway \u2014 no saving'
+      : 'Put him on season-ending IR')+'</button>');
 };
 ACT.seasonIRGo = (d)=>{
   const p = byId(S.players,d.id), tid = p.contract.teamId, y = S.league.season;
@@ -8382,10 +8964,13 @@ ACT.seasonIRGo = (d)=>{
   p.ir = {seasonEnding:true, year:y, week:S.live.week||1, mode:b.mode,
           played:b.played, weeksLeft:b.left, gamesTotal:b.weeks,
           pct: b.pct==null ? null : Math.round(b.pct*1000)/10, relief:b.relief};
+  if(b.mode==='cutoff'){ p.ir.cut = b.cut; p.ir.saves = !!b.saves; }
   logIt(teamName(tid)+' put '+p.name+' on season-ending IR — '+money(p.ir.relief)+' back ('+
-    (b.mode==='fixed' ? 'the set figure' : b.mode==='weeks'
-      ? b.left+' of '+b.weeks+' weeks left'
-      : 'played '+b.played+' of '+b.weeks+' games')+')',
+    (b.mode==='cutoff'
+      ? 'played '+b.played+', the line is '+b.cut+', so '+(b.saves?'all of it comes back':'nothing comes back')
+      : b.mode==='fixed' ? 'the set figure' : b.mode==='weeks'
+        ? b.left+' of '+b.weeks+' weeks left'
+        : 'played '+b.played+' of '+b.weeks+' games')+')',
     {type:'admin', teams:[tid], players:[p.id]});
   notify('Season-ending IR', p.name+' is out for the year. '+teamName(tid)+' gets '+money(p.ir.relief)+' back.','warn');
   closeModal(); save(); render(); toast('Relief applied','good');
@@ -8401,8 +8986,7 @@ ACT.release = (d)=>{
   /* The same choice the release itself makes: the whole deal, or — where he has
      already been paid for this season — an extension signed since that cut. */
   const paidAlready = !!(p.contract && deadPaidThisSeason(p.contract.teamId, p.id));
-  const cutAt = paidAlready ? deadPaidAt(p.contract.teamId, p.id) : 0;
-  const bill = paidAlready ? extCutBill(p, cutAt) : cutBill(p);
+  const bill = paidAlready ? extCutBill(p) : cutBill(p);
   const thisYr = p.contract ? fixInc(grossHit(p, y)) : 0;
   const laterYrs = fixInc(Math.max(0, gross - thisYr));
   const dead = fixInc(bill.total);
@@ -8926,8 +9510,9 @@ function projSource(p, week){
   }
   return projFromPosition(p)!=null ? 'a rough figure for his position' : null;
 }
-ACT.projPull = async ()=>{
-  ui.tmp.projBusy = true; ui.tmp.projErr = null; render();
+ACT.projPull = async (quiet)=>{
+  quiet = quiet === true;
+  ui.tmp.projBusy = true; ui.tmp.projErr = null; if(!quiet) render();
   const season = S.league.season, week = S.live.week || 1;
   const tries = [
     SLEEPER+'/projections/nfl/regular/'+season+'/'+week,
@@ -8960,12 +9545,12 @@ ACT.projPull = async ()=>{
     });
     impProgress('', 100);
     ui.tmp.projBusy = false;
-    logIt('Projections pulled for week '+week+' — '+n+' players, scored on this league\u2019s settings', {type:'admin'});
-    saveLocal(); render();
-    toast(n? n+' players projected for week '+week : 'Nothing matched — are the Sleeper ids in?', n?'good':'warn');
+    if(!quiet) logIt('Projections pulled for week '+week+' — '+n+' players, scored on this league\u2019s settings', {type:'admin'});
+    saveLocal(); if(quiet) renderQuiet(); else render();
+    if(!quiet) toast(n? n+' players projected for week '+week : 'Nothing matched — are the Sleeper ids in?', n?'good':'warn');
   }catch(e){
-    ui.tmp.projBusy = false; ui.tmp.projErr = e.message; impProgress('', 0); render();
-    toast('Could not get projections — '+e.message,'bad');
+    ui.tmp.projBusy = false; ui.tmp.projErr = e.message; impProgress('', 0);
+    if(!quiet){ render(); toast('Could not get projections — '+e.message,'bad'); }
   }
 };
 /* ---- Against the projections ------------------------------------------------
@@ -9175,6 +9760,11 @@ function gameState(club, week){
   const c = String(club||'').toUpperCase();
   const st = ((S.live.gstate||{})[w]||{})[c];
   if(st) return st;
+  /* The real card says what it can; only the practice league uses invented games. */
+  const rg = ((S.live.nfl||{})[w]||[]).find(x=> String(x.home).toUpperCase()===c || String(x.away).toUpperCase()===c);
+  if(rg) return { state: rg.status==='final' ? 'post' : rg.status==='live' ? 'in' : 'pre',
+                  q: +rg.q||0, clock: rg.clockText||'', done: rg.status==='final', short:'' };
+  if(realLeague()) return null;
   const g = (S.live.games||[]).find(x=> x.home===c || x.away===c);
   if(g) return { state: g.status==='final' ? 'post' : g.status==='pre' ? 'pre' : 'in',
                  q: +g.q||0, clock: g.clock!=null ? fmtClock(g.clock) : '',
@@ -9972,12 +10562,31 @@ ACT.playerCard = (d)=>{
   const c = p.contract;
   const stale = S.news.at ? Math.round((Date.now()-S.news.at)/60000) : null;
   modal(p.name, `
-    <div class="row" style="margin-bottom:12px">
-      ${posTag(p.pos)} <span class="muted">${esc(p.nfl||'free agent')} · age ${p.age||'—'}</span>
+    <div class="row" style="margin-bottom:12px;gap:10px;align-items:center">
+      ${playerFace(p, 56)}
+      ${posTag(p.pos)} <span class="muted">${p.nfl ? clubLogo(p.nfl, 18)+' '+esc(p.nfl) : 'free agent'} · age ${p.age||'—'}</span>
       ${injuryTag(p)} ${waiverTag(p)} ${slotTag(p)} ${m?matchupChip(p,{rank:true}):''}
       <div class="spacer"></div>
       <button class="btn sm ghost" data-a="pullNews" data-id="${esc(p.id)}">Refresh news</button>
     </div>
+    ${(()=>{
+      /* What the league calls him. His own manager sets it, or a commissioner. */
+      const nick = nickOf(p);
+      const holder = c && c.teamId;
+      const canName = (holder && canManage(holder)) || isCommish();
+      if(!nick && !canName) return '';
+      return '<div class="assetbox" style="margin-bottom:12px">'+
+        '<div class="flabel">Nickname</div>'+
+        (canName
+          ? '<div class="row" style="gap:6px"><input type="text" maxlength="28" style="flex:1;min-width:160px" '+
+            'data-oninput="nickSet" data-id="'+esc(p.id)+'" data-k="nick_'+esc(p.id)+'" '+
+            'value="'+esc(nick)+'" placeholder="What everybody calls him">'+
+            (nick?'<button class="btn sm ghost" data-a="nickClear" data-id="'+esc(p.id)+'">Clear</button>':'')+
+            '</div><div class="tiny dim" style="margin-top:5px">It shows in brackets under his name '+
+            'wherever he appears'+(nick?': <b>'+esc(p.name)+'</b> ('+esc(nick)+')':'')+'.</div>'
+          : '<div>('+esc(nick)+')</div>')+
+        '</div>';
+    })()}
     <div class="grid g2" style="margin-bottom:12px">
       <div class="assetbox"><div class="flabel">Contract</div>
         ${c?`<div class="kv">
@@ -14963,6 +15572,118 @@ function difficultyOf(r){
 }
 /* Backs live on the ground, everyone else through the air. */
 function primaryKind(pos){ return pos==='RB' ? 'rush' : 'pass'; }
+/* ============================================================
+   THE REAL NFL WEEK
+   The league's week used to move only when a week was closed — by hand, or by
+   the automatic close on its set day. If that close was late, or never came,
+   or a week was closed early, the league sat on a different week from the NFL,
+   and everything read off "this week" went with it: who a man plays, when he
+   kicks off, the stats coming in and the projections. Every device now asks
+   Sleeper which week the NFL is actually on (a two-hundred-byte answer) and the
+   league is kept on it.
+   ============================================================ */
+let NFL_STATE = null, nflStateAt = 0, nflStateBusy = false;
+async function pullNflState(force){
+  if(nflStateBusy) return NFL_STATE;
+  if(!force && NFL_STATE && Date.now() - nflStateAt < 20*60000) return NFL_STATE;
+  nflStateBusy = true;
+  try{
+    const j = await getJSON(SLEEPER+'/state/nfl');
+    if(j && j.week != null){
+      NFL_STATE = {season:+j.season || null, week:+j.week || 1, type:String(j.season_type||''),
+                   display:+j.display_week || +j.week || 1, at:Date.now()};
+      nflStateAt = Date.now();
+    }
+  }catch(e){}
+  nflStateBusy = false;
+  return NFL_STATE;
+}
+/* The week the NFL is on, in this league's season, or null if it is not known
+   or the NFL is somewhere else entirely (the off-season, another year). */
+function realNflWeek(){
+  const st = NFL_STATE;
+  if(!st || !st.season) return null;
+  const season = +S.league.season;
+  if(st.season < season) return 1;                        /* this season has not started */
+  if(st.season > season) return null;                     /* the NFL has moved on a year */
+  if(st.type === 'pre' || st.type === 'off') return 1;
+  if(st.type !== 'regular') return null;                  /* the NFL's own playoffs */
+  return clamp(st.week, 1, 18);
+}
+/* A league is real — not the practice league — once it is tied to Sleeper or
+   simply is not the demo. In a real league nothing is ever invented. */
+function realLeague(){
+  /* The simulator's own mode is the one place invented games belong. */
+  if(((S.settings||{}).live||{}).mode === 'demo') return false;
+  return !!sleeperLeague() || !(S.meta && S.meta.demo);
+}
+/* The real card for a week, if we have it. */
+function realCard(w){ return ((S.live.nfl||{})[+w || +S.live.week || 1]) || []; }
+/* Is the current NFL week over — every game on its card final? */
+function nflWeekDone(w){
+  const card = realCard(w);
+  if(!card.length) return false;
+  return card.every(g=> g.status === 'final' ||
+    (((S.live.gstate||{})[+w]||{})[String(g.home).toUpperCase()]||{}).done === true);
+}
+/* How the league stands against the NFL: 'same', 'behind', 'ahead' or null. */
+function weekDrift(){
+  const nfl = realNflWeek(); if(nfl == null) return null;
+  const mine = +S.live.week || 1;
+  if(mine === nfl) return 'same';
+  if(mine < nfl) return 'behind';
+  /* A week closed the night the last game finished, before Sleeper has moved
+     its own week on, is one ahead for a few hours and quite right. */
+  if(mine === nfl + 1 && nflWeekDone(nfl)) return 'same';
+  return 'ahead';
+}
+/* Kept on the NFL. Behind: bring the league up to date from Sleeper — results,
+   stats, the lot — on whichever member's device notices first; it writes
+   nothing Sleeper did not say, so two devices doing it at once agree. Ahead:
+   that cannot be undone quietly, so the commissioner is told. */
+let followBusy = false, followAt = 0, aheadToldFor = null;
+async function followNfl(){
+  if(followBusy || !realLeague()) return;
+  if(!(S.players||[]).length || (S.meta && S.meta.demo)) return;
+  await pullNflState();
+  const drift = weekDrift();
+  if(drift === 'behind' && sleeperLeague() && Date.now() - followAt > 10*60000){
+    followBusy = true; followAt = Date.now();
+    const was = +S.live.week || 1, to = realNflWeek();
+    try{
+      const r = await syncSeasonFromSleeper({});
+      if(r && !r.error && (+S.live.week||1) !== was){
+        /* A new week: its own card, its own scores and its own projections. */
+        lastProjWeek = null; lastSleeperStats = 0;
+        try{ await pullKickoffs(+S.live.week); }catch(e){}
+        notify('Week '+(+S.live.week)+' is under way',
+          'The league has been brought onto the NFL\u2019s week '+to+' \u2014 results in, fixtures up, '+
+          'projections to follow.', 'info');
+        render();
+      }
+    }catch(e){}
+    followBusy = false;
+  }
+  if(drift === 'ahead' && isCommish() && aheadToldFor !== (S.live.week+'|'+realNflWeek())){
+    aheadToldFor = S.live.week+'|'+realNflWeek();
+    notify('The league is ahead of the NFL',
+      'The league is on week '+S.live.week+' but the NFL is still on week '+realNflWeek()+
+      '. Everything read off this week \u2014 who a man plays, his stats, his projection \u2014 is for a '+
+      'week that has not happened yet. Open week '+realNflWeek()+' again from Live scoring to put it right.',
+      'bad', [myTeam() && myTeam().id].filter(Boolean));
+  }
+}
+/* The real card for this week is what everything is read off, so if it is not
+   here it is fetched now — not on the hourly round. */
+let cardTryAt = 0;
+function keepCardLoaded(){
+  if(!realLeague()) return;
+  const w = +S.live.week || 1;
+  if(realCard(w).length) return;
+  if(Date.now() - cardTryAt < 2*60000) return;
+  cardTryAt = Date.now();
+  pullKickoffs(w).then(n=>{ if(n) renderQuiet(); }, ()=>{});
+}
 function thisWeekOpponent(nfl, week){
   const w = +week || +S.live.week || 1;
   const code = String(nfl||'').toUpperCase();
@@ -14971,7 +15692,9 @@ function thisWeekOpponent(nfl, week){
      the wrong opponent. */
   const real = ((S.live.nfl||{})[w]) || [];
   let g = real.find(x=> String(x.home).toUpperCase()===code || String(x.away).toUpperCase()===code);
-  if(!g) g = (S.live.games||[]).find(x=> x.home===code || x.away===code);
+  /* The simulator's pairings are made up. In a real league a missing card means
+     "not known yet", never a guess — a wrong opponent is worse than none. */
+  if(!g && !realLeague()) g = (S.live.games||[]).find(x=> x.home===code || x.away===code);
   if(!g) return null;
   const atHome = String(g.home).toUpperCase() === code;
   return {
@@ -22868,15 +23591,24 @@ VIEWS.settings = function(){
               <option value="games"${(S.settings.ir||{}).mode==='games'?' selected':''}>A share, on games he has played</option>
               <option value="weeks"${(S.settings.ir||{}).mode==='weeks'?' selected':''}>A share, on weeks left in the season</option>
               <option value="fixed"${(S.settings.ir||{}).mode==='fixed'?' selected':''}>A set amount</option>
+              <option value="cutoff"${(S.settings.ir||{}).mode==='cutoff'?' selected':''}>All of it, or none — on games played</option>
             </select></label>
           ${(S.settings.ir||{}).mode==='fixed'?`<label class="f"><span>How much back each time</span>
             <input type="number" min="0" step="${c.cap.increment}" data-set="settings.ir.fixed" value="${(S.settings.ir||{}).fixed||0}"></label>`:''}
+          ${(S.settings.ir||{}).mode==='cutoff'?`<label class="f"><span>Games that lose you the saving</span>
+            <input type="number" min="1" max="25" step="1" data-set="settings.ir.cutoffGames" value="${irCutoff()}">
+            <span class="tiny dim">play this many and the money stays on your cap</span></label>`:''}
           <div class="hint" style="grid-column:1/-1">${
-            (S.settings.ir||{}).mode==='fixed'
-              ? 'The same figure whenever anybody goes down, trimmed if it comes to more than the player actually costs.'
-              : (S.settings.ir||{}).mode==='weeks'
-                ? 'Counts the weeks still to play. Two players going down in the same week get the same share back, whatever either of them has actually appeared in.'
-                : 'Counts the games he has appeared in. Somebody who has already been missing gets more back than the calendar alone would give — including the whole year if he never played at all.'
+            (S.settings.ir||{}).mode==='cutoff'
+              ? 'All or nothing. Play '+irCutoff()+' games or more in a season and going on season-ending IR saves '+
+                'you <b>nothing</b> — the whole salary stays on your cap. Go down having played '+(irCutoff()-1)+
+                ' or fewer and you get <b>all of it</b> back. No shares, no proration: it is one line and which '+
+                'side of it he is on.'
+              : (S.settings.ir||{}).mode==='fixed'
+                ? 'The same figure whenever anybody goes down, trimmed if it comes to more than the player actually costs.'
+                : (S.settings.ir||{}).mode==='weeks'
+                  ? 'Counts the weeks still to play. Two players going down in the same week get the same share back, whatever either of them has actually appeared in.'
+                  : 'Counts the games he has appeared in. Somebody who has already been missing gets more back than the calendar alone would give — including the whole year if he never played at all.'
           }</div>
           <label class="f"><span>Cap how many a team can take</span>
             <select data-set="settings.taxi.limitMode">
@@ -25831,34 +26563,49 @@ ACT.rollSeasonGo = ()=>{
   buildWeek(1);
   closeModal(); save(true); go('dash'); toast(S.league.season+' is live','good');
 };
+/* How long ago, in words, for the saved-copies list. */
+function agoWords(at){
+  const m = Math.max(0, Math.round((Date.now() - (+at||0)) / 60000));
+  if(m < 1) return 'just now';
+  if(m < 60) return m+' min ago';
+  const h = Math.floor(m/60), mm = m % 60;
+  if(h < 24) return h+' hr'+(mm ? ' '+mm+' min' : '')+' ago';
+  const d = Math.floor(h/24);
+  return d+' day'+(d===1?'':'s')+' ago';
+}
+function bakRow(b, n){
+  return '<div class="bakrow"><span class="baknum tiny">'+n+'</span>'+
+    '<div class="bakwhen"><b>'+dstr(b.at)+'</b> <span class="tiny dim">· '+agoWords(b.at)+'</span>'+
+    '<div class="tiny dim">'+esc(b.why||'saved')+' · '+esc(b.league)+' '+(b.season||'')+
+    ' · '+b.teams+' teams · '+b.players+' contracts · '+Math.round((b.size||0)/1024)+' KB</div></div>'+
+    '<button class="btn sm" data-a="restoreBackup" data-slot="'+b.slot+'">Restore</button></div>';
+}
 ACT.openBackups = async ()=>{
-  const list = await listBackups();
+  const list = (await listBackups()).sort((x,y)=> (+y.at||0) - (+x.at||0));
+  const top = list.slice(0, 5);
   modal('Saved copies of your league',
     (list.length
       ? '<p class="muted" style="margin-top:0">A copy is kept every half hour while you are working, every time the '+
-        'app opens, and before anything drastic. The last '+BAKS+' are kept, newest at the top — '+
-        list.length+' here now.</p>'+
+        'app opens, and before anything drastic. The last '+BAKS+' are kept — '+
+        list.length+' here now. Scroll down to see every one.</p>'+
         (BAK_ROOMY === false
           ? '<div class="hint">This browser would not give the app its roomy store, so copies are in the small '+
             'corner beside the league itself and only two or three will fit. Everything else works as normal.</div>'
           : '')+
-        '<div class="scrollx"><table><thead><tr><th>When</th><th>League</th><th class="right">Teams</th>'+
-        '<th class="right">Contracts</th><th class="right">Size</th><th></th></tr></thead><tbody>'+
-        list.map(b=>'<tr><td class="tiny">'+dstr(b.at)+'<div class="dim">'+esc(b.why)+'</div></td>'+
-          '<td>'+esc(b.league)+'<div class="tiny dim">'+b.season+'</div></td>'+
-          '<td class="right num">'+b.teams+'</td><td class="right num">'+b.players+'</td>'+
-          '<td class="right num tiny dim">'+Math.round((b.size||0)/1024)+' KB</td>'+
-          '<td class="right"><button class="btn sm" data-a="restoreBackup" data-slot="'+b.slot+'">Restore</button></td></tr>').join('')+
-        '</tbody></table></div>'+
+        '<div class="bakhead muted">The newest five</div>'+
+        '<div class="bakgroup newest" data-newest="1">'+top.map((b,k)=> bakRow(b, k+1)).join('')+'</div>'+
+        '<div class="bakhead muted">All '+list.length+' saved cop'+(list.length===1?'y':'ies')+', newest first</div>'+
+        '<div class="bakgroup" data-all="1">'+list.map((b,k)=> bakRow(b, k+1)).join('')+'</div>'+
         '<div class="hint">Restoring replaces what is on screen, and a copy of that is kept too, so you can come back. '+
         'Copies leave out projections, news, the live feed and chat pictures — all of which come back on their '+
         'own. They are kept in this browser’s roomy store rather than beside the league, which is why there is '+
-        'space for all '+BAKS+' of them now instead of two.</div>'
+        'space for all '+BAKS+' of them.</div>'
       : '<p>There are no copies yet. One is kept every time the app opens with a league loaded.</p>'+
         '<div class="hint">If your league has gone missing, check you are at the same web address as before — a browser '+
         'keeps its storage per address, so a different one looks empty even though nothing was lost.</div>'),
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
     '<button class="btn" data-a="exportJSON">Download the one on screen</button>');
+  const box = document.getElementById('modalBox'); if(box) box.scrollTop = 0;
 };
 ACT.restoreBackup = async (d)=>{
   const b = await Baks.get(+d.slot);
@@ -27061,6 +27808,9 @@ function tickAll(){
   try{ Push.tick(); }catch(e){}
   /* And once a minute, whether your matchup is over. */
   if(Date.now() - (ui.tmp.finalAt||0) > 60000){ ui.tmp.finalAt = Date.now(); checkMatchupFinal(); }
+  /* On the NFL's week, with this week's real card in hand. */
+  if(Date.now() - (ui.tmp.followAt||0) > 60000){ ui.tmp.followAt = Date.now(); followNfl().then(()=>{}, ()=>{}); }
+  keepCardLoaded();
   /* Real scores straight from Sleeper, on the same timer. */
   if(S.settings.live.mode==='sleeper'){
     const gap = Math.max(15, +S.settings.live.pollSec||30)*1000;
