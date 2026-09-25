@@ -275,6 +275,12 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .cell .amt{position:absolute;inset:auto 0 4px 0;text-align:center;font-size:10.5px;color:#231704;font-weight:600}
 .cell.small .amt{color:var(--brass);bottom:auto;top:2px}
 .cell.empty{background:repeating-linear-gradient(45deg,transparent 0 6px,rgba(255,255,255,.022) 6px 12px)}
+/* Trades in review on the ladder: who is coming in, and who is on the way out. */
+.ladder .lrow.incoming .lname .pn{color:var(--brass)}
+.ladder .lrow.leaving{opacity:.55}
+.ladder .lrow.leaving .lname .pn{text-decoration:line-through}
+.cell.gone{align-items:center;justify-content:center}
+.cell.gone .amt{position:static;color:var(--dim);text-decoration:line-through;font-weight:500}
 .capline{display:grid;grid-template-columns:190px repeat(var(--yc),minmax(74px,1fr));gap:2px;border-top:1px solid var(--rule);margin-top:2px}
 .capline>div{padding:8px 6px;text-align:center;font-size:12px}
 .capline>div:first-child{text-align:left;font:600 11px/1 var(--disp);letter-spacing:.12em;color:var(--dim);display:flex;align-items:center}
@@ -1112,7 +1118,7 @@ h1.fitname{line-height:1.08;word-break:break-word}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-24q · counters start from the original trade';
+const APP_BUILD = '2026-09-25c · Commanders schedule fixed';
 
 /* ============================================================
    HOME LEAGUE
@@ -4331,13 +4337,21 @@ VIEWS.dash = function(){
       <div class="ph"><h3>${yrs.length}-year outlook</h3><div class="spacer"></div><button class="btn ghost sm" data-a="go" data-r="cap">Full cap ladder</button></div>
       <div class="pb tight scrollx">
         <table><thead><tr><th>Year</th><th class="right">Cap</th><th class="right">Committed</th><th class="right">Space</th><th class="right hide-xs">Players</th></tr></thead><tbody>
-        ${yrs.map(yy=>{
-          const c=teamCapForYear(t.id,yy), u=teamCommitted(t.id,yy), s=capSpace(t.id,yy);
-          return `<tr><td class="num">${yy}</td><td class="right money">${money(c)}</td><td class="right num">${money(u)}</td>
-            <td class="right num ${s<0?'bad':'good'}">${money(s,{plus:true})}</td>
-            <td class="right num hide-xs">${roster.filter(p=>capHit(p,yy)>0).length}</td></tr>`;
-        }).join('')}
+        ${(()=>{
+          /* The same books as the cap ladder: trades in review counted, unless the
+             ladder has been switched to show them without. */
+          const counted = capPendingShown() && tradesInReview(t.id).length;
+          const draw = ()=> yrs.map(yy=>{
+            const c=teamCapForYear(t.id,yy), u=teamCommitted(t.id,yy), s=capSpace(t.id,yy);
+            return `<tr><td class="num">${yy}</td><td class="right money">${money(c)}</td><td class="right num">${money(u)}</td>
+              <td class="right num ${s<0?'bad':'good'}">${money(s,{plus:true})}</td>
+              <td class="right num hide-xs">${teamPlayers(t.id).filter(p=>capHit(p,yy)>0).length}</td></tr>`;
+          }).join('');
+          return counted ? withPending(draw) : draw();
+        })()}
         </tbody></table>
+        ${capPendingShown() && tradesInReview(t.id).length
+          ? '<div class="tiny dim" style="padding:6px 10px">Counts '+tradesInReview(t.id).length+' trade'+(tradesInReview(t.id).length===1?'':'s')+' in review.</div>' : ''}
       </div>
     </div>
     <!-- League chat sits under the outlook so it is on screen without scrolling,
@@ -4459,8 +4473,8 @@ ACT.clearNotices = ()=>{ S.notices=[]; save(); render(); };
    LIVE SCORING — pluggable feed (demo sim / HTTP endpoint / paste)
    ============================================================ */
 function nflCodes(){ return Array.from(new Set(S.players.map(p=>p.nfl).filter(Boolean))).sort(); }
-function rosterOf(code){ return S.players.filter(p=> p.nfl===code && p.pos!=='DEF'); }
-function defOf(code){ return S.players.find(p=> p.pos==='DEF' && p.nfl===code); }
+function rosterOf(code){ const c = clubCode(code); return S.players.filter(p=> p.nfl && clubCode(p.nfl)===c && p.pos!=='DEF'); }
+function defOf(code){ const c = clubCode(code); return S.players.find(p=> p.pos==='DEF' && p.nfl && clubCode(p.nfl)===c); }
 function stat(pid){ return (S.live.stats[pid] = S.live.stats[pid] || {}); }
 function bump(pid,k,v){ const s=stat(pid); s[k]=Math.round(((s[k]||0)+v)*100)/100; }
 function pickOne(a){ return a.length ? a[Math.floor(Math.random()*a.length)] : null; }
@@ -4840,7 +4854,7 @@ function lineupLockNote(){
 function offenseVal(code){
   const by = ((S.season||{}).byPlayer)||{};
   let pts = 0, gpMax = 0;
-  S.players.filter(x=> x.nfl===code && x.pos!=='DEF').forEach(x=>{
+  S.players.filter(x=> x.nfl && clubCode(x.nfl)===clubCode(code) && x.pos!=='DEF').forEach(x=>{
     const l = by[x.id]; if(!l || !l.gp) return;
     pts += l.fpts||0;
     if(l.gp>gpMax) gpMax = l.gp;     // team games ≈ its busiest player's games
@@ -4853,7 +4867,7 @@ function offenseRank(code){
   const codes = nflCodes();
   const rows = codes.map(c=>({c, v:offenseVal(c)})).filter(x=> x.v!=null).sort((a,b)=> b.v-a.v);
   if(rows.length < 3) return null;
-  const i = rows.findIndex(x=> x.c===code);
+  const i = rows.findIndex(x=> clubCode(x.c)===clubCode(code));
   return i<0 ? null : {rank:i+1, of:rows.length, val:rows[i].v};
 }
 /* For a DEFENSE, difficulty runs the other way round from a hitter: facing a
@@ -4883,7 +4897,7 @@ function matchupLine(p){
   const whenBit = mi.when ? ' <span class="tiny '+(mi.o.game.status==='final'?'dim':'live')+'">'+mi.when+'</span>' : '';
   let extra = '';
   if(p.pos==='DEF'){
-    const own = (S.dvp||{})[p.nfl];
+    const own = dvpOf(p.nfl);
     const form = (own && own.games) ? Math.round((sum(Object.values(own.pos).map(x=>x.f||0))/own.games)*10)/10 : null;
     if(form!=null) extra = ' <span class="tiny dim" title="fantasy points this defense gives up per game">· gives up '+form+'/gm</span>';
   }
@@ -9334,10 +9348,10 @@ function playerStatBlock(p){
     if(x.opp) return x.opp;
     /* Only a card actually kept for that week — never this week's stand-in. */
     const card = ((S.live.nfl||{})[x.week]) || [];
-    const c = String(p.nfl||'').toUpperCase();
-    const g = card.find(q=> String(q.home).toUpperCase()===c || String(q.away).toUpperCase()===c);
+    const c = clubCode(p.nfl);
+    const g = card.find(q=> clubCode(q.home)===c || clubCode(q.away)===c);
     if(!g) return '';
-    return String(g.home).toUpperCase()===c ? 'vs '+g.away : '@ '+g.home;
+    return clubCode(g.home)===c ? 'vs '+g.away : '@ '+g.home;
   };
   const played = log.filter(x=> countsAsGame(x.stats) || +x.fpts);
   if(played.length){
@@ -9758,10 +9772,11 @@ function kickoffLabel(club, week){
 function gameState(club, week){
   const w = week || +S.live.week || 1;
   const c = String(club||'').toUpperCase();
-  const st = ((S.live.gstate||{})[w]||{})[c];
+  const gs = ((S.live.gstate||{})[w]||{});
+  const st = gs[c] || gs[clubCode(c)];
   if(st) return st;
   /* The real card says what it can; only the practice league uses invented games. */
-  const rg = ((S.live.nfl||{})[w]||[]).find(x=> String(x.home).toUpperCase()===c || String(x.away).toUpperCase()===c);
+  const rg = ((S.live.nfl||{})[w]||[]).find(x=> clubCode(x.home)===clubCode(c) || clubCode(x.away)===clubCode(c));
   if(rg) return { state: rg.status==='final' ? 'post' : rg.status==='live' ? 'in' : 'pre',
                   q: +rg.q||0, clock: rg.clockText||'', done: rg.status==='final', short:'' };
   if(realLeague()) return null;
@@ -11922,19 +11937,65 @@ ACT.voidContract = (d)=>{ const p=byId(S.players,d.id); p.contract=null; closeMo
 /* ============================================================
    VIEW · CAP LADDER  (the six-year picture)
    ============================================================ */
+/* The ladder counts the trades in review — they are agreed and only waiting
+   out the clock — so it always shows the books as they are about to be. You
+   can switch that off to see them as they stand right now. */
+function capPendingShown(){ return ui.tmp.capPending !== false; }
 VIEWS.cap = function(){
   if(!S.teams.length) return '<div class="empty-state"><h3>No league loaded</h3></div>';
+  const list = tradesInReview();
+  if(!list.length || !capPendingShown()) return capLadderHTML(list.length ? {list, off:true} : null);
+  /* Who is on the move, read before anything is handed over. */
   const tid = currentTeamId(), yrs = projYears();
+  const incoming = {}, outgoing = [];
+  const trOf = (tr)=> tr.type==='multi' ? (tr.teams||[]).map(teamName).join(' ⇄ ')
+                                         : teamName(tr.a.teamId)+' ⇄ '+teamName(tr.b.teamId);
+  list.forEach(tr=>{
+    const hand = (from, to, o)=> (o.players||[]).forEach(pid=>{
+      const p = byId(S.players,pid); if(!p || !p.contract) return;
+      if(to===tid) incoming[pid] = {from, tr:trOf(tr)};
+      if(from===tid) outgoing.push({p, to, tr:trOf(tr), hits: yrs.map(y=> capHit(p,y))});
+    });
+    if(tr.type==='multi') (tr.legs||[]).forEach(l=> hand(l.from, l.to, l));
+    else {
+      hand(tr.a.teamId, tr.b.teamId, tr.a); hand(tr.b.teamId, tr.a.teamId, tr.b);
+      const ch = (tr.counters||[]).find(c=> c.status==='accepted');
+      if(ch){ const target = tr[ch.side].teamId; hand(ch.byTeamId, target, ch.gives); hand(target, ch.byTeamId, ch.wants); }
+    }
+  });
+  /* Anyone passing straight through (in one trade and out in another) is neither. */
+  const out2 = outgoing.filter(x=> !incoming[x.p.id]);
+  return withPending(()=> capLadderHTML({list, incoming, outgoing: out2}));
+};
+function capPendingBanner(pend, tid){
+  if(!pend) return '';
+  const mine = pend.list.filter(tr=> tr.type==='multi' ? (tr.teams||[]).indexOf(tid)>=0 : (tr.a.teamId===tid || tr.b.teamId===tid));
+  const n = pend.list.length;
+  const what = n+' trade'+(n===1?'':'s')+' in review';
+  const names = mine.map(tr=> tr.type==='multi' ? (tr.teams||[]).map(teamName).join(' ⇄ ')
+                                                 : teamName(tr.a.teamId)+' ⇄ '+teamName(tr.b.teamId));
+  if(pend.off) return '<div class="hint" data-pendbanner="off" style="margin:0 0 12px">Showing the books as they stand right now — '+
+    what+' not counted. <button class="btn sm" data-a="capPending" data-on="1">Count them</button></div>';
+  return '<div class="hint" data-pendbanner="on" style="margin:0 0 12px"><b>Counting '+what+'</b> — agreed and only waiting out the clock, '+
+    'so these are the books as they are about to be.'+
+    (names.length ? ' This team: '+names.map(esc).join('; ')+'.' : ' None of them involve this team.')+
+    ' <button class="btn sm ghost" data-a="capPending" data-on="0">Show without them</button></div>';
+}
+ACT.capPending = (d)=>{ ui.tmp.capPending = d.on === '1'; render(); };
+function capLadderHTML(pend){
+  const tid = currentTeamId(), yrs = projYears();
+  const inc = (pend && pend.incoming) || {};
   const roster = teamPlayers(tid).slice().sort((a,b)=> (b.contract.startYear+b.contract.years)-(a.contract.startYear+a.contract.years) || capHit(b,yrs[0])-capHit(a,yrs[0]));
   const dead = (byId(S.teams,tid).dead||[]);
   const mx = Math.max(1, ...roster.map(p=> Math.max(...yrs.map(y=>capHit(p,y)))));
   const c = S.settings.cap;
 
   const rows = roster.map(p=>{
-    const ct=p.contract;
-    return `<div class="lrow">
+    const ct=p.contract, coming = inc[p.id];
+    return `<div class="lrow${coming?' incoming':''}"${coming?' data-incoming="1"':''}>
       <div class="lname"><span class="pn">${esc(p.name)}</span>
-        <span class="pm">${posTag(p.pos)} <span>${ct.years} yr</span> <span>${money(ct.total)}</span></span></div>
+        <span class="pm">${posTag(p.pos)} <span>${ct.years} yr</span> <span>${money(ct.total)}</span></span>
+        ${coming?'<span class="pm"><span class="pill warn" title="'+esc(coming.tr)+'">Incoming · in review</span></span>':''}</div>
       ${yrs.map(y=>{
         const h=capHit(p,y);
         if(!h) return '<div class="cell empty"></div>';
@@ -11944,6 +12005,12 @@ VIEWS.cap = function(){
     </div>`;
   }).join('');
 
+  /* Going the other way: shown, but not counted. */
+  const leaving = ((pend && pend.outgoing) || []).map(x=> `<div class="lrow leaving" data-leaving="1">
+      <div class="lname"><span class="pn">${esc(x.p.name)}</span>
+        <span class="pm"><span class="pill" title="${esc(x.tr)}">Leaving · to ${esc(teamName(x.to))}</span></span></div>
+      ${x.hits.map(h=> h ? '<div class="cell gone"><span class="amt">'+money(h)+'</span></div>' : '<div class="cell empty"></div>').join('')}
+    </div>`).join('');
   const deadRow = dead.length ? `<div class="lrow"><div class="lname"><span class="pn bad">Dead cap</span><span class="pm">${dead.length} charge${dead.length>1?'s':''}</span></div>
     ${yrs.map(y=>{ const h=teamDead(tid,y); if(!h) return '<div class="cell empty"></div>';
       const pctH=clamp(h/mx*100,6,100);
@@ -11959,11 +12026,13 @@ VIEWS.cap = function(){
         <button class="${ui.tmp.capMode==='league'?'on':''}" data-a="capMode" data-m="league">Whole league</button></div>
     </header>
 
+    ${capPendingBanner(pend, tid)}
     ${(ui.tmp.capMode||'team')==='team' ? `
     <div class="panel"><div class="pb scrollx">
       <div class="ladder" style="--yc:${yrs.length};min-width:${190+yrs.length*84}px">
         <div class="lhead"><div>Player</div>${yrs.map(y=>'<div>'+y+'</div>').join('')}</div>
         ${rows || '<div class="empty-state">No contracts on the books.</div>'}
+        ${leaving}
         ${deadRow}
         <div class="capline"><div>Committed</div>${yrs.map(y=>
           '<div><span class="num">'+money(teamCommitted(tid,y))+'</span></div>').join('')}</div>
@@ -13457,34 +13526,77 @@ function tradesInReview(teamId){
     return tr.a.teamId===teamId || tr.b.teamId===teamId;
   });
 }
-/* What the trades in review would do to this team's cap in a given year.
-   Positive means it takes salary ON. */
-function pendingCapEffect(teamId, year){
-  const list = tradesInReview(teamId);
-  if(!list.length) return 0;
-  const y = year || S.league.season;
-  let delta = 0;
-  const hitOf = (pid)=>{ const p = byId(S.players, pid); return p ? grossHit(p, y) : 0; };
-  list.forEach(tr=>{
-    if(tr.type==='multi'){
-      (tr.legs||[]).forEach(leg=>{
-        if(leg.fromTeam===teamId) (leg.players||[]).forEach(pid=> delta -= hitOf(pid));
-        if(leg.toTeam===teamId)   (leg.players||[]).forEach(pid=> delta += hitOf(pid));
-      });
-    } else {
-      const mine = tr.a.teamId===teamId ? tr.a : tr.b.teamId===teamId ? tr.b : null;
-      const other = tr.a.teamId===teamId ? tr.b : tr.b.teamId===teamId ? tr.a : null;
-      if(!mine || !other) return;
-      (mine.players||[]).forEach(pid=> delta -= hitOf(pid));
-      (other.players||[]).forEach(pid=> delta += hitOf(pid));
-    }
+/* ---- Reading the books as if the trades in review had gone through ----------
+   Measured, not calculated: every trade in review is handed over for a moment —
+   players, picks, cap dollars, retained salary, and any counter already agreed
+   to ride along — the books are read, and everything is put straight back. The
+   hand-over here is a quiet copy of the real one: no notices, no log lines. */
+let pendingApplied = false;
+function dryMove(fromTeam, toTeam, o, slots){
+  (o.players||[]).forEach(id=>{
+    const p = byId(S.players,id); if(!p || !p.contract) return;
+    p.contract.teamId = toTeam;
+    const sl = playerSlot(p);
+    if(sl==='taxi' || sl==='practice'){ if(!(id in slots)) slots[id] = p.slot; p.slot = 'active'; }
+    const r = (o.retain||{})[id];
+    if(isOldRetain(r)) applyRetention(id, fromTeam, +r.pct, +r.through||S.league.season, 'pct');
+    else if(r && r.byYear && Object.keys(r.byYear).length) applyRetentionYears(id, fromTeam, r.byYear);
   });
-  return fixCents(delta);
+  (o.picks||[]).forEach(id=>{ const k=byId(S.picks,id); if(k) k.ownerTeamId = toTeam; });
+  const cash = +o.cash||0;
+  if(cash){
+    const f=byId(S.teams,fromTeam), t=byId(S.teams,toTeam);
+    if(f){ f.adj=f.adj||[]; f.adj.push({year:S.league.season, amount:cash, note:'Cap sent to '+teamName(toTeam)}); }
+    if(t){ t.adj=t.adj||[]; t.adj.push({year:S.league.season, amount:-cash, note:'Cap from '+teamName(fromTeam)}); }
+  }
+}
+function dryApplyTrade(tr, slots){
+  if(tr.type==='multi'){
+    (tr.legs||[]).forEach(l=> dryMove(l.from, l.to, l, slots));
+    return;
+  }
+  dryMove(tr.a.teamId, tr.b.teamId, tr.a, slots);
+  dryMove(tr.b.teamId, tr.a.teamId, tr.b, slots);
+  const ch = (tr.counters||[]).find(c=> c.status==='accepted');
+  if(ch){
+    const target = tr[ch.side].teamId;
+    dryMove(ch.byTeamId, target, ch.gives, slots);
+    dryMove(target, ch.byTeamId, ch.wants, slots);
+  }
+}
+/* Run fn with every trade in review applied, then undo them. Nested calls just
+   run — the trades are already on the books. */
+function withPending(fn){
+  if(pendingApplied) return fn(tradesInReview());
+  const list = tradesInReview();
+  if(!list.length) return fn(list);
+  const snaps = [], slots = {};
+  pendingApplied = true;
+  try{
+    list.forEach(tr=>{ snaps.push(tradeSnapshot(tr)); dryApplyTrade(tr, slots); });
+    clearCapCache();
+    return fn(list);
+  } finally {
+    for(let k=snaps.length-1; k>=0; k--) restoreSnapshot(snaps[k]);
+    Object.keys(slots).forEach(id=>{ const p=byId(S.players,id); if(p){ if(slots[id]==null) delete p.slot; else p.slot = slots[id]; } });
+    pendingApplied = false;
+    clearCapCache();
+  }
+}
+/* What the trades in review would do to this team's cap in a given year.
+   Positive means it takes salary ON (so space goes down by that much). */
+function pendingCapEffect(teamId, year){
+  const y = year || S.league.season;
+  if(!tradesInReview(teamId).length) return 0;
+  const now = capSpace(teamId, y);
+  const after = withPending(()=> capSpace(teamId, y));
+  return fixCents(now - after);
 }
 /* Space once everything already agreed has gone through. This is what a new
    trade is judged against. */
 function capSpaceAfterPending(teamId, year){
-  return fixCents(capSpace(teamId, year) - pendingCapEffect(teamId, year));
+  if(!tradesInReview(teamId).length) return capSpace(teamId, year);
+  return fixCents(withPending(()=> capSpace(teamId, year)));
 }
 function capRoomAfterPending(teamId, year){
   return fixCents(capSpaceAfterPending(teamId, year) - capFloor());
@@ -14238,8 +14350,20 @@ ACT.sendCounter = ()=>{
   notify('Counter filed', teamName(actingTeam())+' is trying to break into the '+teamName(tr.a.teamId)+'/'+teamName(tr.b.teamId)+' trade.','warn');
   closeModal(); save(); render(); toast('Counter filed','good');
 };
+/* Only the team a counter is sent to can answer it — not the team that sent it,
+   not the other side of the original trade, and not the commissioner as
+   himself. (A commissioner standing in for that team is that team.) */
+function counterAnswerNo(tr, ct){
+  if(!tr || !ct) return 'That counter has gone';
+  if(ct.status !== 'pending') return 'That counter has already been answered';
+  if(tr.status !== 'review') return 'That trade is no longer in review';
+  const to = (tr[ct.side]||{}).teamId;
+  if(actingTeam() !== to) return 'Only '+teamName(to)+' can answer this counter';
+  return null;
+}
 ACT.acceptCounter = (d)=>{
-  const tr = byId(S.trades,d.id), ct = byId(tr.counters,d.cid), c = S.settings.trades.counters;
+  const tr = byId(S.trades,d.id), ct = tr && byId(tr.counters||[],d.cid), c = S.settings.trades.counters;
+  const no = counterAnswerNo(tr, ct); if(no) return toast(no,'bad');
   ct.status='accepted';
   ct.acceptedAt = Date.now();
   tr.counters.forEach(x=>{ if(x!==ct && x.status==='pending') x.status='declined'; });
@@ -14279,7 +14403,13 @@ ACT.acceptCounter = (d)=>{
   }
   save(); render(); toast('Counter accepted','good');
 };
-ACT.declineCounter = (d)=>{ const tr=byId(S.trades,d.id); byId(tr.counters,d.cid).status='declined'; save(); render(); };
+ACT.declineCounter = (d)=>{
+  const tr = byId(S.trades,d.id), ct = tr && byId(tr.counters||[],d.cid);
+  const no = counterAnswerNo(tr, ct); if(no) return toast(no,'bad');
+  ct.status='declined'; ct.declinedAt = Date.now();
+  tr.log.unshift({at:Date.now(), text:teamName(tr[ct.side].teamId)+' turned down '+teamName(ct.byTeamId)+"'s counter"});
+  save(); render();
+};
 
 /* ---- League chat ---------------------------------------------------------- */
 ACT.chatType = (d, el)=>{ (ui.tmp.chat = ui.tmp.chat||{}).text = el.value; };  /* keystroke-safe: no render */
@@ -15177,9 +15307,9 @@ VIEWS.trades = function(){
               <span class="dim tiny">wants from ${esc(teamName(tr[ct.side].teamId))}</span>
               <div style="margin-top:5px">${assetChips(ct.wants)}</div>
               <div class="tiny dim" style="margin:5px 0 3px">and sends</div>${assetChips(ct.gives)}</div>
-            <div class="right">${ct.status==='pending' ? ((me===tr[ct.side].teamId||isCommish())
+            <div class="right">${ct.status==='pending' ? (!counterAnswerNo(tr, ct)
                 ? '<button class="btn sm pri" data-a="acceptCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Accept</button> <button class="btn sm ghost" data-a="declineCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Decline</button>'
-                : '<span class="pill">Pending</span>')
+                : '<span class="pill">Waiting on '+esc(teamName(tr[ct.side].teamId))+'</span>')
               : '<span class="pill '+(ct.status==='declined'?'':'ok')+'">'+ct.status+'</span>'}</div>
           </div></div>`).join('')}`:''}
         <div class="hr"></div><div class="log">${(tr.log||[]).slice(0,5).map(l=>'<div><span class="dim">'+dstr(l.at)+'</span> — '+esc(l.text)+'</div>').join('')}</div>
@@ -15589,8 +15719,10 @@ async function fillMissingCards(){
   }
   return got;
 }
+/* The book is kept in the card's letters; accept either. */
+function dvpOf(code){ const b = S.dvp||{}; return b[code] || b[clubCode(code)] || null; }
 function dvpPerGame(code, pos){
-  const d = (S.dvp||{})[code];
+  const d = dvpOf(code);
   if(!d || !d.games) return null;
   const e = d.pos[pos];
   /* Nothing on the book for that position is not the same as holding them to
@@ -15599,7 +15731,7 @@ function dvpPerGame(code, pos){
   return (e.f || 0) / d.games;
 }
 function dvpSplit(code, kind){
-  const d = (S.dvp||{})[code];
+  const d = dvpOf(code);
   if(!d || !d.games) return null;
   return kind==='rush' ? (d.rush_yd + d.rush_td*20)/d.games
                        : (d.pass_yd + d.pass_td*20)/d.games;
@@ -15610,7 +15742,7 @@ function dvpRank(code, pos, kind){
   const val = (c)=> kind ? dvpSplit(c, kind) : dvpPerGame(c, pos);
   const rows = all.map(c=>({c, v:val(c)})).filter(x=> x.v!=null).sort((a,b)=> a.v-b.v);
   if(rows.length < 3) return null;
-  const i = rows.findIndex(x=> x.c===code);
+  const i = rows.findIndex(x=> clubCode(x.c)===clubCode(code));
   return i<0 ? null : {rank:i+1, of:rows.length, val:rows[i].v};
 }
 const DIFF = [
@@ -15679,7 +15811,8 @@ function nflWeekDone(w){
   const card = realCard(w);
   if(!card.length) return false;
   return card.every(g=> g.status === 'final' ||
-    (((S.live.gstate||{})[+w]||{})[String(g.home).toUpperCase()]||{}).done === true);
+    ((((S.live.gstate||{})[+w]||{})[String(g.home).toUpperCase()] ||
+      ((S.live.gstate||{})[+w]||{})[clubCode(g.home)])||{}).done === true);
 }
 /* How the league stands against the NFL: 'same', 'behind', 'ahead' or null. */
 function weekDrift(){
@@ -15744,14 +15877,18 @@ function thisWeekOpponent(nfl, week){
   const code = String(nfl||'').toUpperCase();
   if(!code) return null;
   /* The real card first — the simulator's pairings are invented and were giving
-     the wrong opponent. */
+     the wrong opponent. Club letters differ between sources (the league has
+     Washington as WAS, the NFL's card has WSH), so both sides are put into the
+     same letters before they are compared. Comparing them raw made every
+     Commanders player look like he was on a bye. */
+  const cc = clubCode(code);
   const real = ((S.live.nfl||{})[w]) || [];
-  let g = real.find(x=> String(x.home).toUpperCase()===code || String(x.away).toUpperCase()===code);
+  let g = real.find(x=> clubCode(x.home)===cc || clubCode(x.away)===cc);
   /* The simulator's pairings are made up. In a real league a missing card means
      "not known yet", never a guess — a wrong opponent is worse than none. */
   if(!g && !realLeague()) g = (S.live.games||[]).find(x=> x.home===code || x.away===code);
   if(!g) return null;
-  const atHome = String(g.home).toUpperCase() === code;
+  const atHome = clubCode(g.home) === cc || String(g.home).toUpperCase() === code;
   return {
     code: atHome ? g.away : g.home,
     /* Whether HE is at home. A club at home is "vs", away is "@". */
@@ -18409,8 +18546,8 @@ function hasGameThisWeek(p, week){
   const w = +week || +S.live.week || 1;
   const card = ((S.live.nfl||{})[w]) || [];
   if(!card.length) return true;               /* no card to judge by */
-  const c = String((p&&p.nfl)||'').toUpperCase();
-  return card.some(g=> g.home===c || g.away===c);
+  const c = clubCode(p && p.nfl);
+  return card.some(g=> clubCode(g.home)===c || clubCode(g.away)===c);
 }
 /* Kept for anything that still asks about the whole week. */
 function weekComplete(week){
