@@ -834,6 +834,12 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 var(--rz)}
 .lmx .pos.lmx-pos{min-width:0;padding:2px 4px;font:700 12px/1 var(--disp);letter-spacing:.05em}
 .lmx-club{display:inline-flex;align-items:center;gap:3px}
 .lmx-chips{margin-top:4px}
+/* A player box on a phone is narrow: the matchup and weather may take two lines,
+   but never spill out of the box. */
+.lmx-chips .wx,.lmx-chips .pill{white-space:normal;flex-wrap:wrap;max-width:100%;min-width:0;overflow-wrap:anywhere}
+.lmx-chips .pill{display:inline-block;line-height:1.3}
+.wx .wxp{white-space:nowrap}
+.lmx-chips .wx{column-gap:4px;row-gap:1px}
 .lmx-stat{font-size:12.5px;line-height:1.35;margin-top:2px;overflow:hidden;text-overflow:ellipsis}
 .lmx-stat .tiny{font-size:12.5px}
 .lmx-pts{text-align:center;font:600 15px/1.2 var(--mono);font-variant-numeric:tabular-nums;padding:8px 2px}
@@ -1083,7 +1089,7 @@ h1.fitname{line-height:1.08;word-break:break-word}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-27b · trading back for a man you are eating salary on';
+const APP_BUILD = '2026-09-27c · live board: matchup and weather on the bench and taxi squad';
 
 /* ============================================================
    HOME LEAGUE
@@ -7434,7 +7440,9 @@ function lmxSide(p, side, teamId, kind, week){
     (p.nfl ? '<span class="lmx-club">'+clubLogo(p.nfl, 13)+esc(String(p.nfl).toUpperCase())+'</span>' : '')+
     injMark(p);
   const game = when ? '<span class="lmx-when '+(onAir ? 'onnow' : '')+'">'+esc(when)+'</span>' : '';
-  const chips = kind==='start' ? [matchupChip(p), wxChip(p)].filter(Boolean).join(' ') : '';
+  /* Matchup rank and weather for everybody — the bench and taxi squad too, so you
+     can see who you might have started. */
+  const chips = [matchupChip(p), wxChip(p, w)].filter(Boolean).join(' ');
   const st = S.live.stats && S.live.stats[p.id] ? statLine(p) : '';
   const fs = fieldState(p, w), sp = snapPct(p, w);
   const FS = {
@@ -17641,9 +17649,11 @@ function wxChip(p, week){
     'wind '+Math.round(x.wind||0)+' mph'+(x.gust?' gusting '+Math.round(x.gust):'')+
     (x.pop!=null?', '+Math.round(x.pop)+'% chance of rain':'')+
     (r.s.roof==='retract'?' — retractable roof, likely shut if it is bad':'')+(f?' — '+f.note:'');
-  return '<span class="wx'+(f?' '+f.cls:'')+'" title="'+esc(tip)+'">'+roof+wxIcon(x.code)+' '+
-    (x.temp!=null?Math.round(x.temp)+'°':'')+' · '+Math.round(x.wind||0)+' mph'+
-    (f?' <b>'+esc(f.word)+'</b>':'')+'</span>';
+  /* In pieces, so where a narrow box makes it wrap it breaks between them —
+     never inside "19 mph". */
+  return '<span class="wx'+(f?' '+f.cls:'')+'" title="'+esc(tip)+'"><span class="wxp">'+roof+wxIcon(x.code)+' '+
+    (x.temp!=null?Math.round(x.temp)+'°':'')+' ·</span> <span class="wxp">'+Math.round(x.wind||0)+' mph</span>'+
+    (f?' <b class="wxp">'+esc(f.word)+'</b>':'')+'</span>';
 }
 /* Just the warning word, for places with no room for the chip — a dropdown. */
 function wxWord(p){
