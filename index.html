@@ -1477,7 +1477,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-29e · every team\u2019s cap space for the year on the front page';
+const APP_BUILD = '2026-09-30a · extensions close when the playoffs begin, and late cuts on the calendar';
 
 /* ============================================================
    HOME LEAGUE
@@ -2036,8 +2036,9 @@ function defaultState(){
         loadMinTotal:10, flatYears:[],
         minSalary:1, allowRestructure:true, tagPct:120, rookieScale:false,
         limits:{}, extendExtra:2, decideHours:0, defaultYears:1,
-        /* Extensions shut at the first kickoff of this week. 0 for no deadline. */
-        extendDeadlineWeek:16,
+        /* Extensions shut at the first kickoff of this week. 0 for no deadline.
+           With extendWithPlayoffs on, it is the week the playoffs begin instead. */
+        extendDeadlineWeek:16, extendWithPlayoffs:false,
         minGames:4, ladder:{ on:true, topMult:120, roundWhole:true, bands:null,
           /* Rank purely on what he scored per game for this league, ignoring the
              real-life blend, and let the ladder set the price off that. */
@@ -3669,6 +3670,20 @@ function charterSettings(st){
     text:'Settings brought in line with the league charter: rollover up to 20%, extensions close at week 16, '+
       'playoff byes for 1 and 2 with the 6th spot on points, consolation byes for 12 and 11, '+
       'counter-trades extended 3 hours inside the last 3, comp picks capped at 7 league-wide'});
+}
+/* The commissioner, 30 Sep 2026: extensions close when the playoffs begin —
+   the same first kickoff, the same date. The charter had put them a week later.
+   Written once; after that it is an ordinary setting under Settings › Contracts. */
+function extWithPlayoffs(st){
+  if(!st || !st.settings || !st.league || st.league.extPoSet) return;
+  const sup = (st.settings.supa||{}).leagueId, sl = (st.settings.live||{}).sleeperLeagueId;
+  if(sup !== 'tvilleog' && sl !== '1313576907735830528' && st.league.name !== 'OG Dynasty') return;
+  st.settings.contracts = st.settings.contracts || {};
+  st.settings.contracts.extendWithPlayoffs = true;
+  st.league.extPoSet = '2026-09-30';
+  const ps = +((st.settings.playoffs||{}).startWeek) || 15;
+  if(Array.isArray(st.log)) st.log.unshift({at:Date.now(), type:'admin', teams:[], players:[],
+    text:'Extensions now close when the playoffs begin \u2014 at the first kickoff of week '+ps+'.'});
 }
 /* Back to back, as the commissioner set it on 22 Sep 2026: The bad man is gone
    won 2025, and the jackpot on offer in 2026 is $890, growing $120 a year. */
@@ -13152,6 +13167,17 @@ function keyDates(){
     const first = (wk)=>{ const k = ((S.live.nfl||{})[wk]||[]).map(g=> +g.at).filter(Boolean); return k.length ? Math.min.apply(null, k) : null; };
     const xw = extDeadlineWeek();
     if(xw && w <= xw){ const at = extDeadlineAt(); add('ext', 'Extensions close', at || est(xw), !at, 'teams'); }
+    /* Past the late-cut week a release saves nothing — from when that week's
+       last game is over. */
+    if(lateCutOn()){
+      const lw = lateCutWeek();
+      if(w <= lw){
+        const k = ((S.live.nfl||{})[lw]||[]).map(g=> +g.at).filter(Boolean);
+        const at = k.length ? Math.max.apply(null, k) + 4*3600000 : null;
+        const guess = est(lw) ? est(lw) + 4*86400000 + 4*3600000 : null;
+        add('latecut', 'Late cuts save nothing', at || guess, !at, 'teams');
+      }
+    }
     const wv = S.settings.waivers || {};
     if(wv.on && wv.deadline) add('wv', 'Waiver deadline', Date.parse(wv.deadline+'T23:59:00'), false, 'find');
     const ps = playoffStartWeek();
@@ -25894,6 +25920,9 @@ function tagWindowOpen(){
 /* Extensions close at the first kickoff of the deadline week. */
 function extDeadlineWeek(){
   const c = S.settings.contracts || {};
+  /* Tied to the playoffs: extensions close at the first kickoff of the week the
+     playoffs begin, whichever week that is moved to. */
+  if(c.extendWithPlayoffs) return playoffStartWeek();
   return c.extendDeadlineWeek == null ? 16 : (+c.extendDeadlineWeek || 0);
 }
 function extDeadlineAt(){
@@ -29411,10 +29440,12 @@ VIEWS.settings = function(){
           <div class="panel"><div class="ph"><h3>Extensions</h3></div><div class="pb stack">
             <label class="f"><span>Years an extension may run past the maximum</span>
               <input type="number" min="0" max="5" data-set="settings.contracts.extendExtra" value="${ct.extendExtra}"></label>
-            <label class="f"><span>Extensions shut at week
+            <label class="check"><input type="checkbox" data-set="settings.contracts.extendWithPlayoffs" ${ct.extendWithPlayoffs?'checked':''}>
+              <span>Extensions close when the playoffs begin <span class="dim">— the first kickoff of week ${playoffStartWeek()}, and they move together</span></span></label>
+            ${ct.extendWithPlayoffs ? '' : `<label class="f"><span>Extensions shut at week
               <span class="dim">— at the first kickoff of it; 0 for no deadline</span></span>
               <input type="number" min="0" max="18" data-set="settings.contracts.extendDeadlineWeek"
-                value="${extDeadlineWeek()}"></label>
+                value="${extDeadlineWeek()}"></label>`}
             <div class="hint" style="grid-column:1/-1">${(()=>{
               const w2 = extDeadlineWeek();
               if(!w2) return 'No deadline — a man can be extended whenever he qualifies.';
@@ -33341,6 +33372,7 @@ function migrate(j){
      stray edit on somebody else's device cannot carry the league away. */
   pinCommish(out);
   charterSettings(out);
+  extWithPlayoffs(out);
   b2bSeed(out);
   bengalsUndo(out);
   gadsdenClaim(out);
