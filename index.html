@@ -1301,7 +1301,22 @@ div.head>select{width:auto;max-width:240px}
 .lsrow:hover{background:var(--hover)}
 .lsrow.mine{background:color-mix(in srgb, var(--brass) 9%, transparent);box-shadow:inset 3px 0 0 var(--brass)}
 .lst{min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lsu{display:block;font-weight:400}
+.lsu{display:block;font-weight:400;white-space:normal}
+.lsir{display:block}
+/* On a phone the whole team name and the whole figure, on two lines if need be. */
+@media (max-width:560px){
+  .lsrow{grid-template-columns:22px minmax(0,1fr) 44px auto;gap:8px}
+  .lst{white-space:normal;overflow-wrap:anywhere}
+  .lsv{min-width:0}
+}
+/* The cap handed back by season-ending injuries. */
+.irback th{white-space:normal;vertical-align:bottom}
+.irback td.num{white-space:nowrap}
+.irback td:first-child{min-width:128px}
+@media (max-width:560px){
+  .irback th, .irback td{padding-left:6px;padding-right:6px}
+  .irback th{font-size:10.5px;letter-spacing:.05em}
+}
 .lsbar{height:6px;border-radius:3px;background:var(--rule-soft);overflow:hidden}
 .lsbar i{display:block;height:100%;background:var(--sage);border-radius:3px}
 .lsbar i.over{background:var(--signal)}
@@ -1477,7 +1492,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-30c · rookie years from the sheet only for players on a team';
+const APP_BUILD = '2026-10-01d · team names follow Sleeper automatically';
 
 /* ============================================================
    HOME LEAGUE
@@ -2379,6 +2394,19 @@ function weeksLeft(){ return clamp(seasonWeeks() - (+S.live.week||1) + 1, 0, sea
 function irRelief(p, year){
   return (p && p.ir && p.ir.seasonEnding && p.ir.year===year) ? (+p.ir.relief||0) : 0;
 }
+/* Everybody on a team whose season-ending injury is handing cap back this year:
+   what he costs, what comes back, and what still counts. */
+function irBackList(tid, year){
+  const y = year == null ? S.league.season : year;
+  return S.players.filter(p=> p.contract && p.contract.teamId===tid && irRelief(p, y) > 0)
+    .map(p=>{
+      const gross = fixInc(Math.max(0, grossHit(p,y) - retainedOn(p,y)));
+      const back = fixInc(irRelief(p, y));
+      return {p, gross, back, still: fixInc(Math.max(0, gross - back))};
+    })
+    .sort((a,b)=> b.back - a.back);
+}
+function irBackTotal(tid, year){ return fixInc(sum(irBackList(tid, year).map(x=> x.back))); }
 /* What a season-ending designation would hand back, and the numbers behind it.
    Worked out once and used by both the confirmation screen and the commit, so
    the figure a manager agrees to is the figure they get.
@@ -3979,6 +4007,9 @@ function rookieStatusText(p){
     ' \u2014 then the normal extension rules apply.'+
     (rd != null ? ' A round '+rd+' pick, so a deal of at most '+rookieMaxYearsForRound(rd)+' year'+(rookieMaxYearsForRound(rd)===1?'':'s')+'.' : '');
 }
+/* A rookie whose deal already reaches his last allowed year cannot be extended
+   at all yet — so nowhere offers to. */
+function rookieExtBarred(p){ return rookieExtRoom(p) === 0; }
 function rookieHeldWhy(p){
   return p.name+' was taken in the '+rookieFrom(p)+' rookie draft, so he cannot be extended past '+
     rookieEndLimit(p)+' until '+rookieFinalYear(p)+', his last rookie year \u2014 then the normal extension rules apply.';
@@ -5492,7 +5523,7 @@ VIEWS.dash = function(){
         })()}</div></div></div>
       <div class="panel dashtx">
         <div class="ph"><h3>Transaction log</h3><div class="spacer"></div><button class="btn ghost sm" data-a="go" data-r="tx">All of it</button></div>
-        <div class="pb"><div class="log">${S.log.slice(0,14).map(l=>
+        <div class="pb"><div class="log">${S.log.filter(l=> logSees(l)).slice(0,14).map(l=>
           '<div><span class="dim">'+dstr(l.at)+'</span> <span class="dim">'+TX_TYPES[l.type||'admin'].ic+'</span> '+esc(l.text)+'</div>').join('') || '<div class="dim">No moves yet.</div>'}</div></div></div>
     </div>
 
@@ -5502,7 +5533,7 @@ VIEWS.dash = function(){
    salary in a trade and who has to shed it. A tap on a team opens its ladder. */
 function leagueSpaceHTML(){
   const y = S.league.season, me = S.league.myTeamId;
-  const rows = S.teams.map(t=> ({t, cap:teamCapForYear(t.id,y), used:teamCharged(t.id,y), space:capSpace(t.id,y)}))
+  const rows = S.teams.map(t=> ({t, cap:teamCapForYear(t.id,y), used:teamCharged(t.id,y), space:capSpace(t.id,y), ir:irBackTotal(t.id,y)}))
     .sort((a,b)=> b.space - a.space);
   if(!rows.length) return '';
   const top = Math.max(1, ...rows.map(r=> Math.abs(r.space)));
@@ -5512,7 +5543,8 @@ function leagueSpaceHTML(){
       '<div class="lsrow'+(r.t.id===me?' mine':'')+'" data-a="spaceTeam" data-id="'+r.t.id+'" title="'+
         esc(r.t.name)+': '+money(r.used)+' of '+money(r.cap)+' used">'+
         '<span class="lsn num dim">'+(i+1)+'</span>'+
-        '<span class="lst">'+esc(r.t.name)+'<span class="lsu tiny dim">'+money(r.used)+' of '+money(r.cap)+'</span></span>'+
+        '<span class="lst">'+esc(r.t.name)+'<span class="lsu tiny dim">'+money(r.used)+' of '+money(r.cap)+
+          (r.ir ? '<span class="good lsir" data-irsp="1" title="added back from season-ending IR">+'+money(r.ir)+' back from season-ending IR</span>' : '')+'</span></span>'+
         '<span class="lsbar"><i class="'+(r.space<0?'over':'')+'" style="width:'+Math.round(Math.abs(r.space)/top*100)+'%"></i></span>'+
         '<span class="lsv num '+(r.space<0?'bad':'good')+'">'+money(r.space,{plus:true})+'</span></div>').join('')+
     '</div></div>';
@@ -7812,10 +7844,13 @@ function teamSetupModal(){
   const long = (v.name||'').length > NAME_SHRINK_AT;
   const kb = pic ? teamPicSize(pic.src) : 0;
   const isData = pic && /^data:/.test(String(pic.src));
+  const fromSl = namesFollowSleeper(t);
   modal('Your team', `
     <label class="f"><span>Team name</span>
       <input type="text" maxlength="${NAME_MAX}" data-oninput="tsetName" data-k="tsetname"
-        value="${esc(v.name||'')}" placeholder="Call it whatever you like"></label>
+        value="${esc(fromSl ? (t.name||'') : (v.name||''))}" placeholder="Call it whatever you like"${fromSl?' readonly data-fromsleeper="1"':''}></label>
+    ${fromSl ? '<div class="hint" data-slname="1">The name comes from Sleeper. Change it there and it changes here on its own, '+
+      'usually within twenty minutes.</div>' : ''}
     <div class="hint ${long?'':'dim'}">${long
       ? '<b>Past this point the text will be shrunk to fit your name.</b> '+(v.name||'').length+
         ' characters — the heading drops to '+nameSize(v.name)+'px so it still fits on a phone without '+
@@ -8024,7 +8059,8 @@ ACT.tsetFile = (d, el)=>{
 ACT.tsetRemove = ()=>{ const v = ui.tmp.tset; if(!v) return; v.pic = null; v.err = null; teamSetupModal(); };
 ACT.tsetSave = ()=>{
   const v = ui.tmp.tset, t = byId(S.teams, v.teamId); if(!t) return;
-  const name = String(v.name||'').trim();
+  /* A name that follows Sleeper is not changed here. */
+  const name = namesFollowSleeper(t) ? t.name : String(v.name||'').trim();
   if(!name) return toast('A team needs a name','bad');
   const was = t.name;
   t.name = name;
@@ -9041,7 +9077,7 @@ function rosFootLead(label, cls){
    buttons — what the row of small ones does on a wider screen. */
 function rosterActsHTML(p){
   const c = p.contract, y = S.league.season, st = structById(c.structId);
-  const ext = !(waiverBarsExtension(p) || yearsLeft(c) > 2), ce = ext ? canExtend(p) : null;
+  const ext = !(waiverBarsExtension(p) || yearsLeft(c) > 2 || rookieExtBarred(p)), ce = ext ? canExtend(p) : null;
   const row = (btn, note)=> '<div class="ractrow">'+btn+(note ? '<div class="tiny dim">'+note+'</div>' : '')+'</div>';
   return '<div class="ractsum">'+posTag(p.pos)+' '+clubTag(p.nfl)+
       ' <span class="num">'+money(capHit(p,y))+'</span> <span class="dim">in '+y+' \u00b7 '+
@@ -9253,7 +9289,7 @@ VIEWS.teams = function(){
           <td class="right money">${money(c.total)}</td>
           <td class="right nowrap">
             ${!mine ? (isTagged(p)?'<span class="pill warn">tagged</span>':'<span class="tiny dim">—</span>') : `
-            ${(waiverBarsExtension(p) || yearsLeft(p.contract) > 2) ? '' :
+            ${(waiverBarsExtension(p) || yearsLeft(p.contract) > 2 || rookieExtBarred(p)) ? '' :
               '<button class="btn sm ghost'+(canExtend(p).ok?'':' danger')+'" data-a="extend" data-id="'+p.id+'" title="'+
               (canExtend(p).ok?'':esc(canExtend(p).why||''))+'">Extend</button>'}
             ${(S.settings.tag.on && !isWaiver(p))?'<button class="btn sm ghost" data-a="tagPlayer" data-id="'+p.id+'">'+(isTagged(p)?'Tagged':'Tag')+'</button>':''}
@@ -9454,7 +9490,9 @@ VIEWS.teams = function(){
           <tbody>${rows(slotPlayers(tid,'ir'), p=>
             (p.ir&&p.ir.seasonEnding
               ? '<span class="pill">out until '+(S.league.season+1)+'</span>'+(isCommish()?' <button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="active">Override</button>':'')
-              : (mine ? '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>' : '<span class="tiny dim">—</span>')), 'sqI')}
+              : (mine ? '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>'+
+                  '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'" title="he is done for the year: make it season-ending and take the cap back">Season IR</button>'
+                : '<span class="tiny dim">—</span>')), 'sqI')}
           </tbody></table></div>
           <div class="pb"><div class="hint">${(S.settings.ir||{}).mode==='cutoff'
             ? 'This league gives back all of a man\u2019s salary or none of it: under '+irCutoff()+
@@ -9697,6 +9735,8 @@ VIEWS.teams = function(){
               : yearsLeft(p.contract) > 2
                 ? '<span class="tiny dim" title="an extension can only be done in the last two years">'+
                   yearsLeft(p.contract)+' yrs left</span>'
+              : rookieExtBarred(p)
+                ? '<span class="tiny dim" title="'+esc(rookieHeldWhy(p))+'">rookie to '+rookieEndLimit(p)+'</span>'
               : mine ? '<button class="btn sm" data-a="extend" data-id="'+p.id+'">Extend</button>'
               : '<span class="tiny dim">—</span>'}</td></tr>`;
         }).join('') || '<tr><td colspan="12" class="dim center" style="padding:22px">Nobody under contract.</td></tr>'}
@@ -11151,6 +11191,7 @@ ACT.seasonIR = (d)=>{
     ${b.mode==='games' && b.played===0 && (+S.live.week||1)>1
       ? '<div class="hint warn">He has not played a game this season, so the whole year comes back. Change the basis at Settings › Roster if that is not what the league wants.</div>'
       : ''}
+    ${onIR(p) ? '<div class="hint">He is already on injured reserve, so this takes no extra spot — it only makes it season-ending and hands the money back.</div>' : ''}
     <p class="muted tiny">He holds an IR spot and cannot be activated again until ${y+1}. Later years of the deal are untouched.</p>`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
     '<button class="btn pri" data-a="seasonIRGo" data-id="'+p.id+'">'+
@@ -11162,12 +11203,13 @@ ACT.seasonIRGo = (d)=>{
   const p = byId(S.players,d.id), tid = p.contract.teamId, y = S.league.season;
   if(slotRoom(tid,'ir') <= 0 && !onIR(p)){ closeModal(); return toast('No IR spots left','bad'); }
   const b = irBasis(p);
+  const wasIR = onIR(p);
   p.slot = 'ir';
   p.ir = {seasonEnding:true, year:y, week:S.live.week||1, mode:b.mode,
           played:b.played, weeksLeft:b.left, gamesTotal:b.weeks,
           pct: b.pct==null ? null : Math.round(b.pct*1000)/10, relief:b.relief};
   if(b.mode==='cutoff'){ p.ir.cut = b.cut; p.ir.saves = !!b.saves; }
-  logIt(teamName(tid)+' put '+p.name+' on season-ending IR — '+money(p.ir.relief)+' back ('+
+  logIt(teamName(tid)+' put '+p.name+' on season-ending IR'+(wasIR ? ' (already on IR)' : '')+' — '+money(p.ir.relief)+' back ('+
     (b.mode==='cutoff'
       ? 'played '+b.played+', the line is '+b.cut+', so '+(b.saves?'all of it comes back':'nothing comes back')
       : b.mode==='fixed' ? 'the set figure' : b.mode==='weeks'
@@ -11433,7 +11475,7 @@ function playerYears(p){
 }
 /* Everything the league log has said about this player. */
 function playerHistory(p){
-  return (S.log||[]).filter(l=> (l.players||[]).indexOf(p.id) >= 0);
+  return (S.log||[]).filter(l=> (l.players||[]).indexOf(p.id) >= 0 && logSees(l));
 }
 /* Where he sits on his NFL club, as Sleeper has it. */
 function depthAt(p){
@@ -12392,22 +12434,68 @@ async function pullSleeperSlots(quiet){
   if(n){ clearCapCache(); save(); if(!quiet) render(); }
   return n;
 }
+/* ---- Team names follow Sleeper ----------------------------------------------
+   Whatever a manager calls his team on Sleeper is what it is called here. Each
+   roster is team t<roster_id>, so a name always lands on the right team, and a
+   roster nobody owns on Sleeper keeps the name it has. Checked every twenty
+   minutes or so — two small requests to Sleeper, nothing through the league's
+   server unless a name has actually changed. */
+function namesFollowSleeper(t){
+  return !!(sleeperLeague() && t && /^t\d+$/.test(String(t.id||'')));
+}
+function sleeperTeamName(u){
+  if(!u) return '';
+  return String(((u.metadata||{}).team_name) || u.display_name || '').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX);
+}
+function applySleeperNames(users, rosters){
+  if(!Array.isArray(users) || !Array.isArray(rosters) || !rosters.length) return [];
+  const byUser = {}; users.forEach(u=>{ if(u && u.user_id) byUser[u.user_id] = u; });
+  const changed = [];
+  rosters.forEach(r=>{
+    const t = byId(S.teams, 't'+r.roster_id); if(!t) return;
+    const nm = sleeperTeamName(byUser[r.owner_id]);
+    if(!nm || nm === t.name) return;
+    const was = t.name || '';
+    t.name = nm;
+    /* The short code follows too, unless somebody set one of their own. */
+    if(!t.abbr || t.abbr === was.slice(0,3).toUpperCase()) t.abbr = nm.slice(0,3).toUpperCase();
+    /* The same rename seen on two phones at once is one line, not two. */
+    logIt('\u201c'+was+'\u201d is now \u201c'+nm+'\u201d \u2014 renamed on Sleeper',
+      {type:'admin', teams:[t.id], id:'nm:'+t.id+':'+nm.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,40)});
+    changed.push({id:t.id, was, now:nm});
+  });
+  return changed;
+}
+async function pullSleeperNames(force){
+  const id = sleeperLeague(); if(!id) return 0;
+  if(!force && Date.now() - (ui.tmp.namesAt||0) < 20*60000) return 0;
+  ui.tmp.namesAt = Date.now();
+  const [users, rosters] = await Promise.all([
+    getJSON(SLEEPER+'/league/'+id+'/users'),
+    getJSON(SLEEPER+'/league/'+id+'/rosters')
+  ]);
+  const changed = applySleeperNames(users, rosters);
+  if(changed.length){ clearCapCache(); if(viewAsTeam()) saveLocal(); else save(); }
+  return changed.length;
+}
 /* Pull whatever the league has asked to mirror. Records what happened so the
    page can say whether it is actually working. */
 async function runSleeperSync(quiet){
   const cfg = S.settings.live || {};
   ui.tmp.syncBusy = true; ui.tmp.syncStartedAt = Date.now();
   try{
-    let lines = 0, slots = 0;
+    let lines = 0, slots = 0, names = 0;
+    try{ names = await pullSleeperNames(!quiet); }catch(e){}
     /* Kickoff times move rarely — once an hour is plenty. */
     if((Date.now() - (S.live.kicksAt||0)) > 3600000) { try{ await pullKickoffs(); }catch(e){} }
     if(cfg.pullLineups) lines = await pullSleeperLineups(null, true);
     if(cfg.pullTaxi || cfg.pullIR) slots = await pullSleeperSlots(true);
     S.live.syncAt = Date.now(); S.live.syncErr = null;
-    S.live.syncNote = lines+' lineup'+(lines===1?'':'s')+', '+slots+' squad move'+(slots===1?'':'s');
+    S.live.syncNote = lines+' lineup'+(lines===1?'':'s')+', '+slots+' squad move'+(slots===1?'':'s')+
+      (names ? ', '+names+' team name'+(names===1?'':'s') : '');
     ui.tmp.syncBusy = false;
     if(route==='live' || route==='teams' || route==='dash') render();
-    return {lines, slots};
+    return {lines, slots, names};
   }catch(e){
     S.live.syncErr = e.message || 'no answer';
     S.live.syncAt = Date.now();
@@ -12433,7 +12521,8 @@ ACT.sleeperSyncNow = async ()=>{
   try{
     const r = await runSleeperSync(false);
     save(); render();
-    toast('Lineups for '+r.lines+' team'+(r.lines===1?'':'s')+', '+r.slots+' taxi and injured reserve spots','good');
+    toast('Lineups for '+r.lines+' team'+(r.lines===1?'':'s')+', '+r.slots+' taxi and injured reserve spots'+
+      (r.names ? ', '+r.names+' team name'+(r.names===1?'':'s')+' from Sleeper' : ''),'good');
   }catch(e){
     toast('Could not read that league — '+(e.message||'no answer'),'bad');
   }
@@ -15166,7 +15255,7 @@ ACT.playerCard = (d)=>{
       ? '<button class="btn" data-a="interest" data-id="'+p.id+'">'+
           (interestList().some(x=> x.from===actingTeam() && x.playerId===p.id && !x.cleared) ? 'Update interest' : 'Show interest')+'</button>'+
         '<button class="btn pri" data-a="tradeFor" data-id="'+p.id+'">Start a trade</button>' : '')+
-    (c && !isWaiver(p)?'<button class="btn" data-a="extend" data-id="'+p.id+'">Extend</button>':'')+
+    (c && !isWaiver(p) && !rookieExtBarred(p)?'<button class="btn" data-a="extend" data-id="'+p.id+'">Extend</button>':'')+
     (c && isCommish() && (c.extensions||[]).length ? '<button class="btn ghost danger" data-a="undoExtension" data-id="'+p.id+'">Undo extension</button>' : '')+
     '<button class="btn pri" data-a="editContract" data-id="'+p.id+'">'+(c?'Edit contract':'Sign him')+'</button>');
 };
@@ -15264,9 +15353,12 @@ function claimBlocked(c){
   if(!p || !p.contract) return 'he is no longer under contract';
   if(p.contract.teamId !== c.fromTeam) return 'he has already been traded';
   if(!onTaxi(p)) return 'he was promoted to the active roster';
-  const pending = S.trades.some(t=> (t.status==='proposed' || t.status==='review') &&
-    [].concat(t.a.players||[], t.b.players||[]).indexOf(p.id) >= 0);
-  if(pending) return 'there is a trade on the table for him';
+  const on = S.trades.filter(t=> (t.status==='proposed' || t.status==='review') &&
+    [].concat((t.a||{}).players||[], (t.b||{}).players||[]).indexOf(p.id) >= 0);
+  /* This is told to the whole league, so an offer nobody else can see yet is
+     not named — only a trade already in review is. */
+  if(on.length) return on.some(t=> t.status==='review') ? 'there is a trade on the table for him'
+    : 'he could not be claimed at that moment';
   return null;
 }
 function claimCanLand(c){
@@ -16470,6 +16562,35 @@ function capPendingBanner(pend, tid){
     ' <button class="btn sm ghost" data-a="capPending" data-on="0">Show without them</button></div>';
 }
 ACT.capPending = (d)=>{ ui.tmp.capPending = d.on === '1'; render(); };
+/* The cap a team is getting back from season-ending injuries this year, man by
+   man, and what it does to their space. */
+function irBackPanel(tid){
+  const y = S.league.season, list = irBackList(tid, y);
+  if(!list.length) return '';
+  const back = irBackTotal(tid, y), space = capSpace(tid, y);
+  return '<div class="panel irback" data-irpanel="1" style="margin-top:14px">'+
+    '<div class="ph"><h3>Cap added back \u2014 season-ending IR</h3><div class="spacer"></div>'+
+      '<span class="pill ok num">+'+money(back)+' in '+y+'</span></div>'+
+    '<div class="pb tight scrollx"><table><thead><tr><th>Player</th><th class="right">'+y+' salary</th>'+
+      '<th class="right">Added back</th><th class="right">Still counts</th></tr></thead><tbody>'+
+    list.map(x=>{
+      const ir = x.p.ir || {};
+      const basis = ir.mode==='cutoff' ? 'played '+(ir.played||0)+', under the line of '+(ir.cut||irCutoff())
+        : ir.mode==='fixed' ? 'set figure'
+        : ir.mode==='weeks' ? (ir.weeksLeft!=null ? ir.weeksLeft+' of '+(ir.gamesTotal||seasonWeeks())+' weeks left' : 'weeks left')
+        : (ir.played!=null ? 'played '+ir.played+' of '+(ir.gamesTotal||seasonWeeks()) : 'games played');
+      return '<tr><td>'+esc(x.p.name)+' '+posTag(x.p.pos)+'<div class="tiny dim">since week '+(ir.week||'?')+' \u00b7 '+esc(basis)+'</div></td>'+
+        '<td class="right num">'+money(x.gross)+'</td>'+
+        '<td class="right num good">+'+money(x.back)+'</td>'+
+        '<td class="right num">'+money(x.still)+'</td></tr>';
+    }).join('')+
+    '</tbody><tfoot><tr><td><b>All of it</b></td><td class="right num">'+money(sum(list.map(x=>x.gross)))+'</td>'+
+      '<td class="right num good"><b>+'+money(back)+'</b></td><td class="right num">'+money(sum(list.map(x=>x.still)))+'</td></tr></tfoot>'+
+    '</table></div>'+
+    '<div class="pb"><div class="hint">'+y+' cap space is <b class="num '+(space<0?'bad':'good')+'">'+money(space,{plus:true})+'</b> with it, '+
+      'and would be <span class="num">'+money(space - back,{plus:true})+'</span> without it. '+
+      'Only '+y+' changes \u2014 later years of these deals count in full.</div></div></div>';
+}
 function capLadderHTML(pend){
   const tid = currentTeamId(), yrs = projYears();
   const inc = (pend && pend.incoming) || {};
@@ -16483,7 +16604,9 @@ function capLadderHTML(pend){
     return `<div class="lrow${coming?' incoming':''}"${coming?' data-incoming="1"':''}>
       <div class="lname"><span class="pn">${esc(p.name)}</span>
         <span class="pm">${posTag(p.pos)} <span>${ct.years} yr</span> <span>${money(ct.total)}</span></span>
-        ${coming?'<span class="pm"><span class="pill warn" title="'+esc(coming.tr)+'">Incoming · in review</span></span>':''}</div>
+        ${coming?'<span class="pm"><span class="pill warn" title="'+esc(coming.tr)+'">Incoming · in review</span></span>':''}
+        ${irRelief(p, S.league.season) > 0 ? '<span class="pm"><span class="pill ok" data-irback="'+p.id+'" title="season-ending IR: '+
+          money(irRelief(p, S.league.season))+' of his '+S.league.season+' salary is back on the cap">IR · '+money(irRelief(p, S.league.season))+' back</span></span>' : ''}</div>
       ${yrs.map(y=>{
         const h=capHit(p,y);
         if(!h) return '<div class="cell empty"></div>';
@@ -16533,6 +16656,14 @@ function capLadderHTML(pend){
             return '<div><span class="num '+(v>0?'bad':v<0?'good':'dim')+'">'+(v?money(v,{plus:true}):'—')+'</span></div>';
           }).join('')+'</div>';
         })()}
+        ${(()=>{
+          /* Season-ending IR, added back — already taken off his bar and the total, shown here so it is plain. */
+          if(!irBackTotal(tid, S.league.season)) return '';
+          return '<div class="capline" data-irline="1"><div>Season-ending IR, added back</div>'+yrs.map(y=>{
+            const v = irBackTotal(tid, y);
+            return '<div><span class="num '+(v?'good':'dim')+'">'+(v?'+'+money(v):'—')+'</span></div>';
+          }).join('')+'</div>';
+        })()}
         <div class="capline"><div>Total against the cap</div>${yrs.map(y=>{
           /* Contracts plus adjustments — the figure the bar and the space agree with. */
           const u=teamCharged(tid,y), cp=teamCapForYear(tid,y), s=capSpace(tid,y);
@@ -16545,6 +16676,7 @@ function capLadderHTML(pend){
                         : '<div class="tiny bad">'+money(rv)+' carried against you</div>'; })()+'</div>').join('')}</div>
       </div>
     </div></div>
+    ${irBackPanel(tid)}
     <div class="hint">Each bar is one year of one contract, scaled against the biggest single-year hit on the roster. A front loaded deal steps down, a back loaded deal steps up. Hatched cells are years the contract does not cover.</div>
     ` : `
     <div class="panel"><div class="pb scrollx"><table>
@@ -16794,7 +16926,7 @@ function processMulti(tr){
       tr.reason = teamName(lim[0].team)+' would be past the contract length limits';
       tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
       notify('Trade blocked', teamName(lim[0].team)+' cannot hold that many long deals.','bad', legTeams(tr));
-      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
+      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr), only:rejectTeams(tr)});
       return;
     }
   }
@@ -16805,7 +16937,7 @@ function processMulti(tr){
       tr.reason = 'Would put '+teamName(bad.team)+' '+money(bad.over)+' over the '+S.league.season+' cap';
       tr.log.unshift({at:Date.now(), text:'Blocked — '+tr.reason});
       notify('Trade blocked', tr.reason, 'bad', legTeams(tr));
-      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr)});
+      logIt('Multi-team trade rejected — '+tr.reason, {type:'trade', teams:legTeams(tr), only:rejectTeams(tr)});
       return;
     }
   }
@@ -17926,6 +18058,93 @@ function txMeta(tr){
 function tradeTeams(tr){
   return tr.type==='multi' ? (tr.teams||[]) : [tr.a && tr.a.teamId, tr.b && tr.b.teamId].filter(Boolean);
 }
+/* ---- Offers that were turned down ------------------------------------------
+   A rejected offer is between the teams in it. Nobody else sees it — not on the
+   History tab, not in the transaction log, not as a declined counter on a trade
+   in review. A commissioner standing in for one of those teams sees it as that
+   team does. */
+function rejectTeams(tr){
+  if(!tr) return [];
+  if(tr.type!=='multi') return tradeTeams(tr);
+  const out = (tr.teams||[]).slice();
+  legTeams(tr).forEach(x=>{ if(out.indexOf(x) < 0) out.push(x); });
+  return out;
+}
+function viewerTeam(me){ return me === undefined ? actingTeam() : me; }
+/* Offers still waiting on an answer, offers turned down and offers left to run
+   out are all between the teams in them. Once both sides say yes and it goes to
+   review, the whole league sees it — that is what review is for. */
+const PRIVATE_TRADE = ['proposed', 'rejected', 'expired'];
+function tradePrivate(tr){ return !!tr && PRIVATE_TRADE.indexOf(tr.status) >= 0; }
+function seesTrade(tr, me){
+  if(!tradePrivate(tr)) return true;
+  const who = viewerTeam(me);
+  return !!who && rejectTeams(tr).indexOf(who) >= 0;
+}
+function counterParties(tr, ct){ return [ct && ct.byTeamId, tr && ct && (tr[ct.side]||{}).teamId].filter(Boolean); }
+function seesCounter(tr, ct, me){
+  if(!ct || ct.status !== 'declined') return true;
+  const who = viewerTeam(me);
+  return !!who && counterParties(tr, ct).indexOf(who) >= 0;
+}
+/* A log line can be for named teams only. One tied to a trade follows the
+   trade: the offer line is private while the offer is, and public once the
+   trade is in review or done. */
+function logSees(l, me){
+  if(l && l.tr){
+    const tr = byId(S.trades||[], l.tr);
+    if(tr) return seesTrade(tr, me);
+  }
+  if(!l || !Array.isArray(l.only) || !l.only.length) return true;
+  const who = viewerTeam(me);
+  return !!who && l.only.indexOf(who) >= 0;
+}
+/* Lines written before this rule went in: a rejected offer in the league log, and
+   a turned-down counter in a trade's own log, are marked for their teams. Runs on
+   every load; anything already marked is left alone. */
+function privateRejects(st){
+  if(!st || !Array.isArray(st.trades)) return;
+  const tm = (tr)=> tr.type==='multi'
+    ? (function(){ const o=(tr.teams||[]).slice(); (tr.legs||[]).forEach(l=>{ [l.from,l.to].forEach(x=>{ if(x && o.indexOf(x)<0) o.push(x); }); }); return o; })()
+    : [tr.a && tr.a.teamId, tr.b && tr.b.teamId].filter(Boolean);
+  const nameOf = (id)=> ((st.teams||[]).find(t=> t.id===id)||{}).name || '';
+  const rejected = st.trades.filter(tr=> tr && tr.status==='rejected');
+  (st.log||[]).forEach(l=>{
+    if(!l || (Array.isArray(l.only) && l.only.length)) return;
+    const m = /^(Multi-team trade|Trade) rejected(?: \u2014 (.*))?$/.exec(String(l.text||''));
+    if(!m) return;
+    let teams = (l.teams||[]).filter(Boolean);
+    if(!teams.length){
+      const tr = rejected.find(x=> m[2] && x.reason === m[2] && Math.abs((+x.createdAt||0) - (+l.at||0)) < 400*86400000) ||
+                 rejected.find(x=> m[2] && x.reason === m[2]);
+      if(tr) teams = tm(tr);
+    }
+    if(teams.length){ l.only = teams; if(!(l.teams||[]).length) l.teams = teams.slice(); }
+  });
+  /* Offer lines from before: tied to their trade, found by its teams and the
+     moment it was put up. One whose trade cannot be found is left as it was. */
+  const offers = st.trades.filter(tr=> tr && tr.createdAt);
+  (st.log||[]).forEach(l=>{
+    if(!l || l.tr || !/^(Multi-team trade|Trade) proposed \u2014 /.test(String(l.text||''))) return;
+    const lt = (l.teams||[]).slice().sort().join('|');
+    let best = null, gap = 10*60000;
+    offers.forEach(tr=>{
+      const tt = tm(tr).slice().sort().join('|');
+      const d = Math.abs((+tr.createdAt||0) - (+l.at||0));
+      if(tt === lt && d <= gap){ best = tr; gap = d; }
+    });
+    if(best){ l.tr = best.id; if(!(l.only||[]).length) l.only = tm(best); }
+  });
+  st.trades.forEach(tr=>{
+    if(!tr || !(tr.counters||[]).length || !Array.isArray(tr.log)) return;
+    tr.counters.forEach(ct=>{
+      if(!ct || ct.status!=='declined') return;
+      const side = (tr[ct.side]||{}).teamId;
+      const line = nameOf(side)+' turned down '+nameOf(ct.byTeamId)+"'s counter";
+      tr.log.forEach(x=>{ if(x && !x.only && x.text === line) x.only = [ct.byTeamId, side].filter(Boolean); });
+    });
+  });
+}
 function tradeAwaits(tr, teamId){
   if(tr.status!=='proposed') return false;
   return tr.type==='multi'
@@ -18095,7 +18314,8 @@ function processTrade(tr){
     const bad = test();
     if(bad){
       tr.status='rejected'; tr.reason='Would put '+teamName(bad)+' over the '+S.league.season+' cap';
-      notify('Trade rejected', tr.reason, 'bad', [tr.a.teamId, tr.b.teamId]); logIt('Trade rejected — '+tr.reason); return;
+      notify('Trade rejected', tr.reason, 'bad', [tr.a.teamId, tr.b.teamId]);
+      logIt('Trade rejected — '+tr.reason, Object.assign(txMeta(tr), {only:rejectTeams(tr)})); return;
     }
   }
   const graded = tradeGradePre(tr);
@@ -18594,7 +18814,7 @@ ACT.sendTrade = ()=>{
     S.trades.unshift(tr);
     notify('Trade offer', teamName(actingTeam())+' put up a '+teams.length+'-team deal.', 'info', teams);
     logIt('Multi-team trade proposed — '+teams.map(teamName).join(', '),
-      {type:'trade', teams, players:[].concat.apply([], legs.map(l=>l.players||[]))});
+      {type:'trade', teams, players:[].concat.apply([], legs.map(l=>l.players||[])), tr:tr.id, only:rejectTeams(tr)});
     ui.tmp.multi = null;
     closeModal(); save(); go('trades'); toast('Offer sent','good');
     return;
@@ -18609,7 +18829,7 @@ ACT.sendTrade = ()=>{
   S.trades.unshift(tr);
   notify('Trade offer', teamName(tb.a.teamId)+' sent '+teamName(tb.b.teamId)+' an offer.',
     'info', [tb.a.teamId, tb.b.teamId]);
-  logIt('Trade proposed — '+tradeLine(tr), txMeta(tr));
+  logIt('Trade proposed — '+tradeLine(tr), Object.assign(txMeta(tr), {tr:tr.id, only:rejectTeams(tr)}));
   closeModal(); save(); go('trades'); toast('Offer sent','good');
 };
 ACT.openTrade = (d)=>{ go('trades'); ui.sub = 'review'; ui.tmp.focusTrade = d.id; render(); };
@@ -18636,7 +18856,7 @@ ACT.multiReject = (d)=>{
   const tr = byId(S.trades,d.id);
   tr.status='rejected';
   tr.log.unshift({at:Date.now(), text:teamName(actingTeam())+' turned it down'});
-  logIt('Multi-team trade rejected', {type:'trade', teams:tr.teams});
+  logIt('Multi-team trade rejected', {type:'trade', teams:tr.teams, only:rejectTeams(tr)});
   save(); render();
 };
 /* Who put this offer up. Older trades did not record it, so fall back to the
@@ -18929,7 +19149,8 @@ ACT.declineCounter = (d)=>{
   const tr = byId(S.trades,d.id), ct = tr && byId(tr.counters||[],d.cid);
   const no = counterAnswerNo(tr, ct); if(no) return toast(no,'bad');
   ct.status='declined'; ct.declinedAt = Date.now();
-  tr.log.unshift({at:Date.now(), text:teamName(tr[ct.side].teamId)+' turned down '+teamName(ct.byTeamId)+"'s counter"});
+  tr.log.unshift({at:Date.now(), text:teamName(tr[ct.side].teamId)+' turned down '+teamName(ct.byTeamId)+"'s counter",
+    only:counterParties(tr, ct)});
   save(); render();
 };
 
@@ -20737,9 +20958,10 @@ VIEWS.schedule = function(){
 };
 VIEWS.trades = function(){
   const me = actingTeam(), sub = ui.sub || 'review';
-  const inbox = S.trades.filter(t=> t.status==='proposed');
+  const inbox = S.trades.filter(t=> t.status==='proposed' && seesTrade(t, me));
   const review = S.trades.filter(t=> t.status==='review');
-  const hist = S.trades.filter(t=> ['approved','rejected','replaced','expired','reversed'].indexOf(t.status)>=0).slice(0,20);
+  const hist = S.trades.filter(t=> ['approved','rejected','replaced','expired','reversed'].indexOf(t.status)>=0 &&
+    seesTrade(t, me)).slice(0,20);
   const c = S.settings.trades;
 
   const multiCard = (tr)=>{
@@ -20776,7 +20998,7 @@ VIEWS.trades = function(){
           '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button>'+
           '<button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button></div>':''}
         ${undoWindowLeft(tr)?'<div class="row" style="margin-top:10px"><button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button></div>':''}
-        <div class="log" style="margin-top:10px">${(tr.log||[]).slice(0,4).map(x=>'<div><span class="dim">'+dstr(x.at)+'</span> '+esc(x.text)+'</div>').join('')}</div>
+        <div class="log" style="margin-top:10px">${(tr.log||[]).filter(x=> logSees(x, me)).slice(0,4).map(x=>'<div><span class="dim">'+dstr(x.at)+'</span> '+esc(x.text)+'</div>').join('')}</div>
       </div></div>`;
   };
   /* When it was accepted, and — separately — when a counter was taken. The
@@ -20835,8 +21057,8 @@ VIEWS.trades = function(){
           ${tr.status==='review' && isCommish() ? '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button><button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button>':''}
           ${undoWindowLeft(tr) ? '<button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button>':''}
         </div>
-        ${(tr.counters||[]).length?`<div class="hr"></div><div class="flabel">Counters</div>
-          ${tr.counters.map(ct=>`<div class="assetbox"><div class="row">
+        ${(tr.counters||[]).filter(ct=> seesCounter(tr, ct, me)).length?`<div class="hr"></div><div class="flabel">Counters</div>
+          ${tr.counters.filter(ct=> seesCounter(tr, ct, me)).map(ct=>`<div class="assetbox"><div class="row">
             <div style="flex:1;min-width:180px"><b style="font-weight:500">${esc(teamName(ct.byTeamId))}</b>
               <span class="dim tiny">wants from ${esc(teamName(tr[ct.side].teamId))}</span>
               <div style="margin-top:5px">${assetChips(ct.wants)}</div>
@@ -20846,7 +21068,7 @@ VIEWS.trades = function(){
                 : '<span class="pill">Waiting on '+esc(teamName(tr[ct.side].teamId))+'</span>')
               : '<span class="pill '+(ct.status==='declined'?'':'ok')+'">'+ct.status+'</span>'}</div>
           </div></div>`).join('')}`:''}
-        <div class="hr"></div><div class="log">${(tr.log||[]).slice(0,5).map(l=>'<div><span class="dim">'+dstr(l.at)+'</span> — '+esc(l.text)+'</div>').join('')}</div>
+        <div class="hr"></div><div class="log">${(tr.log||[]).filter(x=> logSees(x, me)).slice(0,5).map(l=>'<div><span class="dim">'+dstr(l.at)+'</span> — '+esc(l.text)+'</div>').join('')}</div>
       </div></div>`;
   };
 
@@ -26467,6 +26689,7 @@ function txFilter(){
   return f;
 }
 function txMatches(l, f){
+  if(!logSees(l)) return false;
   const anyType = Object.keys(f.types).some(k=>f.types[k]);
   const anyTeam = Object.keys(f.teams).some(k=>f.teams[k]);
   if(anyType && !f.types[l.type||'admin']) return false;
@@ -26478,11 +26701,12 @@ VIEWS.tx = function(){
   const f = txFilter();
   const rows = S.log.filter(l=> txMatches(l,f));
   const counts = {};
-  S.log.forEach(l=>{ const k=l.type||'admin'; counts[k]=(counts[k]||0)+1; });
+  const seen = S.log.filter(l=> logSees(l));
+  seen.forEach(l=>{ const k=l.type||'admin'; counts[k]=(counts[k]||0)+1; });
   const anyOn = Object.keys(f.types).some(k=>f.types[k]) || Object.keys(f.teams).some(k=>f.teams[k]) || f.q;
   return `
   <div class="section">
-    <header><div><div class="eyebrow">${rows.length} of ${S.log.length} entries</div><h1>Transactions</h1></div>
+    <header><div><div class="eyebrow">${rows.length} of ${seen.length} entries</div><h1>Transactions</h1></div>
       <div class="spacer"></div>
       ${anyOn?'<button class="btn ghost" data-a="txClear">Clear filters</button>':''}
       <button class="btn" data-a="txExport">Export CSV</button></header>
@@ -31095,7 +31319,10 @@ document.addEventListener('change', e=>{
       const j = JSON.parse(rd.result);
       if(!j.teams || !j.settings) throw new Error('that is not a league file');
       keepBackup(deep(S), 'before loading a league file');
+      const was = S;
       S = migrate(j);
+      /* A file is a snapshot. The messages written since it was taken stay. */
+      joinStreamsInto(S, was);
       /* The file may have been exported from somewhere else, or before this
          address was tied to a league. The deployed connection wins, so loading
          a file can never point this site at the wrong server. */
@@ -32530,7 +32757,11 @@ ACT.restoreBackup = async (d)=>{
   if(!b || !b.state) return toast('That copy has gone','bad');
   await keepBackup(S, 'before restoring');
   try{
+    const was = S;
     S = migrate(b.state);
+    /* A saved copy puts the league back as it was. The inbox, the room, the
+       notices and the log keep everything written since. */
+    joinStreamsInto(S, was);
     Store.set(KEY, S);
     closeModal(); render();
     toast('Restored '+((b.state.league||{}).name||'the league'),'good');
@@ -32647,9 +32878,18 @@ ACT.forceMineGo = async ()=>{
   closeModal();
   try{
     keepBackup(deep(S), 'before sending this copy up');
-    /* Read the server revision and save on top of it. */
-    const r = await Supa.client.from('leagues').select('rev').eq('id', Supa.cfg().leagueId).maybeSingle();
-    if(r && r.data && (+r.data.rev||0) >= (+S.rev||0)) S.rev = +r.data.rev||0;
+    /* Read the server copy and save on top of it. This copy's contracts,
+       rosters and settings win — that is the point of the button — but every
+       message, chat line, notice and log entry on the server is joined in
+       first. Saving over the server used to wipe the inbox of anything this
+       device had not seen yet. */
+    const r = await Supa.client.from('leagues').select('rev,state').eq('id', Supa.cfg().leagueId).maybeSingle();
+    if(r && r.data){
+      try{ Net.add('down', JSON.stringify(r.data.state||'').length); }catch(e){}
+      joinStreamsInto(S, r.data.state);
+      if((+r.data.rev||0) >= (+S.rev||0)) S.rev = +r.data.rev||0;
+      Store.set(KEY, S);
+    }
     await Supa.push(true);
     toast('Sent up — the server now has this copy','good');
   }catch(e){ toast('Could not send it — '+e.message,'bad'); }
@@ -32657,6 +32897,7 @@ ACT.forceMineGo = async ()=>{
 ACT.conflictMine = ()=>{
   const c = ui.tmp.conflict; if(!c) return;
   keepBackup(deep(S), 'before overwriting the server copy');
+  joinStreamsInto(S, c.state);        /* theirs loses its edits, never its messages */
   S.rev = c.rev;                      /* line up with the server, then save over it */
   ui.tmp.conflict = null;
   closeModal(); save(true);
@@ -32846,6 +33087,27 @@ function mergeStreams(before, after){
   (Array.isArray(before.dms)?before.dms:[]).forEach(m=>{ if(m && m.read && m.id) wasRead[m.id]=1; });
   (after.dms||[]).forEach(m=>{ if(m && m.id && wasRead[m.id]) m.read = true; });
 }
+/* Folding another copy's messages into this one, with this copy's wording
+   winning on a duplicate. Used wherever this device is about to save over the
+   server or replace what it holds — "this copy is the right one", "keep mine",
+   loading a league file, restoring a saved copy — so none of those can ever
+   take a message, a chat line, a notice or a log entry away. Nothing that only
+   gets added to is lost by choosing one copy over another. */
+function joinStreamsInto(target, other){
+  if(!target || !other || typeof other!=='object') return false;
+  const sig = mergeSig(target);
+  STREAMS.forEach(s=>{
+    if(!Array.isArray(other[s.key]) || !other[s.key].length) return;
+    const joined = joinStream(other[s.key], target[s.key], s.cap, s.at);
+    target[s.key] = (s.key==='chat') ? joined.slice().reverse() : joined;
+  });
+  /* Read in either copy is read. */
+  const wasRead = {};
+  (Array.isArray(other.dms)?other.dms:[]).forEach(m=>{ if(m && m.read && m.id) wasRead[m.id]=1; });
+  (target.dms||[]).forEach(m=>{ if(m && m.id && wasRead[m.id]) m.read = true; });
+  try{ mergeEng(other, target); }catch(e){}
+  return mergeSig(target) !== sig;
+}
 function adoptRemote(state, rev, force){
   /* A copy with no league in it is not a copy. Once the league passed 1 MB,
      Realtime started sending updates with the league stripped out (its limit),
@@ -32862,6 +33124,9 @@ function adoptRemote(state, rev, force){
        ever wanted, and send this one up so the server catches up. No question
        asked — the fuller copy wins. */
     try{ keepBackup(state, 'the thinner copy from the server, not used'); }catch(e){}
+    /* Its contracts are not taken, but its messages are: anything written into
+       it that this phone never had would otherwise be saved over. */
+    joinStreamsInto(S, state);
     S.rev = Math.max(+S.rev||0, +rev||0);      /* line up so the next save lands */
     if(typeof Supa==='object' && Supa.ready()) supaPush();
     if(Date.now() - (ui.tmp.thinToastAt||0) > 60000){
@@ -33220,10 +33485,12 @@ const Supa = {
         const needs = await this.fetchAndAdopt(head);
         this.set('ok','Up to date at revision '+head);
         renderQuiet();
-        if(needs) setTimeout(()=> this.push(), 300);
+        if(needs || (unsentAt() && !this.unsentTried)){ this.unsentTried = true; setTimeout(()=> this.push(), 300); }
       } else {
         this.set('ok','Up to date');
         if(loud) toast('Already up to date');
+        /* Nothing newer up there — but something written here never made it. */
+        if(unsentAt() && !this.unsentTried){ this.unsentTried = true; setTimeout(()=> this.push(), 300); }
       }
     }catch(e){ this.set('bad', e.message); if(loud) toast('Pull failed — '+e.message,'bad'); }
     this.busy = false;
@@ -33316,6 +33583,7 @@ const Supa = {
     if(!this.ready()){ if(loud) toast('Sign in and pick a league first','bad'); return; }
     if(this.busy){ this.pending = true; return; }
     this.busy = true;
+    const startedAt = Date.now();
     try{
       /* Somebody else saved since this phone last looked? Take theirs first —
          packed, and small — rather than pushing into a clash, which sends the
@@ -33326,7 +33594,7 @@ const Supa = {
         renderQuiet();
         /* Taking theirs is what a clash did anyway; only send if joining the two
            left this phone with something theirs lacked. */
-        if(!needs){ this.busy = false; this.set('ok','Up to date at revision '+head); return; }
+        if(!needs){ this.busy = false; unsentClear(startedAt); this.set('ok','Up to date at revision '+head); return; }
       }
       /* The league as it travels: without what each phone fetches for itself. */
       const json = JSON.stringify(syncCopy(S));
@@ -33342,6 +33610,7 @@ const Supa = {
           /* Their copy has lost most of the contracts — keep ours and save over
              it. Theirs goes into the saved copies either way. */
           try{ keepBackup(theirs, 'the thinner copy from the server, not used'); }catch(e){}
+          joinStreamsInto(S, theirs);
           S.rev = theirRev;
           this.set('ok','Synced');
           this.busy = false;
@@ -33370,6 +33639,7 @@ const Supa = {
       } else {
         S.rev = +(data && data.rev) || ((+S.rev||0)+1);
         this.lastPush = Date.now();
+        unsentClear(startedAt);
         this.set('ok','Saved revision '+S.rev);
         if(loud) toast('Saved','good');
         /* A packed copy for the others to fetch, and a word to them that it is there. */
@@ -33422,12 +33692,31 @@ const Supa = {
   }
 };
 let supaT = null;
+/* A save that has not reached the server yet. Kept in this browser on its own,
+   not in the league, so it survives the page being closed, reloaded for a new
+   deploy, or put away by the phone in the three seconds before the upload. The
+   next time the app opens, it goes up — a message written just before a reload
+   used to sit on the sender's phone and nowhere else. */
+const UNSENT_KEY = 'frontoffice.unsent';
+function unsentMark(){ try{ localStorage.setItem(UNSENT_KEY, String(Date.now())); }catch(e){} }
+function unsentAt(){ try{ return +localStorage.getItem(UNSENT_KEY) || 0; }catch(e){ return 0; } }
+function unsentClear(upTo){
+  try{ const at = unsentAt(); if(at && at <= upTo) localStorage.removeItem(UNSENT_KEY); }catch(e){}
+}
+/* Leaving the page: what is waiting goes now rather than in three seconds. */
+function flushSaves(){
+  if(saveT){ clearTimeout(saveT); saveT = null; try{ Store.set(KEY, S); }catch(e){} }
+  if(supaT){ clearTimeout(supaT); supaT = null; try{ if(Supa.ready()) Supa.push(); }catch(e){} }
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushSaves(); });
+window.addEventListener('pagehide', flushSaves);
 function supaPush(){
   if(!Supa.ready()) return;
+  unsentMark();
   clearTimeout(supaT);
   /* A few seconds' grace, so a burst of changes — a trade touches a dozen
      things — goes up as one save rather than a dozen. */
-  supaT = setTimeout(()=> Supa.push(), 3000);
+  supaT = setTimeout(()=>{ supaT = null; Supa.push(); }, 3000);
 }
 
 /* ============================================================
@@ -33543,6 +33832,8 @@ function migrate(j){
   gadsdenClaim(out);
   blockTestClear(out);
   quietSkipOn(out);
+  /* Turned-down offers are for the teams in them. */
+  try{ privateRejects(out); }catch(e){}
   /* Sleeper, every fifteen seconds, on every single load. No stored value gets
      to override it. */
   enforceFeedDefaults(out);
