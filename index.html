@@ -1477,7 +1477,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-09-30a · extensions close when the playoffs begin, and late cuts on the calendar';
+const APP_BUILD = '2026-09-30c · rookie years from the sheet only for players on a team';
 
 /* ============================================================
    HOME LEAGUE
@@ -3895,44 +3895,99 @@ function rookieFrom(p){
 }
 /* Has he been through the free agency draft? That lifts the restriction. */
 function rookieFreed(p){ return !!(p && p.rookie && p.rookie.hitFA); }
-/* Seasons still left in his window, or null when the rule does not apply. */
+/* ---- The rookie years ---------------------------------------------------------
+   A rookie's deal runs three seasons counting the draft's own — 2025, 2026 and
+   2027 for a 2025 pick. Until the last of them no deal of his, signed, edited or
+   extended, can run past it. In that final season the normal rules take over,
+   extensions included, and the free agency draft lifts the rule altogether.
+   What counts is the year a deal ENDS against his last rookie year — not how
+   long it is against the years left, which refused a 2025 pick's own three-year
+   rookie deal the moment 2026 began. */
+/* The last of his rookie seasons. */
+function rookieFinalYear(p){
+  const from = rookieFrom(p);
+  return from == null ? null : from + Math.max(1, +rookieRules().windowYears || 3) - 1;
+}
+/* Is the rule holding him right now? */
+function rookieHeld(p){
+  if(!rookieWindowOn() || rookieFreed(p)) return false;
+  const f = rookieFinalYear(p);
+  return f != null && S.league.season < f;
+}
+/* The last season any deal of his may reach while he is held, or null. */
+function rookieEndLimit(p){
+  if(!rookieHeld(p)) return null;
+  const cap = Math.max(1, +rookieRules().windowMaxDeal || 3);
+  return Math.min(rookieFinalYear(p), rookieFrom(p) + cap - 1);
+}
+/* Seasons still held, this one included, or null when the rule does not apply. */
 function rookieWindowLeft(p){
-  if(!rookieWindowOn()) return null;
-  if(rookieFreed(p)) return null;
-  const from = rookieFrom(p); if(from==null) return null;
-  const span = +rookieRules().windowYears || 3;
-  const left = (from + span) - S.league.season;
-  return left > 0 ? left : null;
+  if(!rookieHeld(p)) return null;
+  return rookieFinalYear(p) - S.league.season + 1;
 }
-/* The longest deal he may sign or be extended to right now. Counts what he has
-   already been paid for, so a two-year deal leaves one year of extension. */
-function rookieMaxYears(p){
-  const left = rookieWindowLeft(p);
-  if(left == null) return null;
-  const cap = +rookieRules().windowMaxDeal || 3;
-  const c = p.contract;
-  /* Years already served under this deal inside the window. */
-  const served = c ? Math.max(0, S.league.season - (+c.startYear||S.league.season)) : 0;
-  return Math.max(0, Math.min(cap - served, left));
-}
-/* Why a length is not allowed, or null when it is fine. */
-function rookieYearsBlocked(p, years){
-  /* Two ceilings can apply: the round he was drafted in, and the three-year
-     window. Whichever is lower wins. */
+/* The longest deal he may be on, counted from its first year, or null when
+   nothing limits it. */
+function rookieMaxYears(p, startYear){
+  const lim = rookieEndLimit(p);
+  if(lim == null) return null;
+  const start = +startYear || (p.contract ? +p.contract.startYear : 0) || S.league.season;
+  let max = lim - start + 1;
   const rd = rookieRoundOf(p);
-  if(rd != null && rookieWindowLeft(p) != null){
+  if(rd != null) max = Math.min(max, rookieMaxYearsForRound(rd));
+  return Math.max(0, max);
+}
+/* Why a deal this long, starting that year, is not allowed — or null. */
+function rookieYearsBlocked(p, years, startYear){
+  const lim = rookieEndLimit(p);
+  if(lim == null) return null;
+  const start = +startYear || (p.contract ? +p.contract.startYear : 0) || S.league.season;
+  /* Two ceilings can apply: the round he was drafted in, and his rookie years. */
+  const rd = rookieRoundOf(p);
+  if(rd != null){
     const byRound = rookieMaxYearsForRound(rd);
     if(years > byRound)
       return esc(p.name)+' was a round '+rd+' pick, so his deal can run at most '+
         byRound+' year'+(byRound===1?'':'s')+'. Anything shorter is up to you.';
   }
-  const max = rookieMaxYears(p);
-  if(max == null) return null;
-  if(years <= max) return null;
-  const cap = +rookieRules().windowMaxDeal || 3;
-  return esc(p.name)+' was taken in the '+rookieFrom(p)+' rookie draft, so until he reaches free agency his '+
-    'deals cannot run past '+cap+' year'+(cap===1?'':'s')+' in total \u2014 '+
-    (max===0 ? 'he has none left.' : 'at most '+max+' more year'+(max===1?'':'s')+' from here.');
+  const end = start + Math.max(1, +years||1) - 1;
+  if(end <= lim) return null;
+  return esc(p.name)+' was taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
+    ' \u2014 his last rookie year \u2014 no deal of his can run past '+lim+'. This one would run to '+end+'.';
+}
+/* How many years an extension may add while he is held — up to his limit and no
+   further. Null when the rule is not holding him; 0 when his deal reaches it. */
+function rookieExtRoom(p){
+  const lim = rookieEndLimit(p);
+  if(lim == null || !p || !p.contract) return null;
+  const c = p.contract, end = c.startYear + c.years - 1;
+  if(end >= lim) return 0;
+  const base = extReplacesFinal(c) ? end - 1 : end;
+  return Math.max(0, lim - base);
+}
+/* Where he stands under the rookie rule, in a sentence, or '' if not a rookie. */
+function rookieStatusText(p){
+  const from = rookieFrom(p);
+  if(from == null) return '';
+  const f = rookieFinalYear(p), lim = rookieEndLimit(p);
+  if(rookieFreed(p)) return 'Taken in the '+from+' rookie draft. He has been through the free agency draft, so the rookie rule no longer holds him.';
+  if(!rookieWindowOn()) return 'Taken in the '+from+' rookie draft. The rookie rule is switched off in Settings.';
+  if(lim == null) return 'Taken in the '+from+' rookie draft. '+(S.league.season === f
+      ? f+' is his last rookie year, so the normal rules apply \u2014 he can be extended past it.'
+      : 'His rookie years are over \u2014 the normal rules apply.');
+  const rd = rookieRoundOf(p);
+  return 'Taken in the '+from+' rookie draft. Until '+f+', his last rookie year, no deal of his can run past '+lim+
+    ' \u2014 then the normal extension rules apply.'+
+    (rd != null ? ' A round '+rd+' pick, so a deal of at most '+rookieMaxYearsForRound(rd)+' year'+(rookieMaxYearsForRound(rd)===1?'':'s')+'.' : '');
+}
+function rookieHeldWhy(p){
+  return p.name+' was taken in the '+rookieFrom(p)+' rookie draft, so he cannot be extended past '+
+    rookieEndLimit(p)+' until '+rookieFinalYear(p)+', his last rookie year \u2014 then the normal extension rules apply.';
+}
+/* The rookie drafts a commissioner can put somebody in: this season's and the
+   two before, the ones whose players can still be inside their rookie years. */
+function rookieClassYears(){
+  const y = S.league.season, span = Math.max(1, +rookieRules().windowYears || 3);
+  return Array.from({length:span}, (_,i)=> y - i);
 }
 /* Mark a player as a rookie of this draft. */
 function markRookie(p, year, at, round){
@@ -12481,11 +12536,18 @@ ACT.rkCol = (d, el)=>{
   rk[d.f] = +el.value; render();
 };
 /* What the sheet would do, without doing it. */
+/* On a team in this league right now — what a rookie mark from a sheet needs.
+   A man the sheet calls R 25 who is a free agent here, or cut loose and on
+   nobody's books, is left exactly as he is. */
+function onATeam(p){
+  const c = p && p.contract;
+  return !!(c && c.teamId && byId(S.teams, c.teamId));
+}
 function rookiePlan(){
   const rk = ui.tmp.rk;
   if(!rk || !rk.rows) return null;
   const idx = nameIndex();
-  const hits = [], missed = [], skipped = [];
+  const hits = [], missed = [], skipped = [], offTeam = [];
   const seen = {};
   rk.rows.forEach(r=>{
     const nm = String(r[rk.nameCol]==null?'':r[rk.nameCol]).trim();
@@ -12496,10 +12558,11 @@ function rookiePlan(){
     if(!m.p){ missed.push(nm); return; }
     if(seen[m.p.id]) return;
     seen[m.p.id] = 1;
+    if(!onATeam(m.p)){ offTeam.push({p:m.p, file:nm, year:yr}); return; }
     const was = rookieFrom(m.p);
     hits.push({p:m.p, file:nm, year:yr, was, changes: was !== yr});
   });
-  return {hits, missed, skipped};
+  return {hits, missed, skipped, offTeam};
 }
 ACT.rkCancel = ()=>{ ui.tmp.rk = null; render(); };
 ACT.rkApply = ()=>{
@@ -12509,7 +12572,10 @@ ACT.rkApply = ()=>{
   let n = 0;
   plan.hits.forEach(h=>{
     if(!h.changes) return;
+    /* Checked again at the moment of marking: only a man on a team takes it. */
+    if(!onATeam(h.p)) return;
     markRookie(h.p, h.year);
+    h.p.rookie.src = 'sheet';
     n++;
   });
   logIt('Marked '+n+' player'+(n===1?'':'s')+' as rookies from a sheet', {type:'admin'});
@@ -12517,12 +12583,29 @@ ACT.rkApply = ()=>{
   save(true); render();
   toast(n+' player'+(n===1?'':'s')+' marked','good');
 };
+/* After a change made from the player card, show the card as it now is. */
+function rookieCardRefresh(){
+  if(ui.tmp.pcId && document.querySelector('#modal.on #modalBox [data-pcrookie]')) ACT.playerCard({id:ui.tmp.pcId});
+}
+ACT.rookieMarkYear = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const p = byId(S.players, d.id); if(!p) return;
+  const v = el ? el.value : d.y;
+  if(!v){ return ACT.rookieClear(d); }
+  const yr = +v;
+  if(rookieFrom(p) === yr) return;
+  markRookie(p, yr);
+  logIt(p.name+' marked as a '+yr+' rookie', {type:'admin', players:[p.id]});
+  save(); render(); rookieCardRefresh();
+  toast(rookieHeld(p) ? 'Held to the rookie rule until '+rookieFinalYear(p)+', his last rookie year'
+                      : 'Marked \u2014 '+S.league.season+' is past his rookie years, so the normal rules apply','good');
+};
 ACT.rookieMark = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const p = byId(S.players, d.id); if(!p) return;
   markRookie(p, +d.y || S.league.season, null, d.rd);
   logIt(p.name+' marked as a '+(+d.y||S.league.season)+' rookie', {type:'admin', players:[p.id]});
-  save(); render(); toast('Held to the rookie rule until '+((+d.y||S.league.season)+(+rookieRules().windowYears||3)),'good');
+  save(); render(); rookieCardRefresh(); toast('Held to the rookie rule until '+rookieFinalYear(p)+', his last rookie year','good');
 };
 ACT.rookieRound = (d, el)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
@@ -12531,7 +12614,7 @@ ACT.rookieRound = (d, el)=>{
   if(v==='' || v==null) delete p.rookie.round; else p.rookie.round = +v;
   logIt(p.name+(v?' recorded as a round '+v+' pick':' no longer has a draft round'),
     {type:'admin', players:[p.id]});
-  save(); render();
+  save(); render(); rookieCardRefresh();
 };
 ACT.rookieFree = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
@@ -12539,14 +12622,14 @@ ACT.rookieFree = (d)=>{
   p.rookie.hitFA = !p.rookie.hitFA;
   logIt(p.name+(p.rookie.hitFA?' reached the free agency draft — rookie limit lifted'
                               :' put back under the rookie limit'), {type:'admin', players:[p.id]});
-  save(); render();
+  save(); render(); rookieCardRefresh();
 };
 ACT.rookieClear = (d)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   const p = byId(S.players, d.id); if(!p) return;
   delete p.rookie;
   logIt(p.name+' is no longer treated as a rookie', {type:'admin', players:[p.id]});
-  save(); render();
+  save(); render(); rookieCardRefresh();
 };
 /* Put Sleeper's own id on every player we can match, so trending, projections
    and the live feed all line up without going through names each time.
@@ -14979,39 +15062,30 @@ ACT.playerCard = (d)=>{
           'Message '+esc(teamName(holder))+' about him</button>'
         : '';
       const from = rookieFrom(p);
+      const yearPick = (label)=> '<select data-a="rookieMarkYear" data-id="'+p.id+'" style="max-width:240px">'+
+        '<option value="">'+label+'</option>'+
+        rookieClassYears().concat(from != null && rookieClassYears().indexOf(from) < 0 ? [from] : []).map(y=>
+          '<option value="'+y+'"'+(y===from?' selected':'')+'>the '+y+' rookie draft</option>').join('')+'</select>';
       if(from==null) return dmBit + (isCommish()
-        ? '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
+        ? '<div class="hr"></div><div class="flabel" data-pcrookie>Rookie rule</div>'+
           '<div class="row" style="gap:6px;align-items:center"><span class="tiny dim">Not held to it.</span>'+
-          '<button class="btn sm ghost" data-a="rookieMark" data-id="'+p.id+'" data-y="'+S.league.season+'">'+
-          'Mark as a '+S.league.season+' rookie</button></div>'
+          yearPick('Mark him as a rookie of\u2026')+'</div>'
         : '');
-      const left = rookieWindowLeft(p), max = rookieMaxYears(p);
       const rd = rookieRoundOf(p);
-      const roundBit = left==null ? '' :
-        (rd != null
-          ? ' Taken in round '+rd+', so at most '+rookieMaxYearsForRound(rd)+
-            ' year'+(rookieMaxYearsForRound(rd)===1?'':'s')+' on any deal \u2014 shorter is your choice.'
-          : '');
-      const roundPick = (isCommish() && left!=null)
-        ? '<label class="f" style="margin-top:6px"><span>Drafted in round</span>'+
-          '<select data-a="rookieRound" data-id="'+p.id+'">'+
-          '<option value="">not recorded</option>'+
-          Array.from({length:rookieRounds()},(_,i)=>'<option value="'+(i+1)+'"'+
-            (rd===i+1?' selected':'')+'>round '+(i+1)+'</option>').join('')+
-          '</select></label>'
-        : '';
-      return dmBit + '<div class="hr"></div><div class="flabel">Rookie rule</div>'+
-        '<div class="tiny">Taken in the '+from+' rookie draft. '+
-        (rookieFreed(p) ? 'He has been through the free agency draft, so the limit no longer applies.'
-         : left==null ? 'His window has run out — normal rules from here.'
-         : 'Window runs to '+(from+(+rookieRules().windowYears||3))+'; at most '+max+
-           ' more year'+(max===1?'':'s')+' on any deal from here.'+roundBit)+'</div>'+roundPick+
-        (isCommish()
-          ? '<div class="row" style="gap:6px;margin-top:6px">'+
+      const commishBits = isCommish()
+        ? '<div class="grid g2" style="margin-top:6px">'+
+            '<label class="f"><span>Rookie draft</span>'+yearPick('not a rookie')+'</label>'+
+            '<label class="f"><span>Drafted in round</span><select data-a="rookieRound" data-id="'+p.id+'">'+
+              '<option value="">not recorded</option>'+
+              Array.from({length:rookieRounds()},(_,i)=>'<option value="'+(i+1)+'"'+(rd===i+1?' selected':'')+'>round '+(i+1)+'</option>').join('')+
+            '</select></label></div>'+
+          '<div class="row" style="gap:6px;margin-top:6px">'+
             '<button class="btn sm ghost" data-a="rookieFree" data-id="'+p.id+'">'+
             (rookieFreed(p)?'Put him back under it':'He reached free agency')+'</button>'+
             '<button class="btn sm ghost" data-a="rookieClear" data-id="'+p.id+'">Not a rookie</button></div>'
-          : '');
+        : '';
+      return dmBit + '<div class="hr"></div><div class="flabel" data-pcrookie>Rookie rule</div>'+
+        '<div class="tiny">'+esc(rookieStatusText(p))+'</div>'+commishBits;
     })()}
     ${(()=>{
       const tr = trendFor(p);
@@ -15454,6 +15528,8 @@ ACT.editContract = (d)=>{
                 years: c? c.years : 1, structId: c? c.structId : S.settings.contracts.defaultStruct,
                 startYear: c? c.startYear : S.league.season,
                 waiver: !!(c && c.waiver),
+                rookie: {year: rookieFrom(p) != null ? String(rookieFrom(p)) : '',
+                         round: rookieRoundOf(p) != null ? String(rookieRoundOf(p)) : '', hitFA: rookieFreed(p)},
                 base: (c && c.base != null && c.base !== '') ? c.base : '',
                 byYear: (c && c.byYear) ? c.salaries.slice() : null };
   const cc = S.settings.contracts;
@@ -15492,7 +15568,8 @@ ACT.editContract = (d)=>{
         a year he cannot be extended. He clears at the turn of the season.</span></span></label>
     ${ui.tmp.cd.waiver ? `<div class="hint">A man on more than ${money(+S.settings.waivers.salary||1)}
       a year keeps his extension rights even with the tag — the bar is only for somebody who came in at
-      the wire price.</div>` : ''}` : ''}
+      the wire price.</div>` : ''}
+    ${cdRookieHTML(p)}` : ''}
     <div class="hr"></div>
     <div id="cdPreview">${contractPreview()}</div>
     ${(()=>{
@@ -15503,6 +15580,72 @@ ACT.editContract = (d)=>{
     (c?'<button class="btn danger" data-a="voidContract" data-id="'+p.id+'">Void deal</button>':'')+
     '<button class="btn pri" data-a="saveContract">Save contract</button>');
 };
+/* The editor's rookie section: which rookie draft he came out of (or the week
+   after it), the round, and whether he has been through the free agency draft.
+   Saved with the contract, and the deal being written is held to it as it is. */
+function cdRookieHTML(p){
+  const r = (ui.tmp.cd && ui.tmp.cd.rookie) || {year:'', round:'', hitFA:false};
+  const years = rookieClassYears();
+  if(r.year && years.indexOf(+r.year) < 0) years.push(+r.year);
+  const pv = cdRookieView(p);
+  const say = rookieStatusText(pv) || 'Not held to the rookie rule.';
+  return `<div class="hr"></div>
+    <div class="flabel">Rookie</div>
+    <div class="grid g2">
+      <label class="f"><span>Taken in the rookie draft of <span class="dim">— or signed the week after it</span></span>
+        <select data-a="cdRookie" data-f="year"><option value="">not a rookie</option>${years.map(y=>
+          '<option value="'+y+'"'+(String(y)===String(r.year)?' selected':'')+'>'+y+'</option>').join('')}</select></label>
+      <label class="f"><span>Round <span class="dim">— if it is known</span></span>
+        <select data-a="cdRookie" data-f="round"${r.year?'':' disabled'}><option value="">not recorded</option>${
+          Array.from({length:rookieRounds()},(_,i)=> '<option value="'+(i+1)+'"'+(String(i+1)===String(r.round)?' selected':'')+'>round '+(i+1)+'</option>').join('')}</select></label>
+    </div>
+    <label class="check" style="margin-top:6px"><input type="checkbox" data-a="cdRookie" data-f="hitFA" ${r.hitFA?'checked':''}${r.year?'':' disabled'}>
+      <span>He has been through the free agency draft <span class="dim">— that lifts the rookie rule</span></span></label>
+    <div class="hint" data-cdrookie>${say}</div>`;
+}
+/* The player as the editor has him — with the rookie marking it is holding,
+   saved or not, so the deal is checked against what is about to be true. */
+function cdRookieView(p){
+  const cd = ui.tmp.cd;
+  if(!p || !cd || cd.pid !== p.id || !cd.rookie || !isCommish()) return p;
+  const r = cd.rookie;
+  if(!r.year) return Object.assign({}, p, {rookie: undefined});
+  const rk = Object.assign({}, p.rookie || {}, {year: +r.year});
+  if(r.round === '' || r.round == null) delete rk.round; else rk.round = +r.round;
+  if(r.hitFA) rk.hitFA = true; else delete rk.hitFA;
+  return Object.assign({}, p, {rookie: rk});
+}
+ACT.cdRookie = (d, el)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const cd = ui.tmp.cd; if(!cd) return;
+  cd.rookie = cd.rookie || {year:'', round:'', hitFA:false};
+  if(d.f === 'hitFA') cd.rookie.hitFA = !!(el && el.checked);
+  else cd.rookie[d.f] = el ? el.value : '';
+  if(d.f === 'year' && !cd.rookie.year){ cd.rookie.round = ''; cd.rookie.hitFA = false; }
+  ACT.editContract({id:cd.pid, keep:1});
+};
+/* Write the editor's rookie marking onto the player, and say what changed. */
+function cdApplyRookie(p, cd){
+  if(!isCommish() || !cd || !cd.rookie) return;
+  const r = cd.rookie;
+  const was = {year: rookieFrom(p), round: rookieRoundOf(p), hitFA: rookieFreed(p)};
+  if(!r.year){
+    if(was.year == null) return;
+    delete p.rookie;
+    logIt(p.name+' is no longer treated as a rookie', {type:'admin', players:[p.id]});
+    return;
+  }
+  const year = +r.year, round = (r.round === '' || r.round == null) ? null : +r.round, hitFA = !!r.hitFA;
+  if(was.year === year && was.round === round && was.hitFA === hitFA) return;
+  p.rookie = Object.assign({}, p.rookie || {}, {year, at: (p.rookie && p.rookie.at) || Date.now()});
+  if(round == null) delete p.rookie.round; else p.rookie.round = round;
+  if(hitFA) p.rookie.hitFA = true; else delete p.rookie.hitFA;
+  const bits = [];
+  if(was.year !== year) bits.push('marked as a '+year+' rookie');
+  if(was.round !== round) bits.push(round == null ? 'no draft round recorded' : 'recorded as a round '+round+' pick');
+  if(was.hitFA !== hitFA) bits.push(hitFA ? 'through the free agency draft \u2014 rookie rule lifted' : 'back under the rookie rule');
+  logIt(p.name+' '+bits.join(', '), {type:'admin', players:[p.id]});
+}
 ACT.cdWaiver = (d, el)=>{
   if(!isCommish()) return toast('Commissioners only','bad');
   ui.tmp.cd = ui.tmp.cd || {};
@@ -15546,13 +15689,12 @@ ACT.cdField = (d, el)=>{
     /* Hold a rookie to his window rather than letting a number be typed that
        will only be refused on save. */
     const pr = byId(S.players, cd.pid);
-    let rmax = pr ? rookieMaxYears(pr) : null;
-    const prRd = pr ? rookieRoundOf(pr) : null;
-    if(prRd != null && rookieWindowLeft(pr) != null)
-      rmax = rmax == null ? rookieMaxYearsForRound(prRd) : Math.min(rmax, rookieMaxYearsForRound(prRd));
+    const pv = pr ? cdRookieView(pr) : null;
+    const rmax = pv ? rookieMaxYears(pv, cd.startYear) : null;
     if(rmax != null && v > rmax){
       v = Math.max(1, rmax);
-      toast('Rookie deal \u2014 at most '+rmax+' year'+(rmax===1?'':'s')+' from here','warn');
+      toast('Rookie deal \u2014 it cannot run past '+rookieEndLimit(pv)+', so at most '+Math.max(1, rmax)+
+        ' year'+(Math.max(1, rmax)===1?'':'s')+' from '+(+cd.startYear||S.league.season),'warn');
     }
   }
   if(f==='startYear') v = +v || S.league.season;
@@ -15699,6 +15841,12 @@ function contractSummary(){
           ? 'You can save it anyway \u2014 you will be asked to confirm.'
           : 'Raise the total or shorten the deal.')+'</div>' : ''}
     ${(()=>{
+      /* Held to his rookie years, said as the length or first year changes. */
+      const pr = byId(S.players, cd.pid); if(!pr) return '';
+      const why = rookieYearsBlocked(cdRookieView(pr), +cd.years||1, cd.startYear);
+      return why ? '<div class="hint bad" data-rkwarn>'+why+'</div>' : '';
+    })()}
+    ${(()=>{
       const why = loadingBlocked(cd.total, cd.years);
       const st2 = structById(cd.structId);
       if(why && st2 && st2.mode!=='even')
@@ -15779,11 +15927,11 @@ ACT.saveContract = ()=>{
   }
   /* A rookie inside his window cannot be given a longer deal than the rule
      allows, however the contract is being written. */
-  const rk = rookieYearsBlocked(p, +cd.years||1);
+  const rk = rookieYearsBlocked(cdRookieView(p), +cd.years||1, cd.startYear);
   if(rk) return toast(rk,'bad');
   /* Signed in the week after the draft, a rookie comes in at the minimum —
      the length is up to you, the money is not. */
-  if(!p.contract && rookieFrom(p)!=null && inRookieSignWindow()){
+  if(!p.contract && rookieFrom(cdRookieView(p))!=null && inRookieSignWindow()){
     const min = +S.settings.contracts.minSalary || 1;
     const want = fixCents(min * Math.max(1, +cd.years||1));
     if(Math.abs((+cd.total||0) - want) > 0.011){
@@ -15815,6 +15963,8 @@ ACT.saveContract = ()=>{
     const bad = projYears().find(y=> capSpace(cd.teamId,y) < 0);
     if(bad){ p.contract = before; return toast('That puts '+teamName(cd.teamId)+' over the cap in '+bad,'bad'); }
   }
+  /* The rookie marking from the editor goes on with the deal. */
+  cdApplyRookie(p, cd);
   const who = currentActorName();
   const editVerb = before ? 'edited '+p.name+"'s contract" : 'signed '+p.name;
   logIt(teamName(cd.teamId)+' '+editVerb+' — '+money(c.total)+' over '+c.years+' yr ('+
@@ -15877,6 +16027,10 @@ function extLimitProblem(p, add, aav, structId){
   const n = extNewYears(c, add);
   if(add < 1) return 'Add at least one year.';
   if(n > maxTotal) return 'That makes it a '+n+'-year deal, and the longest the league allows, extensions included, is '+maxTotal+'.';
+  { const lim = rookieEndLimit(p);
+    if(lim != null && c.startYear + n - 1 > lim)
+      return p.name+' was taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
+        ', his last rookie year, his deal cannot run past '+lim+'.'; }
   const lp = limitProblemFor('extensions', c.teamId, n, p.id);
   if(lp) return teamName(c.teamId)+' would hold '+lp.have+' deals of '+lp.length+' years or longer, and the league allows '+lp.allow+
     '. Shorten it, or let another long deal run out first.';
@@ -16133,7 +16287,8 @@ ACT.extend = (d)=>{
     '<p>Extensions are priced off the extension ladder only, and there is no ladder price for him'+
     (!(S.settings.contracts.ladder||{}).on ? ' because the ladder is switched off in Settings › Contracts.' : '.')+'</p>'+extInfoPanel(p),
     '<button class="btn ghost" data-a="closeModal">Close</button>');
-  ui.tmp.ext = {pid:p.id, years:2, aav: lq.price, structId:c.structId, offset};
+  const rx = rookieExtRoom(p);
+  ui.tmp.ext = {pid:p.id, years: rx != null ? Math.max(1, Math.min(2, rx)) : 2, aav: lq.price, structId:c.structId, offset};
   extModal();
 };
 function extModal(){
@@ -16144,7 +16299,8 @@ function extModal(){
   /* The base salary is the ladder's, always — whatever was held before. */
   if(lq) e.aav = lq.price;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
-  const roomYears = Math.max(0, maxTotal - extNewYears(c, 0));
+  const rx = rookieExtRoom(p);
+  const roomYears = Math.max(0, Math.min(maxTotal - extNewYears(c, 0), rx != null ? rx : Infinity));
   const lp = extLimitProblem(p, +e.years||0, e.aav, e.structId);
   /* With two years left the extension buys out the final year rather than
      following it, so the new deal starts a year earlier. */
@@ -16213,6 +16369,8 @@ function extModal(){
           (S.settings.players.showAsk==='hidden'?'':' You are '+money(w.gap)+' a year short.')+'</div>';
     })()}
     <div class="hint">The deal would run ${extNewYears(c, e.years)} years in total, through ${firstYear + e.years - 1}.</div>
+    ${rx != null ? '<div class="hint warn">Taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
+      ' \u2014 his last rookie year \u2014 his deal cannot run past '+rookieEndLimit(p)+'.</div>' : ''}
     ${lp?'<div class="hint bad">'+esc(lp)+'</div>':''}
     ${roomYears<=0?'<div class="hint bad">This contract is already at the longest the league permits, extensions included.</div>':''}`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
@@ -16222,7 +16380,8 @@ ACT.extField = (d,el)=>{
   const e = ui.tmp.ext, c = byId(S.players,e.pid).contract;
   const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   if(d.f==='years'){
-    e.years = clamp(+el.value||1, 1, Math.max(1, maxTotal - extNewYears(c, 0)));
+    const rx = rookieExtRoom(byId(S.players,e.pid));
+    e.years = clamp(+el.value||1, 1, Math.max(1, Math.min(maxTotal - extNewYears(c, 0), rx != null ? rx : Infinity)));
     /* On the ladder the price is a base salary — the same every year whatever
        the length — so changing the years does not change it. */
     const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
@@ -16977,10 +17136,6 @@ document.addEventListener('change', e=>{
 document.addEventListener('change', e=>{
   const dy = e.target.closest('[data-a="duesYearPick"]');
   if(dy && ACT.duesYearPick){ ACT.duesYearPick(dy.dataset, dy, e); return; }
-});
-document.addEventListener('change', e=>{
-  const rr = e.target.closest('[data-a="rookieRound"]');
-  if(rr && ACT.rookieRound){ ACT.rookieRound(rr.dataset, rr, e); return; }
 });
 document.addEventListener('change', e=>{
   const ry = e.target.closest('[data-a="rookieYearView"]');
@@ -21710,6 +21865,9 @@ function canExtend(p){
   const left = p && p.contract ? yearsLeft(p.contract) : 0;
   if(left > 2) return {ok:false, basis:null, rank:null, left,
     why: p.name+' has '+left+' years left. An extension can only be done in the last two.'};
+  /* A rookie still inside his rookie years goes no further than his last one —
+     and if his deal already reaches it, not at all until that season comes. */
+  if(rookieExtRoom(p) === 0) return {ok:false, basis:null, rank:null, left, rookie:true, why: rookieHeldWhy(p)};
   const need = minGames();
   if(need<=0) return {ok:true, basis:null, rank:null};
   const here = gamesIn(p.id, S.league.season);
@@ -28053,8 +28211,8 @@ VIEWS.import = function(){
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Mark rookies from a sheet</h3></div>
         <div class="pb stack">
           <p class="muted" style="margin:0">One column of names, one column saying <b>R 24</b>, <b>R 25</b>, <b>R 26</b>
-            and so on. Everyone matched is held to the rookie rule from that draft. Nothing else is read
-            — no contracts, no rosters, no prices.</p>
+            and so on. Everyone matched who is on a team here is held to the rookie rule from that draft; anybody
+            not on a team in Front Office is ignored. Nothing else is read — no contracts, no rosters, no prices.</p>
           <label class="f"><span>Paste it in</span>
             <textarea id="rkText" rows="6" placeholder="Player,Rookie
 Amon-Ra St. Brown,R 24
@@ -28073,10 +28231,13 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
               '<option value="'+i+'"'+(i===rk.rkCol?' selected':'')+'>'+esc(h)+'</option>').join('')}</select></label>
         </div></div>
 
-      <div class="grid g3" style="margin-bottom:14px">
-        <div class="panel"><div class="pb"><div class="eyebrow">Matched</div>
+      <div class="grid g4 keep2" style="margin-bottom:14px">
+        <div class="panel"><div class="pb"><div class="eyebrow">On a team</div>
           <div class="big good">${plan.hits.length}</div>
           <div class="dim tiny">${plan.hits.filter(h=>h.changes).length} would change</div></div></div>
+        <div class="panel"><div class="pb"><div class="eyebrow">Not on a team</div>
+          <div class="big dim">${plan.offTeam.length}</div>
+          <div class="dim tiny">ignored — left as they are</div></div></div>
         <div class="panel"><div class="pb"><div class="eyebrow">No rookie year</div>
           <div class="big dim">${plan.skipped.length}</div>
           <div class="dim tiny">left alone</div></div></div>
@@ -28094,6 +28255,8 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
             '<td class="right num good">'+h.year+'</td></tr>').join('')
             || '<tr><td colspan="4" class="dim center" style="padding:20px">Nothing would change.</td></tr>'}
           </tbody></table></div>
+        ${plan.offTeam.length?`<div class="pb"><div class="hint">Not on a team in Front Office, so their rookie year in the sheet is ignored:
+          ${plan.offTeam.slice(0,30).map(h=> esc(h.p.name)+' <span class="dim">R '+String(h.year).slice(-2)+'</span>').join(', ')}${plan.offTeam.length>30?' …':''}</div></div>`:''}
         ${plan.missed.length?`<div class="pb"><div class="hint bad">Not recognised: ${plan.missed.slice(0,20).map(esc).join(', ')}${plan.missed.length>20?' …':''}</div></div>`:''}
         <div class="pb"><div class="row">
           <button class="btn pri" data-a="rkApply">Mark ${plan.hits.filter(h=>h.changes).length} player${plan.hits.filter(h=>h.changes).length===1?'':'s'}</button>
@@ -29803,9 +29966,11 @@ VIEWS.settings = function(){
             <input type="number" min="0" max="30" data-set="settings.rookie.signWindowDays" value="${+rookieRules().signWindowDays||7}"></label>
         </div>
         <div class="hint">A player taken in the rookie draft, or picked up within ${+rookieRules().signWindowDays||7} days of it
-          ending, can only be signed or extended so far: ${+rookieRules().windowMaxDeal||3} years in total, counting what he has
-          already served, for ${+rookieRules().windowYears||3} seasons. Sign him for one year and two more can be added later;
-          sign him for three and that is the lot until the window closes. Reaching the free agency draft lifts it altogether.
+          ending, is held to his rookie years: ${+rookieRules().windowYears||3} seasons counting the draft's own. Until the last
+          of them no deal of his — signed, edited or extended — can run past it: a ${S.league.season-1} pick's deal cannot run past
+          ${S.league.season-1+(+rookieRules().windowYears||3)-1} until ${S.league.season-1+(+rookieRules().windowYears||3)-1}.
+          In that last season the normal rules apply, extensions included. Reaching the free agency draft lifts it altogether.
+          A commissioner marks who is a rookie, and of which draft, on the player's card or in Edit contract.
           Anyone signed inside that week comes in at ${money(+S.settings.contracts.minSalary||1)} a year.
           ${inRookieSignWindow()?'<br><b>The signing week is open now.</b>':''}</div>
       </div></div>
