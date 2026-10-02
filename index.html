@@ -1309,6 +1309,15 @@ div.head>select{width:auto;max-width:240px}
   .lst{white-space:normal;overflow-wrap:anywhere}
   .lsv{min-width:0}
 }
+/* Taxi claims: every column on a phone without swiping. */
+.taxiboard th{white-space:normal;vertical-align:bottom}
+.taxiboard .scorelink{display:inline-block;min-width:22px;padding:4px 2px;text-align:center}
+@media (max-width:560px){
+  .taxiboard th, .taxiboard td{padding-left:4px;padding-right:4px}
+  .taxiboard th{font-size:10px;letter-spacing:.03em}
+  .taxiboard th:first-child, .taxiboard td:first-child{padding-left:10px;max-width:104px;overflow-wrap:anywhere}
+  .taxievery th, .taxievery td{padding-left:6px;padding-right:6px}
+}
 /* The cap handed back by season-ending injuries. */
 .irback th{white-space:normal;vertical-align:bottom}
 .irback td.num{white-space:nowrap}
@@ -1492,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-01d · team names follow Sleeper automatically';
+const APP_BUILD = '2026-10-02a · taxi claims: tap any number to see who it is, and an every-claim list';
 
 /* ============================================================
    HOME LEAGUE
@@ -15275,34 +15284,107 @@ ACT.unretire = (d)=>{
 function openClaimFor(playerId){ return (S.taxiClaims||[]).find(c=> c.playerId===playerId && c.status==='open'); }
 /* Who has been raiding whom. Only worth showing once somebody has actually
    tried something, or it is a table of zeroes. */
+/* The claims behind each number on the board. */
+const TAXI_KINDS = {
+  tried:   {label:'Tried',        side:'to',   pick:c=> true},
+  landed:  {label:'Landed',       side:'to',   pick:c=> c.status==='awarded'},
+  running: {label:'Running',      side:'to',   pick:c=> c.status==='open'},
+  sawoff:  {label:'Saw them off', side:'from', pick:c=> c.status==='defended'},
+  lost:    {label:'Lost',         side:'from', pick:c=> c.status==='awarded'}
+};
+function taxiClaimsOf(teamId, kind){
+  const k = TAXI_KINDS[kind]; if(!k) return [];
+  return (S.taxiClaims||[]).filter(c=> (k.side==='to' ? c.toTeam : c.fromTeam) === teamId && k.pick(c))
+    .slice().sort((a,b)=> (+b.at||0) - (+a.at||0));
+}
+/* How a claim ended, in words. */
+function taxiOutcome(c){
+  if(c.status==='awarded')   return {cls:'ok',   word:'Landed', why:'he went to '+teamName(c.toTeam)+(c.at2 ? ' on '+dstr(c.at2) : '')};
+  if(c.status==='open')      return {cls:'warn', word:'Running', why:teamName(c.fromTeam)+' still has time to answer'};
+  if(c.status==='defended')  return {cls:'',     word:'Kept', why:teamName(c.fromTeam)+' kept him'+(c.reason ? ' — '+c.reason : '')};
+  if(c.status==='withdrawn') return {cls:'',     word:'Lapsed', why:c.reason || 'the claim did not go through'};
+  return {cls:'', word:c.status||'', why:c.reason||''};
+}
+function taxiClaimPlayer(c){
+  const p = byId(S.players, c.playerId);
+  return '<b style="font-weight:500">'+esc(p ? p.name : playerName(c.playerId))+'</b>'+(p ? ' '+posTag(p.pos) : '');
+}
+/* A number on the board, tappable the way a score is: the claims it counts. */
+function taxiNum(teamId, kind, cls){
+  const n = taxiClaimsOf(teamId, kind).length;
+  if(!n) return '<span class="dim">0</span>';
+  return '<a href="#" class="scorelink '+(cls||'')+'" data-a="taxiWho" data-t="'+teamId+'" data-k="'+kind+
+    '" title="who these are">'+n+'</a>';
+}
+ACT.taxiWho = (d)=>{
+  const k = TAXI_KINDS[d.k]; if(!k) return;
+  const list = taxiClaimsOf(d.t, d.k);
+  const mine = k.side === 'to';
+  modal(esc(teamName(d.t))+' — '+k.label.toLowerCase()+' ('+list.length+')',
+    '<p class="muted tiny" style="margin:0 0 10px">'+(
+      d.k==='tried'   ? 'Every claim this team put in on somebody else’s taxi squad this season, however it ended.' :
+      d.k==='landed'  ? 'Claims this team put in that stuck — the player came across.' :
+      d.k==='running' ? 'Claims this team has in right now, still waiting on an answer.' :
+      d.k==='sawoff'  ? 'Times somebody came for one of this team’s taxi players and this team kept him.' :
+                        'Players taken off this team’s taxi squad by a claim.')+'</p>'+
+    (list.length ? '<div class="stack" data-taxiwho="'+d.k+'">'+list.map(c=>{
+      const o = taxiOutcome(c);
+      return '<div class="assetbox"><div class="row" style="gap:8px;align-items:baseline">'+
+        '<div style="flex:1;min-width:0">'+taxiClaimPlayer(c)+
+          '<div class="tiny muted">'+(mine ? 'from '+esc(teamName(c.fromTeam)) : 'claimed by '+esc(teamName(c.toTeam)))+
+          ' · '+dstr(c.at)+'</div></div>'+
+        '<span class="pill '+o.cls+'">'+esc(o.word)+'</span></div>'+
+        (o.why ? '<div class="tiny dim" style="margin-top:5px">'+esc(o.why)+'</div>' : '')+
+        (c.status==='open' && c.clock ? '<div class="tiny" style="margin-top:5px">Time left: <span class="clock calm" style="font-size:14px" data-clock="tc:'+c.id+'">'+hhmm(c.clock.remain)+'</span></div>' : '')+
+      '</div>';
+    }).join('')+'</div>' : '<div class="empty-state"><p>None.</p></div>'),
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
+ACT.taxiDetail = ()=>{ ui.tmp.taxiDetail = !ui.tmp.taxiDetail; render(); };
+/* Who has been raiding whom. Only worth showing once somebody has actually
+   tried something, or it is a table of zeroes. */
 function taxiStealBoard(){
-  const any = (S.taxiClaims||[]).length;
+  const all = (S.taxiClaims||[]);
+  const any = all.length;
   if(!any && !taxiLimitOn()) return '';
   const t = S.settings.taxi;
-  const rows = S.teams.map(tm=>({tm, n:taxiStealCount(tm.id), left:taxiStealsLeft(tm.id)}))
-    .filter(r=> r.n.attempts>0 || taxiLimitOn())
+  const rows = S.teams.map(tm=>({tm, n:taxiStealCount(tm.id), left:taxiStealsLeft(tm.id),
+      against: all.filter(c=> c.fromTeam===tm.id).length}))
+    .filter(r=> r.n.attempts>0 || r.against>0 || taxiLimitOn())
     .sort((a,b)=> b.n.landed-a.n.landed || b.n.attempts-a.n.attempts);
   if(!rows.length) return '';
+  const detail = !!ui.tmp.taxiDetail;
+  const every = all.slice().sort((a,b)=> (+b.at||0) - (+a.at||0));
   return `<div class="hr"></div>
     <div class="ph"><h3 style="font-size:15px">Taxi claims this season</h3><div class="spacer"></div>
       <span class="tiny dim">${taxiLimitOn()
         ? (t.limitMode==='landed' ? 'up to '+t.limitMax+' can land per team' : t.limitMax+' attempts each')
-        : 'no limit set'}</span></div>
-    <div class="pb tight scrollx"><table>
+        : 'no limit set'}</span>
+      ${any ? '<button class="btn sm '+(detail?'pri':'ghost')+'" data-a="taxiDetail">'+(detail?'Hide every claim':'Every claim ('+any+')')+'</button>' : ''}</div>
+    <div class="pb tight scrollx"><table class="taxiboard">
       <thead><tr><th>Team</th><th class="right">Tried</th><th class="right">Landed</th>
-        <th class="right">Running</th><th class="right">Saw them off</th>
+        <th class="right">Running</th><th class="right">Saw them off</th><th class="right">Lost</th>
         ${taxiLimitOn()?'<th class="right">Left</th>':''}</tr></thead>
       <tbody>${rows.map(r=>`<tr>
         <td>${esc(r.tm.name)}</td>
-        <td class="right num ${r.n.attempts?'':'dim'}">${r.n.attempts}</td>
-        <td class="right num ${r.n.landed?'good':'dim'}">${r.n.landed}</td>
-        <td class="right num ${r.n.inFlight?'':'dim'}">${r.n.inFlight}</td>
-        <td class="right num dim">${taxiStolenFrom(r.tm.id)}</td>
+        <td class="right num">${taxiNum(r.tm.id,'tried')}</td>
+        <td class="right num">${taxiNum(r.tm.id,'landed','good')}</td>
+        <td class="right num">${taxiNum(r.tm.id,'running')}</td>
+        <td class="right num">${taxiNum(r.tm.id,'sawoff')}</td>
+        <td class="right num">${taxiNum(r.tm.id,'lost','bad')}</td>
         ${taxiLimitOn()?'<td class="right num '+(r.left<=0?'bad':'')+'">'+r.left+'</td>':''}
       </tr>`).join('')}</tbody></table></div>
-    <div class="pb"><div class="hint">Counts start over when the season rolls over.
-      <b>Tried</b> is every claim put in, <b>Landed</b> is the ones that stuck, and
-      <b>Saw them off</b> is how many times that team kept a player somebody came for.</div></div>`;
+    ${detail ? `<div class="pb tight scrollx"><table class="taxievery" data-taxievery="1">
+      <thead><tr><th>Player</th><th>Claimed by</th><th>From</th><th>When</th><th>How it ended</th></tr></thead>
+      <tbody>${every.map(c=>{ const o = taxiOutcome(c);
+        return '<tr><td>'+taxiClaimPlayer(c)+'</td><td>'+esc(teamName(c.toTeam))+'</td><td>'+esc(teamName(c.fromTeam))+'</td>'+
+          '<td class="tiny nowrap">'+dstr(c.at)+'</td>'+
+          '<td><span class="pill '+o.cls+'">'+esc(o.word)+'</span>'+(o.why ? '<div class="tiny dim" style="margin-top:3px">'+esc(o.why)+'</div>' : '')+'</td></tr>';
+      }).join('')}</tbody></table></div>` : ''}
+    <div class="pb"><div class="hint">Counts start over when the season rolls over. Tap any number to see who it is.
+      <b>Tried</b> is every claim put in, <b>Landed</b> is the ones that stuck, <b>Running</b> is still waiting on an answer,
+      <b>Saw them off</b> is how many times that team kept a player somebody came for, and <b>Lost</b> is how many
+      were taken off their taxi squad.</div></div>`;
 }
 /* How many times this team had somebody taken off their own taxi squad. */
 function taxiStolenFrom(teamId){
