@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-04a · nothing is lost to a redeploy, a Sleeper pull or another phone saving first; standings and dues put right';
+const APP_BUILD = '2026-10-05a · head to head only breaks a tie between teams who have all played each other';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -10472,7 +10472,8 @@ VIEWS.teams = function(){
             return '';
           })()}
           Level records break on ${tiebreakChain().map(k=>TIEBREAKS[k].label.toLowerCase()).join(', then ')} —
-          and the row says which one actually did it. Draft order runs the other way, worst record first, and the last
+          and the row says which one actually did it. Head to head only counts when every team in the tie has
+          played every other one; until then the next step decides. Draft order runs the other way, worst record first, and the last
           column is what those picks would cost against your ${nextY} cap.</div></div></div>
 
       ${(()=>{
@@ -24931,6 +24932,62 @@ function standingsRaw(withWhy){ return rankTeams((t)=>{ const r=liveRecord(t); r
 function draftStandings(withWhy){
   return rankTeams((t)=>{ const r=liveRecord(t); return r.w + r.t*0.5 + phantomWins(t); }, withWhy);
 }
+/* ---- Breaking a tie ------------------------------------------------------------
+   Teams level on record are taken as a group and the chain is walked a step at
+   a time. Each step either splits the group or it does not; whatever is still
+   level afterwards starts the chain again among just those teams.
+
+   Head to head only counts when it can be read fairly: every team in the group
+   has to have played every other team in it. Two teams who have not met have
+   no head to head, and in a three-way tie one result between two of them says
+   nothing about the third — both fall through to the next step. (It used to
+   compare each side's record against the group pair by pair, so a tie was
+   labelled "head to head" between teams who had never played.)
+
+   Every other step is read as the standings show it this minute, the week in
+   play included, so the figure that broke the tie is the one on the row. */
+const TIE_LIVE = {
+  opp: (t)=> liveOppPoints(t),
+  pf:  (t)=> liveRecord(t).pf || 0,
+  pa:  (t)=> -(liveRecord(t).pa || 0),
+  eff: (t)=> { const e = liveEff(t); return e == null ? -1 : e; }
+};
+function h2hMet(a, b){
+  const r = ((S.h2h||{})[a.id]||{})[b.id];
+  return !!r && ((+r.w||0) + (+r.l||0) + (+r.t||0)) > 0;
+}
+function h2hAllMet(group){
+  for(let i=0;i<group.length;i++) for(let j=i+1;j<group.length;j++) if(!h2hMet(group[i], group[j])) return false;
+  return true;
+}
+/* A level group, put in order. `why` collects what finally placed each team. */
+function breakTie(group, chain, why){
+  if(group.length < 2) return group.slice();
+  for(const step of chain){
+    let val;
+    if(step === 'h2h'){
+      if(!h2hAllMet(group)) continue;
+      val = (t)=> h2hVs(t, group).pct;
+    } else {
+      val = TIE_LIVE[step] || TIEBREAKS[step].val;
+    }
+    const vals = new Map(); group.forEach(t=> vals.set(t.id, Math.round((+val(t)||0)*1e6)/1e6));
+    const levels = Array.from(new Set(vals.values())).sort((x,y)=> y - x);
+    if(levels.length < 2) continue;                       /* this step separates nobody */
+    const label = step === 'h2h' ? 'head to head' : TIEBREAKS[step].label;
+    let out = [];
+    levels.forEach(v=>{
+      const sub = group.filter(t=> vals.get(t.id) === v);
+      sub.forEach(t=>{ why[t.id] = label; });
+      /* Still level: the chain starts again among just these. */
+      out = out.concat(breakTie(sub, chain, why));
+    });
+    return out;
+  }
+  /* Nothing separates them. */
+  group.forEach(t=>{ if(!why[t.id]) why[t.id] = 'coin toss'; });
+  return group.slice().sort((a,b)=> String(a.name).localeCompare(String(b.name)));
+}
 function rankTeams(score, withWhy){
   const chain = tiebreakChain();
   const groups = {};
@@ -24938,28 +24995,9 @@ function rankTeams(score, withWhy){
   const out = [];
   Object.keys(groups).sort((a,b)=> +b - +a).forEach(k=>{
     const g = groups[k];
-    if(g.length === 1){ out.push(g[0]); return; }
+    if(g.length === 1){ if(withWhy) g[0]._why = ''; out.push(g[0]); return; }
     const why = {};
-    const ranked = g.slice().sort((a,b)=>{
-      for(const step of chain){
-        if(step==='h2h'){
-          const ha = h2hVs(a,g), hb = h2hVs(b,g);
-          if(ha.pct!=null && hb.pct!=null && ha.pct!==hb.pct){
-            why[a.id]=why[a.id]||'head to head'; why[b.id]=why[b.id]||'head to head';
-            return hb.pct - ha.pct;
-          }
-          continue;
-        }
-        const f = TIEBREAKS[step].val;
-        const va = f(a), vb = f(b);
-        if(va!==vb){
-          why[a.id]=why[a.id]||TIEBREAKS[step].label; why[b.id]=why[b.id]||TIEBREAKS[step].label;
-          return vb - va;
-        }
-      }
-      return String(a.name).localeCompare(String(b.name));
-    });
-    ranked.forEach(t=>{ if(withWhy) t._why = why[t.id] || (g.length>1?'coin toss':''); out.push(t); });
+    breakTie(g, chain, why).forEach(t=>{ if(withWhy) t._why = why[t.id] || ''; out.push(t); });
   });
   return out;
 }
