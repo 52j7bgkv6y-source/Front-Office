@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-06a · the extension ladder is on every team’s Values & extensions tab';
+const APP_BUILD = '2026-10-06c · extension prices are fixed for the season, a week after the rookie draft';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -1799,6 +1799,8 @@ function slimForBackup(state){
   /* Keep what was said, drop what was attached. */
   st.chat = (st.chat||[]).slice(-200).map(mm=>{
     if(!mm || !mm.media) return mm;
+    /* A link is a few hundred characters: it stays. */
+    if(!/^data:/.test(String(mm.media.src||''))) return mm;
     const c = Object.assign({}, mm); c.media = null; c.mediaGone = true; return c;
   });
   return st;
@@ -8100,6 +8102,139 @@ function teamH1(name, big){
    touched it: cover fills the frame and crops what will not fit, contain shows
    the whole thing. Once somebody crops it by hand, zoom and x/y take over. */
 function teamPic(t){ return (t && t.pic && t.pic.src) ? t.pic : null; }
+/* ---- A picture stays until somebody takes it down ---------------------------
+   A team's picture, and a picture in the room, are put there by a person and
+   only a person takes them away. Nothing else may: not a newer copy of the
+   league that happens to be without it, not a saved copy put back, not a
+   league file, not a pull from Sleeper, not a new build.
+
+   So a picture carries when it was set (pic.at), and taking one down leaves a
+   mark with its own time (picGone). A copy arriving without the picture and
+   without a later mark has simply lost it, and it is put back. */
+function picSame(a, b){
+  const f = (p)=>{ if(!p || !p.src) return ''; const c = Object.assign({}, p); delete c.at; return JSON.stringify(c); };
+  return f(a) === f(b);
+}
+/* Two copies of the same league? Team ids are only t1, t2… and mean nothing
+   between leagues. (The Sleeper league a phone follows is that phone's own
+   setting, so it says nothing about the copy arriving.) */
+function picSameLeague(a, b){
+  if(!a || !b) return false;
+  const lc = (x)=> String(x||'').trim().toLowerCase();
+  if(lc((a.league||{}).name) && lc((a.league||{}).name) === lc((b.league||{}).name)) return true;
+  const ta = a.teams||[], tb = b.teams||[];
+  const hit = ta.filter(t=>{ const o = tb.find(x=> x && t && x.id === t.id); return o && (lc(o.name) === lc(t.name) || (lc(o.owner) && lc(o.owner) === lc(t.owner))); }).length;
+  return hit >= Math.max(2, Math.ceil(ta.length/2));
+}
+/* May this phone send that team's picture up? Its own, or any for the
+   commissioner; a league not on accounts has no such question. */
+function picMayPush(st, tid){
+  if(!(typeof leagueOnAccounts === 'function' && leagueOnAccounts())) return true;
+  if(!(typeof Supa === 'object' && Supa.user)) return false;         /* not signed in yet: not yet known */
+  return Supa.boss() || !!(tid && st && st.league && st.league.myTeamId === tid);
+}
+/* `before` is the league on this phone a moment ago; `after` is the copy taking
+   its place. Any picture `after` has lost is put back. With `current`, what is
+   on this phone now wins outright — for a saved copy or a file, which are the
+   league as it was, where the pictures are the league as it is. */
+function keepPics(before, after, current){
+  const out = {put:0, send:false, names:[]};
+  if(!before || !after || !Array.isArray(before.teams) || !Array.isArray(after.teams)) return out;
+  if(!picSameLeague(before, after)) return out;
+  before.teams.forEach(o=>{
+    if(!o) return;
+    const t = after.teams.find(x=> x && x.id === o.id);
+    if(!t) return;
+    const has = !!(o.pic && o.pic.src), tHas = !!(t.pic && t.pic.src);
+    if(current){
+      if(has){ if(!tHas || !picSame(o.pic, t.pic)){ t.pic = deep(o.pic); out.put++; out.names.push(t.name); } delete t.picGone; }
+      else if(+o.picGone > 0){ delete t.pic; t.picGone = +o.picGone; }
+      return;
+    }
+    if(!has || tHas) return;
+    if(+t.picGone > 0 && +t.picGone >= (+o.pic.at||0)) return;        /* taken down on purpose, since */
+    t.pic = deep(o.pic); delete t.picGone;
+    out.put++; out.names.push(t.name);
+    if(picMayPush(after, t.id)) out.send = true;
+  });
+  return out;
+}
+/* The same for pictures in the room. One that was cleared from a copy to save
+   room comes back where this phone still has it: a link always (it is a few
+   hundred characters), a picture held in the league itself only with `all` —
+   when a saved copy is put back, and the pictures are still here in hand. */
+function keepChatMedia(before, after, all){
+  if(!before || !after || !Array.isArray(before.chat) || !Array.isArray(after.chat)) return 0;
+  const had = {};
+  before.chat.forEach(m=>{ if(m && m.id && m.media && m.media.src && (all || !/^data:/.test(String(m.media.src)))) had[m.id] = m.media; });
+  let n = 0;
+  after.chat.forEach(m=>{
+    if(!m || !m.id || !m.mediaGone || (m.media && m.media.src) || !had[m.id]) return;
+    m.media = deep(had[m.id]); delete m.mediaGone; n++;
+  });
+  return n;
+}
+/* ---- Pictures that have already gone ----------------------------------------
+   Once on each phone: any team with no picture, and no mark to say it was
+   taken down, is looked for in the copies this phone has kept — the rolling
+   ones and one a day for a month — and the newest picture found is put back.
+   A manager's phone does it for his own side; the commissioner's for anybody. */
+const PIC_HEAL_KEY = 'frontoffice.picheal.v1';
+async function healPicsRun(){
+  if(ui.tmp.picHealBusy || ui.tmp.picHealDone) return 0;
+  try{ if(localStorage.getItem(PIC_HEAL_KEY)){ ui.tmp.picHealDone = true; return 0; } }catch(e){}
+  if(!S || (S.meta && S.meta.demo) || !(S.teams||[]).length) return 0;
+  if(viewAsTeam() || (typeof Supa === 'object' && Supa.holding())) return 0;
+  if(!syncSettled()) return 0;
+  if(leagueOnAccounts() && !(typeof Supa === 'object' && Supa.user)) return 0;      /* signed out: wait */
+  ui.tmp.picHealBusy = true;
+  let put = 0;
+  try{
+    const lacks = (t)=> t && !(t.pic && t.pic.src) && !t.picGone && picMayPush(S, t.id);
+    const need = S.teams.filter(lacks).map(t=> t.id);
+    const best = {};
+    const look = (b)=>{
+      if(!b || !b.state || !Array.isArray(b.state.teams) || !picSameLeague(b.state, S)) return;
+      b.state.teams.forEach(o=>{
+        if(!o || need.indexOf(o.id) < 0 || !(o.pic && o.pic.src)) return;
+        if(!best[o.id] || (+b.at||0) > best[o.id].at) best[o.id] = {at:+b.at||0, pic:o.pic};
+      });
+    };
+    if(need.length && (await Baks.ready())){
+      for(let i=1; i<=BAKS; i++){ try{ look(await Baks.get(i)); }catch(e){} }
+      let idx = [];
+      try{ idx = (await bakDB.get(KEY + '.days')) || []; }catch(e){}
+      for(const day of (Array.isArray(idx) ? idx : [])){ try{ look(await bakDB.get(dayBakKey(day))); }catch(e){} }
+    }
+    const names = [];
+    const ids = Object.keys(best);
+    if(ids.length && !viewAsTeam() && !(typeof Supa === 'object' && Supa.holding())){
+      asUser(()=>{
+        ids.forEach(id=>{
+          const t = byId(S.teams, id);
+          if(!lacks(t)) return;                    /* it has come back by itself in the meantime */
+          t.pic = Object.assign(deep(best[id].pic), {at:Date.now()});
+          names.push(t.name);
+        });
+        if(!names.length) return;
+        const mine = S.league.myTeamId, own = names.length === 1 && mine && byId(S.teams, mine) && byId(S.teams, mine).name === names[0];
+        S.notices = S.notices || [];
+        S.notices.unshift({id:'picback:'+Date.now(), at:Date.now(), kind:'info', title: own ? 'Your team picture is back' : 'Team pictures put back',
+          body: (own ? 'Your team picture had gone missing and has been put back from a copy kept on this phone.'
+                     : 'These sides had lost their picture and it has been put back from a copy kept on this phone: '+names.join(', ')+'.')+
+                ' If it should not be there, take it off under the team’s name and picture.',
+          teams:[mine || S.league.commishTeamId].filter(Boolean), read:false, by:null});
+        if(S.notices.length > 200) S.notices.length = 200;
+        save(); render();
+      });
+      put = names.length;
+    }
+    try{ localStorage.setItem(PIC_HEAL_KEY, BUILD_ID); }catch(e){}
+    ui.tmp.picHealDone = true;
+  }catch(e){ try{ console.warn('[front office] pictures', e); }catch(_){} }
+  ui.tmp.picHealBusy = false;
+  return put;
+}
 function picDefaults(){ return {fit:'cover', zoom:100, x:50, y:50}; }
 /* The three CSS values that put it where it belongs. */
 function picStyle(pic){
@@ -8365,8 +8500,17 @@ ACT.tsetSave = ()=>{
   if(!name) return toast('A team needs a name','bad');
   const was = t.name;
   t.name = name;
-  if(v.pic && v.pic.src) t.pic = Object.assign(picDefaults(), v.pic);
-  else delete t.pic;
+  const hadPic = (t.pic && t.pic.src) ? t.pic : null;
+  if(v.pic && v.pic.src){
+    const next = Object.assign(picDefaults(), v.pic);
+    if(!hadPic || !picSame(hadPic, next)) next.at = Date.now();
+    else if(hadPic.at) next.at = hadPic.at; else delete next.at;
+    t.pic = next; delete t.picGone;
+  } else {
+    /* Taken down by a person: said so, so no older copy brings it back. */
+    if(hadPic || t.picGone) t.picGone = hadPic ? Date.now() : t.picGone;
+    delete t.pic;
+  }
   if(was !== name) logIt('“'+was+'” is now “'+name+'”', {type:'admin', teams:[t.id]});
   ui.tmp.tset = null;
   closeModal(); save(); render();
@@ -16667,7 +16811,11 @@ function ladderDetail(pos, rank){
   const label = b.to == null ? b.from+' and below' : (b.from === b.to ? String(b.from) : b.from+'–'+b.to);
   /* The same list the price is taken from: every deal at the position, by base
      salary — the total over the years, as if it were paid evenly. */
-  const rows = S.players.filter(x=> x.pos === pos && x.contract && x.contract.teamId && !x.contract.waiver && baseSalary(x) > 0)
+  const lk = ladderLock();
+  const rows = lk
+    ? ((lk.tables||{})[pos] || []).map(r=>{ const x = byId(S.players, r[0]) || {name:'A deal no longer in the league', contract:null}; return {p:x, base:+r[1], fixed:true}; })
+        .filter(r=> r.base > 0).sort((a,b2)=> b2.base - a.base)
+    : S.players.filter(x=> x.pos === pos && x.contract && x.contract.teamId && !x.contract.waiver && baseSalary(x) > 0)
     .map(x=>{ const years = Math.max(1, +x.contract.years || 1), base = baseSalary(x); return {p:x, base, total:Math.round(base*years*100)/100, years}; })
     .sort((a,b2)=> b2.base - a.base);
   const lead = b.leader && rank === b.from;
@@ -16703,8 +16851,9 @@ function extInfoPanel(p, noFloorNote){
   let work = '';
   if(d){
     const list = d.used.map((r,i)=> '<div class="row" style="gap:6px;justify-content:space-between">'+
-      '<span><span class="dim">'+(d.from + i)+'.</span> '+esc(r.p.name)+' <span class="dim tiny">'+esc(teamName(r.p.contract.teamId))+'</span></span>'+
-      '<span class="num">'+money(r.base)+' <span class="dim tiny">'+esc(baseHow(r.p.contract))+'</span></span></div>').join('');
+      '<span><span class="dim">'+(d.from + i)+'.</span> '+esc(r.p.name)+' <span class="dim tiny">'+
+        esc(r.p.contract && r.p.contract.teamId ? teamName(r.p.contract.teamId) : '')+'</span></span>'+
+      '<span class="num">'+money(r.base)+' <span class="dim tiny">'+esc(r.fixed ? 'when prices were fixed' : baseHow(r.p.contract))+'</span></span></div>').join('');
     const rule = d.top
       ? 'He is the top '+esc(p.pos)+', so the price is the biggest '+esc(p.pos)+' base salary × '+d.mult+'.'
       : d.lead ? 'The price is the '+ord(d.from)+'-biggest '+esc(p.pos)+' base salary.'
@@ -16717,7 +16866,7 @@ function extInfoPanel(p, noFloorNote){
         'as if paid evenly — so a front- or back-loaded deal counts at its even rate. A deal signed before this season keeps the base '+
         'recorded when it was signed, and an extension starts a new base from its first year. '+
         (d.price <= d.floor ? 'It cannot go below the league minimum of '+money(d.floor)+'. ' : '')+
-        'Waiver pick-ups on the minimum are left out.</div></details>';
+        'Waiver pick-ups on the minimum are left out. <span data-ladsays="1">'+esc(ladderLockSays())+'</span></div></details>';
   } else if(!ladderOn){
     work = '<div class="hint">The extension ladder is switched off (Settings › Contracts), so there is no ladder price.</div>';
   }
@@ -19606,7 +19755,9 @@ ACT.chatFile = (d, el)=>{
    messages — the words always stay. */
 const CHAT_MEDIA_BUDGET = 1200000;   /* about 1.2MB of pictures and clips */
 function trimChatMedia(){
-  const withMedia = (S.chat||[]).filter(m=> m.media && m.media.src);
+  /* Only what is held in the league itself counts, and only that is ever
+     cleared. A linked picture or GIF takes no room and is never touched. */
+  const withMedia = (S.chat||[]).filter(m=> m.media && m.media.src && /^data:/.test(String(m.media.src)));
   let total = 0;
   withMedia.forEach(m=> total += String(m.media.src).length);
   if(total <= CHAT_MEDIA_BUDGET) return 0;
@@ -22286,9 +22437,108 @@ function ladderFor(pos){
 function ladderRound(v){
   return S.settings.contracts.ladder.roundWhole ? Math.round(v) : roundInc(v);
 }
+/* ---- Prices fixed for the season ---------------------------------------------
+   The ladder is priced off what is being paid at each position, so every
+   signing and every cut used to move what an extension cost — the same rank
+   could be one price on Tuesday and another on Thursday. Now the salaries the
+   ladder reads are written down once a season and the prices stand on that
+   until the commissioner starts the next one.
+
+   When they are written down: a week after the rookie draft has ended, so the
+   free agency draft, the rookie draft and the signing week after it have all
+   gone into the prices first. Where that date is long past, or was never put
+   in and the games have begun, they are fixed straight away — which is what
+   happens to the season this rule arrived in.
+
+   A man's RANK still moves every week he plays; it is what each rank pays
+   that stands still. */
+const LADDER_LOCK_DAYS = 7;
+function ladderCfg(){ return (S.settings.contracts && S.settings.contracts.ladder) || {}; }
+/* The season's fixed salaries, or null while the prices are still moving. */
+function ladderLock(){
+  const lk = ladderCfg().lock;
+  return (lk && +lk.season === +S.league.season && !lk.off && lk.tables) ? lk : null;
+}
+/* The salaries as they stand this minute, whatever is fixed. */
+function ladderLiveRows(pos){
+  return S.players.filter(x=> x.pos === pos && x.contract && x.contract.teamId && !x.contract.waiver && baseSalary(x) > 0)
+    .map(x=> [x.id, baseSalary(x)]).sort((a,b)=> b[1] - a[1]);
+}
+function ladderLockTake(why){
+  const L = S.settings.contracts.ladder = S.settings.contracts.ladder || {};
+  const tables = {};
+  Object.keys(LADDER_DEFAULT).forEach(pos=>{ const rows = ladderLiveRows(pos); if(rows.length) tables[pos] = rows; });
+  L.lock = {season:+S.league.season, at:Date.now(), tables};
+  clearCapCache();
+  logIt('Extension prices fixed for '+S.league.season+(why ? ' — '+why : '')+'. What each rank pays now stays as it is until the '+
+    (S.league.season+1)+' season is started', {type:'admin', id:'ladlock:'+S.league.season+':'+Date.now()});
+}
+/* When this season's prices are due to be fixed, as a time; null when that is
+   not known yet (the rookie draft has no end date for this season). */
+function ladderLockWhen(){
+  const d = String(rookieRules().draftEnd || ''), end = rookieDraftEnd();
+  if(end == null || +d.slice(0,4) !== +S.league.season) return null;
+  return end + LADDER_LOCK_DAYS*86400000;
+}
+function ladderLockDue(){
+  const L = ladderCfg(), lk = L.lock;
+  if(!L.on) return false;
+  if(lk && +lk.season === +S.league.season) return false;         /* fixed already, or left to move on purpose */
+  const when = ladderLockWhen();
+  if(when != null) return Date.now() >= when;
+  /* No end date for this season's rookie draft. Once the games have started
+     the drafts are plainly behind us, so they are fixed then rather than left
+     to move all year for want of a date. */
+  return ladderSeasonOn();
+}
+function ladderSeasonOn(){
+  return (+((S.live||{}).week)||1) > 1 || (S.schedule||[]).some(g=> g && g.hp != null);
+}
+/* The commissioner's phone does it, when it falls due. */
+function ladderLockRun(){
+  if(!isCommish() || (S.meta && S.meta.demo) || !ladderLockDue()) return 0;
+  ladderLockTake(ladderLockWhen() != null ? 'a week after the rookie draft' : 'with the season under way');
+  return 1;
+}
+/* Said wherever the prices are shown. */
+function ladderLockSays(){
+  const L = ladderCfg(), lk = ladderLock(), y = +S.league.season;
+  if(lk) return 'These prices were fixed for '+y+' on '+dstr(lk.at)+' and stay as they are until the '+(y+1)+' season is started.';
+  if(L.lock && +L.lock.season === y && L.lock.off)
+    return 'The commissioner has left prices to move this season: they shift whenever a deal at the position is signed, extended or cut.';
+  const when = ladderLockWhen();
+  if(when != null && Date.now() < when)
+    return 'Prices are still moving with every signing and cut. They are fixed for '+y+' on '+dstr(when)+', a week after the rookie draft, and then stay put until the '+(y+1)+' season is started.';
+  return 'Prices are still moving with every signing and cut. They are fixed for '+y+' a week after the rookie draft — once the date the '+y+
+    ' rookie draft ended is in (Settings › Rookie scale) — or once the games have started, whichever comes first.';
+}
+ACT.ladderLockNow = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const had = !!ladderLock();
+  const go = ()=>{ ladderLockTake(had ? 'taken again from the salaries as they stand, by the commissioner' : 'by the commissioner'); closeModal(); save(); render(); toast('Prices fixed for '+S.league.season,'good'); };
+  if(!had) return go();
+  ui.tmp.ladderRelock = go;
+  modal('Take the prices again?', '<p style="margin-top:0">The ladder would be priced again off the salaries as they stand today, and those prices held for the rest of '+
+    S.league.season+'. Anybody who has been waiting on the price they can see now may find it has changed.</p>',
+    '<button class="btn ghost" data-a="closeModal">Leave them</button><button class="btn pri" data-a="ladderRelockGo">Take them again</button>');
+};
+ACT.ladderRelockGo = ()=>{ const f = ui.tmp.ladderRelock; ui.tmp.ladderRelock = null; if(f && isCommish()) f(); };
+ACT.ladderLockOff = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const L = S.settings.contracts.ladder;
+  L.lock = {season:+S.league.season, at:Date.now(), off:true};
+  clearCapCache();
+  logIt('Extension prices left to move for '+S.league.season+' by the commissioner — what each rank pays follows the salaries again', {type:'admin'});
+  save(); render();
+};
 /* Every salary being paid at a position, biggest first. */
 function aavTable(pos){ return memo('aav|'+pos, ()=> aavTableRaw(pos)); }
 function aavTableRaw(pos){
+  const lk = ladderLock();
+  if(lk && lk.tables){
+    const rows = lk.tables[pos];
+    return Array.isArray(rows) ? rows.map(r=> +r[1]).filter(v=> v > 0).sort((a,b)=> b-a) : [];
+  }
   return S.players
     .filter(x=> x.pos===pos && x.contract && x.contract.teamId && !x.contract.waiver)
     .map(aavOf).filter(v=> v>0).sort((a,b)=> b-a);
@@ -22410,9 +22660,9 @@ function ladderTabHTML(tid, roster, mine){
     '<div class="pb tight scrollx">'+table+'</div>'+
     '<div class="pb"><div class="eyebrow">'+whose+' '+esc(pos)+(men.length === 1 ? '' : 's')+' on the ladder today</div>'+list+
     '<div class="hint" style="margin-top:10px">A man’s rank is his season average at the position and moves every week he plays, so the price he '+
-      'would sign at moves with it. The prices themselves come from the '+t.length+' '+esc(pos)+' salar'+(t.length===1?'y':'ies')+
-      ' on the books'+(t.length ? ', from '+money(t[0])+' down to '+money(t[t.length-1]) : '')+
-      ', and shift when a deal at the position is signed, extended or cut. Bands past the last salary fall back to the lowest one on the board. '+
+      'would sign at moves with it. What each rank pays comes from the '+t.length+' '+esc(pos)+' salar'+(t.length===1?'y':'ies')+
+      (ladderLock() ? ' that were on the books when prices were fixed' : ' on the books')+(t.length ? ', from '+money(t[0])+' down to '+money(t[t.length-1]) : '')+
+      '. <b data-ladsays="1">'+esc(ladderLockSays())+'</b> Bands past the last salary fall back to the lowest one on the board. '+
       'The full working for one man is on his Extend button.</div></div></div>';
 }
 /* Shown alongside the number so nobody has to take it on trust. */
@@ -28898,7 +29148,8 @@ ACT.sleeperGo = async ()=>{
         oldLook[k] = {mascot:t.mascot, mascotName:t.mascotName, color:t.color,
                       uniform:t.uniform, uniformName:t.uniformName,
                       jersey:t.jersey, jerseys:t.jerseys, pants:t.pants,
-                      nflTeam:t.nflTeam, uniformPicked:t.uniformPicked, kit:t.kit, skin:t.skin, jerseyNo:t.jerseyNo};
+                      nflTeam:t.nflTeam, uniformPicked:t.uniformPicked, kit:t.kit, skin:t.skin, jerseyNo:t.jerseyNo,
+                      pic:t.pic, picGone:t.picGone};
       });
       /* The players this league already has, by Sleeper id and — for anybody
          added by hand — by name and position. */
@@ -29029,6 +29280,8 @@ ACT.sleeperGo = async ()=>{
           if(look.kit         != null) t.kit         = look.kit;
           if(look.skin        != null) t.skin        = look.skin;
           if(look.jerseyNo    != null) t.jerseyNo    = look.jerseyNo;
+          if(look.pic && look.pic.src) t.pic = deep(look.pic);
+          else if(look.picGone)        t.picGone = look.picGone;
         }
         nextTeams.push(t);
         /* Who is on the roster only changes when Rosters was ticked. With only
@@ -30713,6 +30966,16 @@ VIEWS.settings = function(){
             <div class="hint">${S.settings.players.on
               ? 'The ladder is written down and ready, but players currently have a say — so their own asking price is what counts. Switch that off under Settings › Values to put the ladder in charge.'
               : 'In charge right now. Rank one at each position is paid '+ct.ladder.topMult+'% of the top salary there; everyone else takes the greater of the average and the median of their band.'}</div>
+            <div class="assetbox" data-ladlock="${ladderLock()?'fixed':'moving'}">
+              <div class="eyebrow">Prices for ${S.league.season}</div>
+              <div class="tiny" style="margin:4px 0 8px">${esc(ladderLockSays())}</div>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                ${ladderLock()
+                  ? '<button class="btn sm" data-a="ladderLockNow">Take them again from today’s salaries</button><button class="btn ghost sm" data-a="ladderLockOff">Let them move</button>'
+                  : '<button class="btn sm" data-a="ladderLockNow">Fix them now</button>'}
+              </div>
+              <div class="tiny dim" style="margin-top:8px">Fixed means what each rank pays does not change when somebody is signed, extended or cut. A man’s own rank still moves with his season. Starting the next season lets the prices move again, and they are fixed a week after that season’s rookie draft ends.</div>
+            </div>
           </div></div>
           <div class="panel"><div class="ph"><h3>Free agent budget</h3></div><div class="pb stack">
             <label class="check"><input type="checkbox" data-set="settings.fa.on" ${S.settings.fa.on?'checked':''}>
@@ -31435,9 +31698,9 @@ VIEWS.settings = function(){
               <td class="right ${r.avg!=null?'num':'dim'} hide-xs">${r.avg!=null&&r.med!=null?money(r.med):'—'}</td>
               <td class="right money">${money(r.price)}</td></tr>`).join('')}
           </tbody></table>
-          <div class="pb"><div class="hint">${t.length} ${pos} salar${t.length===1?'y':'ies'} on the books, from
+          <div class="pb"><div class="hint">${t.length} ${pos} salar${t.length===1?'y':'ies'} ${ladderLock()?'on the books when prices were fixed':'on the books'}, from
             ${money(t[0]||0)} down to ${money(t[t.length-1]||0)}. Bands past that run out of salaries and fall back to the
-            lowest one on the board.</div></div>`;
+            lowest one on the board. ${esc(ladderLockSays())}</div></div>`;
         })()}</div>
       </div>
       <div class="panel"><div class="ph"><h3>What each position is worth</h3></div><div class="pb grid g3">
@@ -32143,6 +32406,7 @@ document.addEventListener('change', e=>{
       S = migrate(j);
       /* A file is a snapshot. The messages written since it was taken stay. */
       joinStreamsInto(S, was);
+      try{ keepPics(was, S, true); keepChatMedia(was, S, true); }catch(e){}
       Journal.reset();
       /* The file may have been exported from somewhere else, or before this
          address was tied to a league. The deployed connection wins, so loading
@@ -33471,6 +33735,9 @@ ACT.rollSeasonGo = ()=>{
     });
   }
   S.league.season = old+1;
+  /* Last season's fixed extension prices go with it: they move again now, and
+     are fixed a week after this season's rookie draft. */
+  try{ if(S.settings.contracts.ladder) delete S.settings.contracts.ladder.lock; }catch(e){}
   /* An adjustment only ever applied to one season. Now that season is behind
      us, it goes — but nothing before that moment removes it. */
   let expired = 0;
@@ -33600,6 +33867,9 @@ ACT.restoreBackup = async (d)=>{
     /* A saved copy puts the league back as it was. The inbox, the room, the
        notices and the log keep everything written since. */
     joinStreamsInto(S, was);
+    /* And the pictures are the ones the league has now: a saved copy leaves the
+       room's pictures out to save room, and may be older than a team's. */
+    try{ keepPics(was, S, true); keepChatMedia(was, S, true); }catch(e){}
     Journal.reset();
     Store.set(KEY, S);
     closeModal(); render();
@@ -34668,6 +34938,13 @@ function adoptRemote(state, rev, force){
       settingsHeld = true;
     }
   }
+  /* A picture the arriving copy is without, and nobody took down, is put back
+     — and sent up, so the server has it again. */
+  try{
+    const pk = keepPics(before, S);
+    if(pk.send) needsPush = true;
+    if(keepChatMedia(before, S) && picMayPush(S, null)) needsPush = true;
+  }catch(e){ try{ console.warn('[front office] pictures', e); }catch(_){} }
   /* Weeks may have arrived with that copy, so the book is worked out again. */
   try{ rebuildDvp(); }catch(e){}
   /* Countdowns do not go back up just because the server's count is behind this
@@ -35868,6 +36145,8 @@ function tickBody(){
     try{ if(healRecordsRun()){ settled = true; needsRender = true; } }catch(e){}
     if(ui.tmp.dayCopy !== dayStamp() && !(S.meta && S.meta.demo)){ ui.tmp.dayCopy = dayStamp(); try{ keepDaily(deep(S)); }catch(e){} }
     try{ if(duesLogRepair()){ settled = true; needsRender = true; } }catch(e){}
+    try{ healPicsRun(); }catch(e){}
+    try{ if(ladderLockRun()){ settled = true; needsRender = true; } }catch(e){}
     try{ if(remadeNoticeRun()){ settled = true; needsRender = true; } }catch(e){}
     try{ orphanStatsRun(); }catch(e){}
   }
