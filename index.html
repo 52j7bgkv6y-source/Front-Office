@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-06c · extension prices are fixed for the season, a week after the rookie draft';
+const APP_BUILD = '2026-10-07a · a free agent picked up in Sleeper comes in on a $1 contract';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2952,6 +2952,55 @@ function rolloverInto(teamId, year){
   return out;
 }
 function teamCapForYear(teamId, year){ return fixInc(capForYear(year) + rolloverInto(teamId, year)); }
+/* ---- Planning what to keep back ----------------------------------------------
+   The most anybody may carry out of a year into the next, however much they
+   have spare: the league's rule (a share of that year's cap, or a flat amount)
+   under its hard ceiling. null when there is no limit at all; 0 when nothing
+   is carried forward in this league. Room kept beyond it is simply lost, which
+   is why it is shown beside every year. */
+function rolloverMax(year){
+  const c = S.settings.cap || {}, r = c.rollover;
+  if(!r || !r.on) return 0;
+  let lim = r.mode==='all' ? Infinity : r.mode==='pct' ? capForYear(year)*(+r.value||0)/100 : (+r.value||0);
+  lim = Math.max(0, lim);
+  if(r.max!=='' && r.max!=null && !isNaN(+r.max)) lim = Math.min(lim, Math.max(0, +r.max));
+  return lim === Infinity ? null : fixInc(lim);
+}
+/* One team, one year: the ceiling, what would be carried on today's books
+   (negative where a shortfall is charged on), and the spare room above the
+   ceiling that would not come with it. */
+function rolloverPlan(teamId, year){
+  const max = rolloverMax(year), space = capSpace(teamId, year), carry = rolloverInto(teamId, year+1);
+  const over = space > 0 ? Math.max(0, fixCents(space - Math.max(0, carry))) : 0;
+  return {max, space, carry, over, into:year+1};
+}
+function rolloverOn(){ return !!((S.settings.cap||{}).rollover||{}).on; }
+/* The two lines, as cells for whichever table or ladder is asking. */
+function rolloverCells(teamId, yrs){
+  const plans = yrs.map(y=> rolloverPlan(teamId, y));
+  return {
+    max: plans.map(p=> '<span class="num">'+(p.max == null ? 'no limit' : money(p.max))+'</span><div class="tiny dim">into '+p.into+'</div>'),
+    now: plans.map(p=> (p.carry > 0 ? '<span class="num good">+'+money(p.carry)+'</span>'
+                      : p.carry < 0 ? '<span class="num bad">'+money(p.carry)+'</span>'
+                      : '<span class="num dim">—</span>')+
+                     (p.over > 0.004 ? '<div class="tiny bad">'+money(p.over)+' over the max, lost</div>' : ''))
+  };
+}
+function rolloverSays(teamId){
+  const r = (S.settings.cap||{}).rollover || {};
+  /* This season's figures in words, for a table whose year columns are a swipe away on a phone. */
+  let lead = '';
+  if(teamId){
+    const y = S.league.season, p = rolloverPlan(teamId, y);
+    lead = 'Out of '+y+' the most that can be carried into '+(y+1)+' is '+(p.max == null ? 'everything left over' : money(p.max))+
+      '; as it stands '+teamName(teamId)+' would carry '+(p.carry > 0 ? money(p.carry) : p.carry < 0 ? 'nothing, and be charged '+money(-p.carry) : 'nothing')+
+      (p.over > 0.004 ? ', leaving '+money(p.over)+' over the max that would be lost' : '')+'. ';
+  }
+  const rule = r.mode==='all' ? 'all of it' : r.mode==='pct' ? 'up to '+(+r.value||0)+'% of that year’s cap' : 'up to '+money(+r.value||0);
+  const top = (r.max!=='' && r.max!=null && !isNaN(+r.max)) ? ', and never more than '+money(+r.max) : '';
+  return lead+'Cap space left at the end of a season is carried into the next: '+rule+top+'. Max rollover is the most that can come with you out of each year; '+
+    'anything kept beyond it is lost, so it is the most worth saving. “Rolls over as it stands” is what today’s books would carry, and each later year already counts what is carried into it.';
+}
 /* Years in the league. Imports carry it; anything we were never told is
    unknown, and an unknown never blocks a move. */
 function playerExp(p){
@@ -9768,7 +9817,15 @@ VIEWS.teams = function(){
       <tr class="tot">${rosFootLead('Space')}
         ${yrs.map(yy=>{ const sp=capSpace(tid,yy);
           return '<td class="right money '+(sp<0?'bad':'good')+'">'+money(sp,{plus:true})+'</td>'; }).join('')}<td></td><td></td></tr>
-      </tfoot></table></div></div>` : ''}
+      ${(()=>{
+        /* What can be carried out of each year, so a manager knows how much is worth keeping back. */
+        if(!rolloverOn()) return '';
+        const rc = rolloverCells(tid, yrs);
+        return '<tr data-romax="1">'+rosFootLead('Max rollover', 'dim')+rc.max.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td></td></tr>'+
+               '<tr data-ronow="1">'+rosFootLead('Rolls over as it stands', 'dim')+rc.now.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td></td></tr>';
+      })()}
+      </tfoot></table></div>
+      ${rolloverOn() ? '<div class="pb"><div class="hint" data-rosays="1">'+esc(rolloverSays(tid))+'</div></div>' : ''}</div>` : ''}
 
     ${sub==='squads' ? (()=>{
       const R = S.settings.roster;
@@ -17234,8 +17291,15 @@ function capLadderHTML(pend){
           (()=>{ const rv=rolloverInto(tid,y); if(!rv) return '';
             return rv>0 ? '<div class="tiny good">+'+money(rv)+' carried</div>'
                         : '<div class="tiny bad">'+money(rv)+' carried against you</div>'; })()+'</div>').join('')}</div>
+        ${(()=>{
+          if(!rolloverOn()) return '';
+          const rc = rolloverCells(tid, yrs);
+          return '<div class="capline" data-romax="1"><div>Max rollover</div>'+rc.max.map(c=> '<div>'+c+'</div>').join('')+'</div>'+
+                 '<div class="capline" data-ronow="1"><div>Rolls over as it stands</div>'+rc.now.map(c=> '<div>'+c+'</div>').join('')+'</div>';
+        })()}
       </div>
     </div></div>
+    ${rolloverOn() ? '<div class="hint" data-rosays="1" style="margin-bottom:10px">'+esc(rolloverSays())+'</div>' : ''}
     ${irBackPanel(tid)}
     <div class="hint">Each bar is one year of one contract, scaled against the biggest single-year hit on the roster. A front loaded deal steps down, a back loaded deal steps up. Hatched cells are years the contract does not cover.</div>
     ` : `
@@ -18905,6 +18969,70 @@ ACT.newTrade = ()=>{
   modal('Propose a trade', tradeForm(),
     '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="sendTrade">Send it</button>');
 };
+/* ---- Changing an offer you have sent ------------------------------------------
+   Until the other side answers, the team that put an offer up can change it:
+   the same workbench, with the offer already on it. Who it goes to stays put —
+   an offer to somebody else is a different offer, so that one is pulled and a
+   new one sent.
+
+   Saving swaps the old offer out for the changed one rather than rewriting it
+   in place. That is what keeps two phones honest: if the other side accepted
+   in the same few seconds, their yes was to the offer as it was and this
+   change is refused; if the change landed first, their yes finds the offer
+   they were looking at gone, and they are told to look again. Nobody can end
+   up having agreed to terms they never saw. */
+function canEditTrade(tr){
+  if(!tr) return 'that offer has gone';
+  if(tr.status !== 'proposed') return 'that offer has already been answered, so it cannot be changed now';
+  const me = actingTeam();
+  if(!me || me !== tradeProposer(tr)) return 'only '+teamName(tradeProposer(tr))+' can change this offer';
+  if(tr.type !== 'multi' && (!tr.a || tr.a.teamId !== me)) return 'only '+teamName((tr.a||{}).teamId)+' can change this offer';
+  return null;
+}
+ACT.editTrade = (d)=>{
+  const tr = byId(S.trades, d.id), no = canEditTrade(tr);
+  if(no) return toast(no.charAt(0).toUpperCase()+no.slice(1), 'bad');
+  const side = (x)=> Object.assign({players:[], picks:[], cash:0, retain:{}}, deep(x||{}));
+  if(tr.type === 'multi'){
+    ui.tmp.tb = { a:{teamId:actingTeam(), players:[], picks:[], cash:0, retain:{}}, b:{teamId:(tr.teams||[]).find(t=> t !== actingTeam()) || null, players:[], picks:[], cash:0, retain:{}} };
+    ui.tmp.multi = {teams:(tr.teams||[]).slice(), legs:deep(tr.legs||[]).map(l=> Object.assign({players:[], picks:[], cash:0, retain:{}}, l)), editId:tr.id};
+  } else {
+    ui.tmp.multi = null;
+    ui.tmp.tb = {a:side(tr.a), b:side(tr.b), editId:tr.id};
+  }
+  modal('Change your offer', tradeForm(),
+    '<button class="btn ghost" data-a="closeModal">Leave it as it is</button><button class="btn pri" data-a="sendTrade">Save the changes</button>');
+};
+function tradeEditId(){ const m = ui.tmp.multi; return m ? (m.editId || null) : ((ui.tmp.tb && ui.tmp.tb.editId) || null); }
+/* What is actually on the table, for telling whether anything changed. */
+function tradeTermsSig(tr){
+  const clean = (x)=> ({t:x.teamId||x.from||'', to:x.to||'', p:(x.players||[]).slice().sort(), k:(x.picks||[]).slice().sort(), c:+x.cash||0,
+    r:Object.keys(x.retain||{}).sort().map(pid=>{ const r = x.retain[pid]||{}; const by = r.byYear||{};
+      return [pid, Object.keys(by).sort().map(y=> y+':'+(+by[y]||0)).filter(v=> !/:0$/.test(v)).join(','), r.byYear ? '' : (+r.pct||0)+'/'+(r.through||'')]; }).filter(v=> v[1] || (v[2] && v[2] !== '0/'))});
+  return JSON.stringify(tr.type === 'multi' ? (tr.legs||[]).map(clean) : [clean(tr.a||{}), clean(tr.b||{})]);
+}
+/* Put the changed offer where the old one was. */
+function swapEditedTrade(old, tr){
+  const me = actingTeam();
+  tr.createdAt = old.createdAt || tr.createdAt;
+  tr.editedAt = Date.now();
+  tr.edits = (+old.edits||0) + 1;
+  tr.editOf = old.editOf || old.id;
+  tr.by = old.by || tr.by;
+  tr.log = [{at:Date.now(), text:'Changed by '+teamName(me)+(tr.type==='multi' ? ' — everybody has to say yes to it again' : '')}].concat(old.log||[]);
+  const i = S.trades.indexOf(old);
+  if(i >= 0) S.trades.splice(i, 1, tr); else S.trades.unshift(tr);
+  /* The line in the league's log follows the offer it was written about. */
+  (S.log||[]).forEach(l=>{ if(l && l.tr === old.id) l.tr = tr.id; });
+  if(ui.tmp.focusTrade === old.id) ui.tmp.focusTrade = tr.id;
+  const teams = rejectTeams(tr).slice(); rejectTeams(old).forEach(t=>{ if(teams.indexOf(t) < 0) teams.push(t); });
+  notify('Trade offer changed', teamName(me)+' changed the offer'+(tr.type==='multi'
+      ? ' — a '+(tr.teams||[]).length+'-team deal. Everybody has to accept it again.'
+      : ' to '+teamName((tr.b||{}).teamId)+'. Have another look before you answer.'), 'info', teams);
+  logIt((tr.type==='multi' ? 'Multi-team trade offer changed — '+(tr.teams||[]).map(teamName).join(', ') : 'Trade offer changed — '+tradeLine(tr)),
+    tr.type==='multi' ? {type:'trade', teams:tr.teams, players:[].concat.apply([], (tr.legs||[]).map(l=> l.players||[])), tr:tr.id, only:rejectTeams(tr)}
+                      : Object.assign(txMeta(tr), {tr:tr.id, only:rejectTeams(tr)}));
+}
 /* The offer always comes from you. A commissioner standing in for somebody
    sends as that team, which is the same rule. */
 function tbFixSender(){
@@ -19001,7 +19129,7 @@ function tbSide(side){
   const out = sum(s.players.map(id=>{const p=byId(S.players,id);return p?tradeHit(p,y):0;}));
   return `<div class="assetbox">
     <label class="f" style="margin-bottom:8px"><span>${side==='a'?'You are sending':'Receiving team'}</span>
-      ${side==='a'
+      ${(side==='a' || ui.tmp.tb.editId)
         ? '<div class="pill" style="align-self:flex-start">'+esc(teamName(tid))+'</div>'
         : '<select data-a="tbTeam" data-side="'+side+'">'+
           S.teams.filter(t=> t.id!==(ui.tmp.tb&&ui.tmp.tb.a&&ui.tmp.tb.a.teamId))
@@ -19064,10 +19192,13 @@ function builderTrade(){
 function tradeForm(){
   const m = ui.tmp.multi;
   if(m) return multiForm();
-  return `<div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
+  const editing = !!ui.tmp.tb.editId;
+  return `${editing ? '<div class="hint" data-tbedit="1" style="margin-bottom:10px">This is the offer you sent. Add to it or take things off, then save: '+
+      esc(teamName(ui.tmp.tb.b.teamId))+' is told it has changed, and sees only the new one. It can be changed until they answer.</div>' : ''}
+  <div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
   ${tradeReadHTML(ui.tmp.tb)}
   <div id="capBoardBox">${capBoard(builderTrade())}</div>
-  <div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>
+  ${editing ? '' : '<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>'}
   <div class="hint">Once the other side accepts, the trade sits in a ${S.settings.trades.reviewHours}-hour review window
   ${S.settings.trades.counters.on?'during which any other team can counter it':''}${S.settings.trades.quiet.on
     ? (quietSkips()
@@ -19148,7 +19279,7 @@ function capBoard(tr){
 /* ---------- the multi-team builder ---------- */
 function multiForm(){
   const m = ui.tmp.multi;
-  return `
+  return `${m.editId ? '<div class="hint" data-tbedit="1" style="margin-bottom:10px">This is the deal you put up. Change it and save: every team in it is told, and everybody has to accept it again. It can be changed until it goes to review.</div>' : ''}
     <div class="row" style="margin-bottom:10px">
       <span class="eyebrow">Teams in it</span>
       ${m.teams.map(t=>'<span class="chip">'+esc(teamName(t))+
@@ -19212,6 +19343,7 @@ function mtLeg(l, i){
   </div>`;
 }
 ACT.tbGoMulti = ()=>{
+  if(ui.tmp.tb && ui.tmp.tb.editId) return toast('To bring in a third team, pull this offer and put up a new one','bad');
   const a = ui.tmp.tb.a, b = ui.tmp.tb.b;
   ui.tmp.multi = { teams:[a.teamId, b.teamId].filter((v,i,s)=>v&&s.indexOf(v)===i),
     legs:[ {from:a.teamId, to:b.teamId, players:a.players.slice(), picks:a.picks.slice(), cash:a.cash||0, retain:retainToYears(a)},
@@ -19311,6 +19443,7 @@ function midNumber(v){ const t=String(v==null?'':v); return t==='' || /[.\-+eE]$
 ACT.tbTeam = (d,el)=>{
   /* Only the receiving side is anybody's to change. */
   if(d.side==='a') return;
+  if(ui.tmp.tb.editId) return toast('To offer this to a different team, pull this offer and send a new one','bad');
   const s=ui.tmp.tb[d.side];
   if(el.value === (ui.tmp.tb.a||{}).teamId) return toast('You are already the sending team','bad');
   s.teamId=el.value; s.players=[]; s.picks=[];
@@ -19361,6 +19494,11 @@ ACT.tbFill = (d)=>{
 };
 ACT.sendTrade = ()=>{
   const m = ui.tmp.multi;
+  const editId = tradeEditId(), old = editId ? byId(S.trades, editId) : null;
+  if(editId){
+    const no = canEditTrade(old);
+    if(no){ closeModal(); render(); return toast(no.charAt(0).toUpperCase()+no.slice(1), 'bad', 6000); }
+  }
   if(m){
     const legs = (m.legs||[]).filter(l=> l.from && l.to && l.from!==l.to &&
       ((l.players||[]).length || (l.picks||[]).length || +l.cash));
@@ -19371,6 +19509,13 @@ ACT.sendTrade = ()=>{
       by:actingTeam(),
       accepted:[actingTeam()], createdAt:Date.now(), clock:null, counters:[],
       log:[{at:Date.now(), text:'Proposed by '+teamName(actingTeam())+' — '+teams.length+' teams'}]};
+    if(old){
+      if(tradeTermsSig(tr) === tradeTermsSig(old) && teams.slice().sort().join() === (old.teams||[]).slice().sort().join()) return toast('Nothing has been changed','warn');
+      swapEditedTrade(old, tr);
+      ui.tmp.multi = null;
+      closeModal(); save(); go('trades'); ui.sub = 'inbox'; render(); toast('Offer changed — everybody has to accept it again','good');
+      return;
+    }
     S.trades.unshift(tr);
     notify('Trade offer', teamName(actingTeam())+' put up a '+teams.length+'-team deal.', 'info', teams);
     logIt('Multi-team trade proposed — '+teams.map(teamName).join(', '),
@@ -19386,6 +19531,14 @@ ACT.sendTrade = ()=>{
   const tr = {id:uid('tr'), type:'standard', a:deep(tb.a), b:deep(tb.b), status:'proposed',
     by:actingTeam(),                       /* who put it up — they cannot accept it */
     createdAt:Date.now(), clock:null, counters:[], log:[{at:Date.now(), text:'Proposed by '+teamName(tb.a.teamId)}]};
+  delete tr.a.editId; delete tr.b.editId;
+  if(old){
+    if(tr.b.teamId !== (old.b||{}).teamId) return toast('To offer this to a different team, pull this offer and send a new one','bad');
+    if(tradeTermsSig(tr) === tradeTermsSig(old)) return toast('Nothing has been changed','warn');
+    swapEditedTrade(old, tr);
+    closeModal(); save(); go('trades'); ui.sub = 'inbox'; render(); toast('Offer changed','good');
+    return;
+  }
   S.trades.unshift(tr);
   notify('Trade offer', teamName(tb.a.teamId)+' sent '+teamName(tb.b.teamId)+' an offer.',
     'info', [tb.a.teamId, tb.b.teamId]);
@@ -19443,7 +19596,7 @@ ACT.acceptTrade = (d)=>{
   logIt('Trade accepted, in review — '+tradeLine(tr), txMeta(tr));
   save(); render(); toast('Accepted — review clock running','good');
 };
-ACT.rejectTrade = (d)=>{ const tr=byId(S.trades,d.id); tr.status='rejected'; tr.log.unshift({at:Date.now(),text:'Turned down'}); save(); render(); };
+ACT.rejectTrade = (d)=>{ const tr=byId(S.trades,d.id); if(!tr){ render(); return toast('That offer has gone','bad'); } tr.status='rejected'; tr.log.unshift({at:Date.now(),text:'Turned down'}); save(); render(); };
 ACT.forceProcess = (d)=>{ const tr=byId(S.trades,d.id); tr.clock.remain=0; processTrade(tr); save(); render(); };
 ACT.undoTrade = (d)=>{
   const tr = byId(S.trades,d.id);
@@ -21555,6 +21708,7 @@ VIEWS.trades = function(){
           ${mine && !said ? '<button class="btn pri" data-a="multiAccept" data-id="'+tr.id+'">Accept</button>'+
             '<button class="btn ghost danger" data-a="multiReject" data-id="'+tr.id+'">Turn it down</button>' :
             said ? '<span class="pill ok">you are in</span>' : ''}
+          ${canEditTrade(tr) ? '' : '<button class="btn" data-a="editTrade" data-id="'+tr.id+'">Change the offer</button>'}
         </div>`:''}
         ${tr.status==='review' && isCommish()?'<div class="row" style="margin-top:10px">'+
           '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button>'+
@@ -21573,6 +21727,7 @@ VIEWS.trades = function(){
     if(tr.counterAcceptedAt) bits.push('<span><span class="dim">counter accepted</span> '+
       dstr(tr.counterAcceptedAt)+'</span>');
     if(!bits.length && tr.createdAt) bits.push('<span><span class="dim">offered</span> '+dstr(tr.createdAt)+'</span>');
+    if(tr.editedAt && tr.status === 'proposed') bits.push('<span data-tredited="1"><span class="dim">changed</span> '+dstr(tr.editedAt)+'</span>');
     if(!bits.length) return '';
     return '<div class="pb" style="padding-top:0"><div class="tiny dim" style="display:flex;gap:14px;flex-wrap:wrap">'+
       bits.join('')+'</div></div>';
@@ -21612,7 +21767,8 @@ VIEWS.trades = function(){
             return '<span class="tiny dim" style="align-self:center">Waiting on '+
               esc(teamName((tr.b||{}).teamId||''))+'</span>'+
               (actingTeam()===tradeProposer(tr)
-                ? '<div class="spacer"></div><button class="btn ghost" data-a="rejectTrade" data-id="'+tr.id+'">Pull the offer</button>'
+                ? '<div class="spacer"></div>'+(canEditTrade(tr) ? '' : '<button class="btn" data-a="editTrade" data-id="'+tr.id+'">Change the offer</button>')+
+                  '<button class="btn ghost" data-a="rejectTrade" data-id="'+tr.id+'">Pull the offer</button>'
                 : '');
           })() : ''}
           ${canCounter ? sides.map(s=>'<button class="btn" data-a="counter" data-id="'+tr.id+'" data-side="'+s+'">Counter '+esc(teamName(tr[s].teamId))+'</button>').join('') : ''}
@@ -29094,7 +29250,7 @@ ACT.sleeperGo = async ()=>{
     const players = await sleeperPlayerMap();
     impProgress('Putting it together…', 85);
 
-    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
+    const o = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
     const season = parseInt(league.season,10) || S.league.season;
 
     /* Rebuilding the sides and rebuilding the rosters are one job in Sleeper's
@@ -29191,7 +29347,11 @@ ACT.sleeperGo = async ()=>{
         return p;
       };
       let kept = 0, freshDeals = 0, noDeal = 0, skippedIDP = 0;
-      const loosed = [];
+      const loosed = [], signedNow = [];
+      /* Unless the box has been unticked, a league already running here signs
+         them. A league being brought in for the first time only does when the
+         box was ticked on purpose: its prices are still to be set. */
+      const giveDeals = o.contracts === true || (o.contracts !== false && sameLeague && oldPlayers.some(x=> x.contract));
       /* On this roster, on whatever deal he has. Sleeper decides WHERE a player
          sits; it does not get to change what he is paid. */
       const seat = (p, teamId)=>{
@@ -29203,12 +29363,14 @@ ACT.sleeperGo = async ()=>{
             else c.teamId = teamId;                /* moved, terms untouched */
           }
           kept++;
-        } else if(o.contracts){
-          /* Only when the commissioner has actually asked for it. Otherwise a
-             player Sleeper has on a roster but this league has never priced is
-             left without a deal, for somebody to sign properly. */
-          p.contract = makeContract(teamId, +S.settings.contracts.minSalary||1, 1, 'ev', season);
-          freshDeals++;
+        } else if(giveDeals){
+          /* On a roster in Sleeper with no contract here: he was picked up out
+             of free agency over there, so he comes in the way anybody does off
+             the wire in this league — the waiver salary, for one year, with
+             the waiver tag. A man who already has a contract is never touched. */
+          p.contract = makeContract(teamId, +S.settings.waivers.salary||+S.settings.contracts.minSalary||1, 1, 'ev', season);
+          p.contract.waiver = true;
+          freshDeals++; signedNow.push(p.name+' ('+teamName(teamId)+')');
         } else noDeal++;
       };
       /* Only clear what is actually being brought in. Ticking one box used to
@@ -29345,7 +29507,7 @@ ACT.sleeperGo = async ()=>{
       /* And everybody else this league already had stays in it. */
       if(o.roster) oldPlayers.forEach(op=>{ if(!usedP.has(op)){ usedP.add(op); nextPlayers.push(op); } });
       S.players = nextPlayers.concat(added);
-      ui.tmp.slLoosed = loosed;
+      ui.tmp.slLoosed = loosed; ui.tmp.slSigned = signedNow;
       /* Depth charts — only the ordering is written. */
       let depthSet = 0;
       if(o.depth){
@@ -29443,10 +29605,13 @@ ACT.sleeperGo = async ()=>{
     }
 
     const loosedNow = ui.tmp.slLoosed || []; ui.tmp.slLoosed = null;
+    const signedList = ui.tmp.slSigned || []; ui.tmp.slSigned = null;
     logIt('Imported "'+(league.name||id)+'" from Sleeper — '+S.teams.length+' teams, '+
       S.players.length+' players, '+scored+' scoring categories'+
       (loosedNow.length ? '. On nobody\u2019s roster in Sleeper, so off their side here and unsigned on the deal they had: '+
-        loosedNow.slice(0, 40).join(', ')+(loosedNow.length > 40 ? ' and '+(loosedNow.length-40)+' more' : '') : ''), {type:'admin'});
+        loosedNow.slice(0, 40).join(', ')+(loosedNow.length > 40 ? ' and '+(loosedNow.length-40)+' more' : '') : '')+
+      (signedList.length ? '. On a roster in Sleeper with no contract here, so signed at '+money(+S.settings.waivers.salary||+S.settings.contracts.minSalary||1)+' for one year: '+
+        signedList.slice(0, 40).join(', ')+(signedList.length > 40 ? ' and '+(signedList.length-40)+' more' : '') : ''), {type:'admin'});
     ui.tmp.slBusy = false;
     ui.tmp.slDone = {name:league.name, teams:S.teams.length, players:S.players.length, scored, unknownSlots, season,
       kept:ui.tmp.slKept||0, fresh:ui.tmp.slFresh||0, freeAgents:ui.tmp.slFA||0, loosed:loosedNow.length,
@@ -29462,8 +29627,10 @@ ACT.sleeperGo = async ()=>{
   }
 };
 ACT.slOpt = (d)=>{
-  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
-  ui.tmp.slOpts[d.k] = !ui.tmp.slOpts[d.k];
+  ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
+  /* The contracts box starts ticked without having been touched. */
+  if(d.k === 'contracts') ui.tmp.slOpts.contracts = ui.tmp.slOpts.contracts === false;
+  else ui.tmp.slOpts[d.k] = !ui.tmp.slOpts[d.k];
   render();
 };
 
@@ -29550,7 +29717,7 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
     })():''}
 
     ${sub==='sleeper'?(()=>{
-      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true, contracts:false};
+      const o = ui.tmp.slOpts = ui.tmp.slOpts || {scoring:true, roster:true, teams:true, freeAgents:true, schedule:true, depth:true};
       const done = ui.tmp.slDone;
       return `<div class="grid g2">
       <div class="panel"><div class="ph"><h3>Pull it straight from Sleeper</h3></div><div class="pb stack">
@@ -29582,10 +29749,12 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
         ${idpOn() ? '' : `<div class="hint">${idpFreeCount()} defender${idpFreeCount()===1?'':'s'} are
           sitting in free agency where nobody can use them.
           ${isCommish() && idpFreeCount() ? '<button class="btn sm ghost" data-a="dropIDP">Remove them</button>' : ''}</div>`}
-        <label class="check"><input type="checkbox" ${o.contracts?'checked':''} data-a="slOpt" data-k="contracts">
-          <span>Give a contract to anybody who has not got one
-            <span class="dim">— off by default. Existing deals are never touched either way; this only
-            decides what happens to a player Sleeper has on a roster who has never been priced here.</span></span></label>
+        <label class="check"><input type="checkbox" ${o.contracts!==false?'checked':''} data-a="slOpt" data-k="contracts">
+          <span>Sign anybody on a Sleeper roster who has no contract here, at ${money(+S.settings.waivers.salary||+S.settings.contracts.minSalary||1)} for one year
+            <span class="dim">— on by default: a free agent picked up in Sleeper comes in the way a pickup off the wire does here,
+            with the waiver tag. Anybody who already has a contract is left exactly as he is. Untick it if you would
+            rather sign them yourself — after a rookie draft, say. (Bringing in a league for the first time signs
+            nobody unless you tick it again yourself: its prices are still to be set.)</span></span></label>
         <label class="check"><input type="checkbox" ${o.picks?'checked':''} data-a="slOpt" data-k="picks">
           <span>Draft picks <span class="dim">— off unless you tick it. Replaces every pick held here with
             Sleeper's list, including the ones already traded there.</span></span></label>
@@ -29673,7 +29842,7 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
             <dt>Free agents</dt><dd>${done.freeAgents||0}</dd>
             <dt>Schedule</dt><dd>${done.fixtures?done.fixtures+' games':'<span class="dim">not brought across</span>'}</dd>
             <dt>Depth charts</dt><dd>${done.depth?done.depth+' players':'<span class="dim">not brought across</span>'}</dd>
-            <dt>Deals kept</dt><dd>${done.kept||0}${done.fresh?' <span class="dim">· '+done.fresh+' new on the minimum</span>':''}</dd>
+            <dt>Deals kept</dt><dd>${done.kept||0}${done.fresh?' <span class="dim" data-slfresh="1">· '+done.fresh+' signed at '+money(+S.settings.waivers.salary||+S.settings.contracts.minSalary||1)+' for one year</span>':''}</dd>
             ${done.loosed ? '<dt>Off their side</dt><dd data-loosed="1">'+done.loosed+' <span class="dim">· on nobody\u2019s roster in Sleeper, so unsigned here on the deal they had. The log names them.</span></dd>' : ''}
             <dt>Scoring categories</dt><dd>${done.scored}</dd></div>
           ${done.unknownSlots && done.unknownSlots.length?'<div class="hint">Slots this app does not know were skipped: '+
