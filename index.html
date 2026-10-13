@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-07a · a free agent picked up in Sleeper comes in on a $1 contract';
+const APP_BUILD = '2026-10-13a · a ladder band pays the median of its top and bottom salaries';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -16876,12 +16876,13 @@ function ladderDetail(pos, rank){
     .map(x=>{ const years = Math.max(1, +x.contract.years || 1), base = baseSalary(x); return {p:x, base, total:Math.round(base*years*100)/100, years}; })
     .sort((a,b2)=> b2.base - a.base);
   const lead = b.leader && rank === b.from;
-  const used = lead ? rows.slice(Math.max(0, b.from-1), b.from)
-                    : rows.slice(Math.max(0, b.from-1), b.to == null ? rows.length : b.to);
   const w = ladderWorking(pos, rank);
+  /* Only the salaries the price is made from: the leader's own, or the two ends of the band. */
+  const at = (n)=> rows[n-1] ? Object.assign({rank:n}, rows[n-1]) : null;
+  const used = (lead ? [at(b.from)] : (w.hiRank === w.loRank ? [at(w.hiRank)] : [at(w.hiRank), at(w.loRank)])).filter(Boolean);
   return {band:label, from:b.from, to:b.to, lead, top:lead && b.from === 1,
           mult: clamp(+S.settings.contracts.ladder.topMult||100, 1, 400)/100,
-          used, avg:w.avg, med:w.med, how:w.how, price:ladderPrice(pos, rank),
+          used, hi:w.hi, lo:w.lo, hiRank:w.hiRank, loRank:w.loRank, how:w.how, price:ladderPrice(pos, rank),
           floor:+S.settings.contracts.minSalary||1};
 }
 function extInfoPanel(p, noFloorNote){
@@ -16908,14 +16909,16 @@ function extInfoPanel(p, noFloorNote){
   let work = '';
   if(d){
     const list = d.used.map((r,i)=> '<div class="row" style="gap:6px;justify-content:space-between">'+
-      '<span><span class="dim">'+(d.from + i)+'.</span> '+esc(r.p.name)+' <span class="dim tiny">'+
+      '<span><span class="dim">'+(r.rank != null ? r.rank : d.from + i)+'.</span> '+esc(r.p.name)+' <span class="dim tiny">'+
         esc(r.p.contract && r.p.contract.teamId ? teamName(r.p.contract.teamId) : '')+'</span></span>'+
       '<span class="num">'+money(r.base)+' <span class="dim tiny">'+esc(r.fixed ? 'when prices were fixed' : baseHow(r.p.contract))+'</span></span></div>').join('');
     const rule = d.top
       ? 'He is the top '+esc(p.pos)+', so the price is the biggest '+esc(p.pos)+' base salary × '+d.mult+'.'
       : d.lead ? 'The price is the '+ord(d.from)+'-biggest '+esc(p.pos)+' base salary.'
-      : 'Rank '+rk.rank+' falls in the <b>'+esc(p.pos)+' '+esc(d.band)+'</b> band. The price is the greater of the average ('+
-        money(d.avg||0)+') and the median ('+money(d.med||0)+') of the base salaries ranked '+esc(d.band)+' at '+esc(p.pos)+':';
+      : d.hiRank === d.loRank
+        ? 'Rank '+rk.rank+' falls in the <b>'+esc(p.pos)+' '+esc(d.band)+'</b> band, and there is only one '+esc(p.pos)+' salary to take it from:'
+        : 'Rank '+rk.rank+' falls in the <b>'+esc(p.pos)+' '+esc(d.band)+'</b> band. The price is the median of the '+ord(d.hiRank)+' and the '+
+          ord(d.loRank)+' biggest '+esc(p.pos)+' base salaries — halfway between '+money(d.hi||0)+' and '+money(d.lo||0)+':';
     work = '<details style="margin-top:8px"><summary class="tiny" style="cursor:pointer">How '+money(d.price)+' is worked out</summary>'+
       '<div class="tiny" style="margin:6px 0 4px">'+rule+'</div>'+
       '<div class="stack tiny" style="gap:3px">'+list+'</div>'+
@@ -17028,8 +17031,8 @@ function extModal(){
           <dt>${p.pos} rank</dt><dd><b>${lq.gate.rank.rank}</b> of ${lq.gate.rank.of} <span class="dim tiny">in ${lq.gate.rank.year}</span></dd>
           <dt>Band</dt><dd>${esc(lq.work.band)}</dd>
           <dt>Priced off</dt><dd>${esc(lq.work.how)}</dd>
-          ${lq.work.avg!=null?'<dt>Average</dt><dd>'+money(lq.work.avg)+'</dd><dt>Median</dt><dd>'+money(lq.work.med)+
-            '</dd><dt>Salaries in it</dt><dd>'+lq.work.n+'</dd>':''}
+          ${lq.work.hi!=null && lq.work.hiRank!==lq.work.loRank?'<dt>'+ord(lq.work.hiRank)+' highest</dt><dd>'+money(lq.work.hi)+'</dd><dt>'+ord(lq.work.loRank)+' highest</dt><dd>'+money(lq.work.lo)+
+            '</dd>':''}
           <dt>The ladder says</dt><dd class="money">${money(lq.ladder)}</dd>
           ${lq.floor != null ? '<dt>Drafted at</dt><dd class="money">'+money(lq.floor)+' <span class="dim tiny">base</span></dd>' : ''}
           ${lq.raised ? '<dt><b>Extended at</b></dt><dd class="money"><b>'+money(lq.price)+'</b></dd>' : ''}
@@ -22718,6 +22721,18 @@ function bandFor(pos, rank){
   const bands = ladderFor(pos);
   return bands.find(b=> rank >= b.from && (b.to==null || rank <= b.to)) || bands[bands.length-1];
 }
+/* The two salaries a band is priced off: the one at the top of it and the one
+   at the bottom — for the 1–5 band, the 1st and the 5th biggest. Where the
+   band runs past the last salary at the position, the lowest one there is
+   stands in. null when nobody at the position is paid at all. */
+function bandEnds(pos, from, to){
+  const t = aavTable(pos);
+  if(!t.length) return null;
+  const last = t.length;
+  const hiRank = Math.min(Math.max(1, from), last);
+  const loRank = to == null ? last : Math.min(Math.max(hiRank, to), last);
+  return {hi:t[hiRank-1], lo:t[loRank-1], hiRank, loRank, short: from > last || (to != null && to > last), of:last};
+}
 function ladderPrice(pos, rank){
   const floor = +S.settings.contracts.minSalary||1;
   const t = aavTable(pos);
@@ -22729,10 +22744,10 @@ function ladderPrice(pos, rank){
       : nthAav(pos, b.from);
     return Math.max(ladderRound(floor), ladderRound(v));
   }
-  const slice = bandSlice(pos, b.from, b.to);
-  if(!slice.length) return Math.max(ladderRound(floor), ladderRound(t[t.length-1]));
-  const avg = sum(slice)/slice.length;
-  return Math.max(ladderRound(floor), ladderRound(Math.max(avg, median(slice))));
+  /* The rest of a band: the median of the salary at the top of it and the one
+     at the bottom — halfway between the two. Nothing in between counts. */
+  const e = bandEnds(pos, b.from, b.to);
+  return Math.max(ladderRound(floor), ladderRound((e.hi + e.lo) / 2));
 }
 /* Every price step on a position's ladder, top to bottom: a band's leader on
    his own line, then the rest of the band. Settings and the team's Values &
@@ -22742,7 +22757,7 @@ function ladderRows(pos){
   const add = (from, to, rank)=>{
     const w = ladderWorking(pos, rank);
     out.push({from, to, label: to==null ? from+' and below' : (from===to ? String(from) : from+'–'+to),
-      how:w.how, avg:w.avg, med:w.med, price:ladderPrice(pos, rank)});
+      how:w.how, hi:w.hi, lo:w.lo, hiRank:w.hiRank, loRank:w.loRank, price:ladderPrice(pos, rank)});
   };
   ladderFor(pos).forEach(b=>{
     if(b.leader){
@@ -22779,7 +22794,7 @@ function ladderTabHTML(tid, roster, mine){
       return '<tr data-ladrow="'+r.from+'"'+(here.length ? ' style="background:var(--well)"' : '')+'>'+
         '<td class="num" style="vertical-align:top'+(r.to == null ? '' : ';white-space:nowrap')+'">'+esc(pos)+'&nbsp;'+esc(r.label)+'</td>'+
         '<td class="tiny" style="vertical-align:top"><span class="muted">'+esc(r.how)+'</span>'+
-          (r.avg != null ? '<div class="dim">average '+money(r.avg)+' · median '+money(r.med||0)+'</div>' : '')+
+          (r.hi != null && r.hiRank !== r.loRank ? '<div class="dim" data-ladends="1">'+ord(r.hiRank)+' '+money(r.hi)+' · '+ord(r.loRank)+' '+money(r.lo)+'</div>' : '')+
           (here.length ? '<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:4px">'+here.map(m=>
             '<span class="pill" style="white-space:normal;height:auto;line-height:1.3" data-ladman="'+m.p.id+'">'+esc(m.p.name)+' · '+esc(pos)+m.rk.rank+'</span>').join('')+'</div>' : '')+
         '</td>'+
@@ -22831,11 +22846,11 @@ function ladderWorking(pos, rank){
           (clamp(+S.settings.contracts.ladder.topMult||100,1,400)/100), avg:null, med:null}
       : {band:label, how:'the '+ord(b.from)+' highest '+pos+' salary', avg:null, med:null};
   }
-  const slice = bandSlice(pos, b.from, b.to);
-  const avg = slice.length ? sum(slice)/slice.length : 0;
-  const med = median(slice);
-  return {band:label, how:'the greater of the average and the median of ranks '+label,
-          avg, med, n:slice.length};
+  const e = bandEnds(pos, b.from, b.to) || {hi:0, lo:0, hiRank:b.from, loRank:b.to||b.from, short:false, of:0};
+  const ends = e.hiRank === e.loRank ? 'the '+ord(e.hiRank)+' highest '+pos+' salary'
+    : 'the median of the '+ord(e.hiRank)+' and the '+ord(e.loRank)+' highest '+pos+' salaries';
+  return {band:label, how: ends+(e.short ? ' (there are only '+e.of+', so the lowest stands in)' : ''),
+          hi:e.hi, lo:e.lo, hiRank:e.hiRank, loRank:e.loRank, avg:null, med:null};
 }
 function ord(n){
   const s = ['th','st','nd','rd'], v = n%100;
@@ -31134,7 +31149,7 @@ VIEWS.settings = function(){
             </div>
             <div class="hint">${S.settings.players.on
               ? 'The ladder is written down and ready, but players currently have a say — so their own asking price is what counts. Switch that off under Settings › Values to put the ladder in charge.'
-              : 'In charge right now. Rank one at each position is paid '+ct.ladder.topMult+'% of the top salary there; everyone else takes the greater of the average and the median of their band.'}</div>
+              : 'In charge right now. Rank one at each position is paid '+ct.ladder.topMult+'% of the top salary there; everyone else takes the median of the salaries at the top and the bottom of their band — for ranks 1–5, the 1st and the 5th.'}</div>
             <div class="assetbox" data-ladlock="${ladderLock()?'fixed':'moving'}">
               <div class="eyebrow">Prices for ${S.league.season}</div>
               <div class="tiny" style="margin:4px 0 8px">${esc(ladderLockSays())}</div>
@@ -31861,11 +31876,11 @@ VIEWS.settings = function(){
           const pos = ui.tmp.ladPos || 'QB';
           const t = aavTable(pos);
           return `<table><thead><tr><th>Rank</th><th>Priced off</th>
-            <th class="right hide-xs">Average</th><th class="right hide-xs">Median</th><th class="right">Pays</th></tr></thead><tbody>
-          ${ladderRows(pos).map(r=>`<tr><td class="num">${r.label}</td><td class="tiny muted">${esc(r.how)}</td>
-              <td class="right ${r.avg!=null?'num':'dim'} hide-xs">${r.avg!=null?money(r.avg):'—'}</td>
-              <td class="right ${r.avg!=null?'num':'dim'} hide-xs">${r.avg!=null&&r.med!=null?money(r.med):'—'}</td>
-              <td class="right money">${money(r.price)}</td></tr>`).join('')}
+            <th class="right">Top of band</th><th class="right">Bottom of band</th><th class="right">Pays</th></tr></thead><tbody>
+          ${ladderRows(pos).map(r=>{ const two = r.hi!=null && r.hiRank!==r.loRank; return `<tr><td class="num">${r.label}</td><td class="tiny muted">${esc(r.how)}</td>
+              <td class="right ${two?'num':'dim'}">${two?money(r.hi)+'<div class="tiny dim">'+ord(r.hiRank)+'</div>':'—'}</td>
+              <td class="right ${two?'num':'dim'}">${two?money(r.lo)+'<div class="tiny dim">'+ord(r.loRank)+'</div>':'—'}</td>
+              <td class="right money">${money(r.price)}</td></tr>`; }).join('')}
           </tbody></table>
           <div class="pb"><div class="hint">${t.length} ${pos} salar${t.length===1?'y':'ies'} ${ladderLock()?'on the books when prices were fixed':'on the books'}, from
             ${money(t[0]||0)} down to ${money(t[t.length-1]||0)}. Bands past that run out of salaries and fall back to the
