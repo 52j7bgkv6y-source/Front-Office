@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-13a · a ladder band pays the median of its top and bottom salaries';
+const APP_BUILD = '2026-10-13c · cap space after an extension, several extensions at once, and copies kept by hand';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -1851,6 +1851,39 @@ async function keepDaily(state){
     await bakDB.set(KEY + '.days', idx);
     return true;
   }catch(e){ return false; }
+}
+/* ---- Copies kept by hand ---------------------------------------------------------
+   The rolling copies turn over within the hour in a busy league. A copy kept by
+   hand — or the one kept just before several extensions are signed — stays until
+   it is deleted, up to the last twenty. */
+const KEPT_MAX = 20;
+const keptKey = (id)=> KEY + '.kept.' + id;
+async function keepCopyNow(why){
+  if(!S || !(S.teams||[]).length) return false;
+  if(!(await Baks.ready())){ await keepBackup(deep(S), why); return 'rolling'; }
+  const id = Date.now();
+  let idx = [];
+  try{ idx = (await bakDB.get(KEY + '.kept')) || []; }catch(e){}
+  if(!Array.isArray(idx)) idx = [];
+  await bakDB.set(keptKey(id), {at:id, kept:id, why:why||'kept by hand', rev:S.rev||0, state:slimForBackup(S)});
+  idx.push(id);
+  while(idx.length > KEPT_MAX){ const old = idx.shift(); try{ await bakDB.del(keptKey(old)); }catch(e){} }
+  await bakDB.set(KEY + '.kept', idx);
+  return true;
+}
+async function listKept(){
+  const out = [];
+  try{
+    if(!(await Baks.ready())) return out;
+    const idx = (await bakDB.get(KEY + '.kept')) || [];
+    for(const id of (Array.isArray(idx) ? idx : [])){
+      const b = await bakDB.get(keptKey(id));
+      if(b && b.state && (b.state.teams||[]).length) out.push({kept:id, at:b.at, why:b.why||'', rev:b.rev||0,
+        league:(b.state.league||{}).name || '\u2014', teams:(b.state.teams||[]).length,
+        players:(b.state.players||[]).filter(p=>p.contract).length, season:(b.state.league||{}).season, size:bakSize(b)});
+    }
+  }catch(e){}
+  return out.sort((x,y)=> (+y.at||0) - (+x.at||0));
 }
 async function listDaily(){
   const out = [];
@@ -4283,8 +4316,8 @@ function rookieExtRoom(p){
   if(lim == null || !p || !p.contract) return null;
   const c = p.contract, end = c.startYear + c.years - 1;
   if(end >= lim) return 0;
-  const base = extReplacesFinal(c) ? end - 1 : end;
-  return Math.max(0, lim - base);
+  /* An extension always starts next season, so it may run from then to his limit. */
+  return Math.max(0, lim - (extFirstYear() - 1));
 }
 /* Where he stands under the rookie rule, in a sentence, or '' if not a rookie. */
 function rookieStatusText(p){
@@ -10208,6 +10241,8 @@ VIEWS.teams = function(){
           '<div class="spacer"></div><span class="tiny muted">'+esc(limitSummary(tid))+'</span></div>'+
           '<div class="pb">'+b+'</div></div>';
       })()}
+      ${mine ? '<div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap"><button class="btn pri" data-a="mextOpen" data-team="'+tid+'">Extend several</button>'+
+        '<span class="tiny dim" style="align-self:center">See what extending more than one at a time costs, and what it leaves under the cap each year.</span></div>' : ''}
       <div class="panel" style="margin-bottom:14px"><div class="ph"><h3>What the model sees</h3><div class="spacer"></div>
         <span class="tiny muted">${S.settings.value.realWeight}% real production · ${100-S.settings.value.realWeight}% fantasy points</span>
         <button class="btn ghost sm" data-a="go" data-r="settings" data-s="value">Tune it</button></div>
@@ -16672,55 +16707,130 @@ ACT.saveContract = ()=>{
 /* What a man is on if his deal were spread evenly — the figure an extension is
    measured against. */
 function dealBase(c){ return contractBase(c); }
-/* The last year of the deal as written. */
-function finalYearPay(c){
-  if(!c || !c.salaries || !c.salaries.length) return dealBase(c);
-  return Math.round((+c.salaries[c.salaries.length-1]||0) * 100) / 100;
+/* ---- Where an extension sits ------------------------------------------------
+   An extension always begins next season — in 2026 that is 2027 — however many
+   years are added and however long the deal has left. This season is his as
+   written; every year of the deal from next season on is replaced by the new
+   one. With one year left nothing is replaced and the new years simply follow
+   on; with two left, next season's year is the one bought out.
+
+   It used to be worked out from the far end of the deal (its last year, and
+   the length of the whole deal from the season it was signed), which put the
+   start of the extension, the year it bought out and the money it settled in
+   the wrong place for any deal not laid out exactly as expected. Everything
+   here now goes by the calendar, year by year, with the same figures the
+   roster shows. */
+function extFirstYear(){ return (+S.league.season||0) + 1; }
+/* The years of his deal the extension takes the place of, with what each pays. */
+function extReplacedYears(c){
+  const out = [];
+  if(!c || !Array.isArray(c.salaries)) return out;
+  const from = extFirstYear();
+  for(let i=0;i<c.years;i++){
+    const y = c.startYear + i;
+    if(y >= from) out.push({year:y, salary:Math.round((+c.salaries[i]||0) * 100) / 100});
+  }
+  return out;
 }
-/* A deal that pays more at the end than it would evenly is backloaded, and the
-   difference has to be made up when it is extended.
+/* How many years of the deal, from the first, are kept. */
+function extKeptYears(c){ return c ? clamp(extFirstYear() - c.startYear, 0, c.years) : 0; }
+function extReplacesFinal(c){ return extReplacedYears(c).length > 0; }
+/* How long the whole deal runs, as stored, once the extension is on. */
+function extNewYears(c, add){ return extKeptYears(c) + add; }
+/* The most years an extension may add: a deal may run the league's longest
+   plus the extension allowance from now — six with a four-year longest and two
+   extra — counting the seasons he has left, this one included. Two left, so at
+   most four more; one left, at most five. */
+function extMaxTotal(){ return (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0); }
+function extMaxAdd(c){ return c ? Math.max(0, extMaxTotal() - yearsLeft(c)) : 0; }
+/* The year the backload is judged on: next season's, as written. */
+function extNextYearPay(c){
+  const r = extReplacedYears(c).find(x=> x.year === extFirstYear());
+  return r ? r.salary : null;
+}
+/* Kept under its old name for anything that still asks: the year being replaced. */
+function finalYearPay(c){ const v = extNextYearPay(c); return v == null ? dealBase(c) : v; }
+/* A deal that pays more next season than his base is backloaded, and the
+   difference is added to the first year of the extension — whatever structure
+   is chosen for it. Garrett Wilson at $50.40 in 2027 on a $24 base: $26.40 on
+   top of the extension's 2027.
    Named apart from backloadOwed(), which is the cap-smoothing table. */
 function extBackloadGap(c){
   if(!c) return 0;
-  const gap = finalYearPay(c) - dealBase(c);
+  const pay = extNextYearPay(c);
+  if(pay == null) return 0;
+  const gap = pay - dealBase(c);
   return gap > 0.005 ? Math.round(gap * 100) / 100 : 0;
 }
-/* Extending a deal with two years left replaces the final year rather than
-   adding after it — you are buying out the year he had not reached yet.
-   With one year left there is nothing to replace, so it simply follows on. */
-function extReplacesFinal(c){ return yearsLeft(c) >= 2; }
-/* How long the whole deal runs once the extension is on. */
-function extNewYears(c, add){ return extReplacesFinal(c) ? c.years - 1 + add : c.years + add; }
+/* What he would be paid, year by year, from next season: the structure the
+   team chose, with any backload difference on the first year. */
+function extSalaries(c, add, aav, structId){
+  const ext = salariesFor(roundInc(aav*add), add, structId);
+  const owed = extBackloadGap(c);
+  if(owed > 0 && ext.length) ext[0] = Math.round((ext[0] + owed) * 100) / 100;
+  return ext;
+}
+/* Try something on the real deals and put them straight back — into the very
+   same objects. Putting a fresh copy back instead left anything already holding
+   the deal (the extension dialog did) looking at the tried-out version: with the
+   cap rule on, the dialog showed every deal as if it had already been extended
+   — three years for everyone, the wrong year bought out, the wrong backload. */
+function trialContracts(players, fn){
+  const saved = players.filter(p=> p && p.contract).map(p=> [p, p.contract, JSON.stringify(p.contract)]);
+  try{ return fn(); }
+  finally{
+    saved.forEach(([p, obj, json])=>{
+      const back = JSON.parse(json);
+      Object.keys(obj).forEach(k=>{ delete obj[k]; });
+      Object.assign(obj, back);
+      p.contract = obj;
+    });
+    clearCapCache();
+  }
+}
 /* Would this extension put the team over the cap in any year it touches? Tried
    on the real deal and put straight back, so the answer is the cap ladder's own. */
 function extCapProblem(p, add, aav, structId){
   if(!S.settings.trades.capMustBeLegal) return null;
-  const c = p.contract, tid = c.teamId;
-  const saved = JSON.stringify(c);
-  let bad = null;
-  try{
+  const tid = p.contract.teamId;
+  return trialContracts([p], ()=>{
     applyExtension(p, add, aav, structId);
     clearCapCache();
     const last = p.contract.startYear + p.contract.years - 1;
     for(let y = S.league.season; y <= last; y++){
       const sp = capSpace(tid, y);
-      if(sp < -0.005){ bad = {year:y, over:fixInc(-sp)}; break; }
+      if(sp < -0.005) return {year:y, over:fixInc(-sp)};
     }
-  }finally{
-    p.contract = JSON.parse(saved); clearCapCache();
-  }
-  return bad;
+    return null;
+  });
+}
+/* What a set of extensions does to a team's cap space, year by year: the room
+   now, and the room left once they are all signed. */
+function extCapPreview(tid, list, years){
+  clearCapCache();
+  const before = years.map(y=> capSpace(tid, y));
+  const after = trialContracts(list.map(x=> x.p), ()=>{
+    list.forEach(x=> applyExtension(x.p, x.years, x.aav, x.structId));
+    clearCapCache();
+    return years.map(y=> capSpace(tid, y));
+  });
+  return {before, after};
+}
+function capCellsRow(label, vals, attr){
+  return '<tr'+(attr?' '+attr:'')+'><td class="dim">'+label+'</td>'+vals.map(v=>
+    '<td class="right num '+(v < -0.005 ? 'bad' : 'good')+'">'+money(v, {plus:true})+'</td>').join('')+'</tr>';
 }
 /* Everything that could stop the extension, in one place, for the dialog and
    for the moment of signing alike. */
 function extLimitProblem(p, add, aav, structId){
   const c = p.contract;
-  const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
+  const maxTotal = extMaxTotal(), most = extMaxAdd(c), left = yearsLeft(c);
   const n = extNewYears(c, add);
   if(add < 1) return 'Add at least one year.';
-  if(n > maxTotal) return 'That makes it a '+n+'-year deal, and the longest the league allows, extensions included, is '+maxTotal+'.';
+  if(add > most) return 'He has '+left+' year'+(left===1?'':'s')+' left, so he can be extended by '+most+' at most — '+
+    'a deal can run '+maxTotal+' years from now, extensions included.';
   { const lim = rookieEndLimit(p);
-    if(lim != null && c.startYear + n - 1 > lim)
+    if(lim != null && extFirstYear() + add - 1 > lim)
       return p.name+' was taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
         ', his last rookie year, his deal cannot run past '+lim+'.'; }
   const lp = limitProblemFor('extensions', c.teamId, n, p.id);
@@ -16733,29 +16843,24 @@ function extLimitProblem(p, add, aav, structId){
 
 function applyExtension(p, addYears, aav, structId){
   const c = p.contract;
-  const replace = extReplacesFinal(c);
+  const replaced = extReplacedYears(c), replace = replaced.length > 0;
   /* The deal exactly as it stood, so the extension can be taken back. */
   const prev = JSON.parse(JSON.stringify(c)); delete prev.extensions;
   const baseWasSet = !(c.base == null || c.base === '');
+  /* The backload is judged on the deal as it stands, before anything changes. */
+  const owed = extBackloadGap(c);
+  const ext = extSalaries(c, addYears, aav, structId);
   /* Keep the base he signed at, and start the new one where the new years do. */
   if(c.base == null || c.base === '') c.base = contractBase(c);
-  const extFrom = replace ? (c.startYear + c.years - 1) : (c.startYear + c.years);
-  /* A backloaded deal has been underpaying him all along. The difference
-     between his base and that last year goes on the first year of the new one. */
-  const owed = replace ? extBackloadGap(c) : 0;
-  const ext = salariesFor(roundInc(aav*addYears), addYears, structId);
-  if(owed > 0) ext[0] = Math.round((ext[0] + owed) * 100) / 100;
-  if(replace){
-    /* Drop the year being bought out, then lay the new deal on. */
-    c.salaries = c.salaries.slice(0, -1).concat(ext);
-    c.years = c.years - 1 + addYears;
-  } else {
-    c.salaries = c.salaries.concat(ext);
-    c.years += addYears;
-  }
+  const extFrom = extFirstYear(), keep = extKeptYears(c);
+  /* Every year up to and including this season is kept as written; from next
+     season the extension takes over. */
+  c.salaries = (c.salaries||[]).slice(0, keep).concat(ext);
+  if(keep === 0) c.startYear = extFrom;
+  c.years = keep + addYears;
   c.total = fixInc(sum(c.salaries));
   c.extensions = (c.extensions||[]).concat([{at:Date.now(), years:addYears, aav:fixInc(aav),
-    structId, replaced:replace, backload:owed, from:extFrom, prev, baseWasSet}]);
+    structId, replaced:replace, replacedYears:replaced, backload:owed, from:extFrom, prev, baseWasSet}]);
 }
 /* Take the last extension back, leaving the deal as it was before it. Exact
    when the extension kept a copy of the deal; otherwise rebuilt from what it
@@ -16992,7 +17097,7 @@ ACT.extend = (d)=>{
     (!(S.settings.contracts.ladder||{}).on ? ' because the ladder is switched off in Settings › Contracts.' : '.')+'</p>'+extInfoPanel(p),
     '<button class="btn ghost" data-a="closeModal">Close</button>');
   const rx = rookieExtRoom(p);
-  ui.tmp.ext = {pid:p.id, years: rx != null ? Math.max(1, Math.min(2, rx)) : 2, aav: lq.price, structId:c.structId, offset};
+  ui.tmp.ext = {pid:p.id, years: Math.max(1, Math.min(2, extMaxAdd(c), rx != null ? rx : 2)), aav: lq.price, structId:c.structId, offset:1};
   extModal();
 };
 function extModal(){
@@ -17002,29 +17107,39 @@ function extModal(){
   const lq = ladderQuote(p);
   /* The base salary is the ladder's, always — whatever was held before. */
   if(lq) e.aav = lq.price;
-  const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   const rx = rookieExtRoom(p);
-  const roomYears = Math.max(0, Math.min(maxTotal - extNewYears(c, 0), rx != null ? rx : Infinity));
+  const roomYears = Math.max(0, Math.min(extMaxAdd(c), rx != null ? rx : Infinity));
+  if(roomYears > 0) e.years = clamp(+e.years||1, 1, roomYears);
   const lp = extLimitProblem(p, +e.years||0, e.aav, e.structId);
-  /* With two years left the extension buys out the final year rather than
-     following it, so the new deal starts a year earlier. */
-  const replaces = extReplacesFinal(c);
-  const owed = replaces ? extBackloadGap(c) : 0;
-  const firstYear = replaces ? (c.startYear + c.years - 1) : (c.startYear + c.years);
+  /* The extension starts next season, always. Whatever the deal has from then
+     on is what it replaces. */
+  const firstYear = extFirstYear(), y0 = S.league.season;
+  const replaced = extReplacedYears(c), replaces = replaced.length > 0;
+  const owed = extBackloadGap(c), nextPay = extNextYearPay(c);
+  const left = yearsLeft(c), dealEnd = c.startYear + c.years - 1;
+  const newPay = extSalaries(c, +e.years||1, e.aav, e.structId);
+  const payYears = newPay.map((_,i)=> firstYear + i);
+  const cap = extCapPreview(c.teamId, [{p, years:+e.years||1, aav:e.aav, structId:e.structId}], payYears);
   modal('Extend '+p.name, `
     ${extInfoPanel(p, true)}
     ${lq ? rookieFloorNote(p, lq.ladder) : ''}
-    ${replaces ? `<div class="assetbox" style="margin-bottom:12px;border-color:var(--warn-edge)">
+    <div class="assetbox" data-extrepl="1" style="margin-bottom:12px;${replaces?'border-color:var(--warn-edge)':''}">
       <div class="flabel">What this replaces</div>
-      <div class="tiny">He has ${yearsLeft(c)} years left. The new deal takes over from <b>${firstYear}</b> —
-        his ${c.startYear + c.years - 1} year at ${money(finalYearPay(c))} is bought out, not kept.</div>
+      <div class="tiny">He has <b>${left} year${left===1?'':'s'} left</b> (${y0}${dealEnd>y0?'–'+dealEnd:''}).
+        ${y0} stays as it is. The extension starts in <b>${firstYear}</b>${replaces
+          ? ' and takes the place of what his deal pays from then on:'
+          : ' — his deal ends this season, so nothing is bought out.'}</div>
+      ${replaces ? `<div class="kv" style="margin-top:6px" data-extreplyears="1">${replaced.map(r=>
+          '<dt>'+r.year+' <span class="dim tiny">replaced</span></dt><dd>'+money(r.salary)+'</dd>').join('')}</div>` : ''}
       ${owed ? `<div class="hr"></div><div class="flabel">Backloaded, so there is a difference to settle</div>
-        <div class="kv">
+        <div class="kv" data-extowed="1">
           <dt>His base</dt><dd>${money(dealBase(c))}</dd>
-          <dt>The year being replaced</dt><dd>${money(finalYearPay(c))}</dd>
-          <dt class="bad">Added to the first new year</dt><dd class="bad">${money(owed, {plus:true})}</dd>
-        </div>` : '<div class="hint">His deal is not backloaded, so nothing extra is owed.</div>'}
-    </div>` : ''}
+          <dt>His ${firstYear} as written</dt><dd>${money(nextPay)}</dd>
+          <dt class="bad">Added to ${firstYear}</dt><dd class="bad">${money(owed, {plus:true})}</dd>
+        </div>
+        <div class="tiny dim" style="margin-top:4px">Added on top of the extension’s ${firstYear}, whichever structure is chosen.</div>`
+        : (replaces ? '<div class="hint">His '+firstYear+' is not above his '+money(dealBase(c))+' base, so nothing extra is owed.</div>' : '')}
+    </div>
     <div class="grid g2" style="margin-bottom:12px">
       <div class="assetbox"><div class="flabel">Where the number comes from</div>
         ${lq?`<div class="kv">
@@ -17043,12 +17158,13 @@ function extModal(){
           <dt>Fantasy points</dt><dd>${b.fantasy==null?'no games yet':b.fantasy.toFixed(1)+' pg · '+Math.round(b.fRank*100)+'th'}</dd>
           <dt>Blend</dt><dd>${S.settings.value.realWeight}% real / ${100-S.settings.value.realWeight}% fantasy</dd>
           <dt>Index</dt><dd>${Math.round(b.index*100)} of 100</dd>
-          <dt>Age in ${firstYear}</dt><dd>${p.age? (p.age+e.offset) : '—'}</dd>
+          <dt>Age in ${firstYear}</dt><dd>${p.age? (p.age+1) : '—'}</dd>
         </div>`}</div>
       <div class="assetbox"><div class="flabel">Current deal</div>
         <div class="kv">
           <dt>Running</dt><dd>${c.startYear}–${c.startYear+c.years-1}</dd>
           <dt>Length</dt><dd>${c.years} yr${(c.extensions||[]).length?' (extended)':''}</dd>
+          <dt>Left</dt><dd>${left} yr <span class="dim tiny">${y0}${dealEnd>y0?'–'+dealEnd:''}</span></dd>
           <dt>Total</dt><dd>${money(c.total)}</dd>
           <dt>This year</dt><dd>${money(capHit(p,S.league.season))}</dd>
         </div></div>
@@ -17065,11 +17181,15 @@ function extModal(){
     <div class="tiny dim" style="margin:8px 0 12px">${lq && lq.raised
       ? 'The ladder asks '+money(lq.ladder)+', but a rookie cannot be extended for less than the '+money(lq.floor)+' he was drafted at, so that is the price. It cannot be changed.'
       : 'The price is set by the extension ladder and cannot be changed.'} Choose how many years to add and how the money is spread across them.</div>
-    <div class="scrollx"><table><thead><tr><th>Year</th>${q.perYear.map((_,i)=>'<th class="right">'+(firstYear+i)+'</th>').join('')}</tr></thead>
+    <div class="scrollx"><table data-extpay="1"><thead><tr><th>Year</th>${newPay.map((_,i)=>'<th class="right">'+(firstYear+i)+'</th>').join('')}</tr></thead>
       <tbody>
-        <tr><td class="dim">You would pay</td>${salariesFor(roundInc(e.aav*e.years), e.years, e.structId).map(v=>'<td class="right money">'+money(v)+'</td>').join('')}</tr>
+        <tr><td class="dim">You would pay</td>${newPay.map(v=>'<td class="right money">'+money(v)+'</td>').join('')}</tr>
+        ${capCellsRow('Cap space now', cap.before, 'data-capnow="1"')}
+        ${capCellsRow('Left after this', cap.after, 'data-capafter="1"')}
       </tbody></table></div>
-    <div class="tiny dim" style="margin:4px 0 8px">${e.years} year${e.years===1?'':'s'} × ${money(e.aav)} base = <b>${money(roundInc(e.aav*e.years))}</b> in total. The structure only moves money between the years — the base salary, and the ladder price, stay ${money(e.aav)} a year.</div>
+    <div class="tiny dim" style="margin:2px 0 6px">${esc(teamName(c.teamId))}’s room in each of those years, as the cap ladder works it out — with what ${
+      replaces ? 'his deal pays then taken off and ' : ''}this extension put on.</div>
+    <div class="tiny dim" style="margin:4px 0 8px">${e.years} year${e.years===1?'':'s'} × ${money(e.aav)} base = <b>${money(roundInc(e.aav*e.years))}</b>${owed?', plus the '+money(owed)+' backload difference on '+firstYear:''}. The structure only moves money between the years — the base salary, and the ladder price, stay ${money(e.aav)} a year.</div>
     ${(()=>{ if(!S.settings.players.on) return '';
       const w = willAccept(p, c.teamId, e.aav, e.years);
       return w.ok
@@ -17077,20 +17197,206 @@ function extModal(){
         : '<div class="hint bad">He turns that down. '+esc(askLabel(p, c.teamId, e.years))+
           (S.settings.players.showAsk==='hidden'?'':' You are '+money(w.gap)+' a year short.')+'</div>';
     })()}
-    <div class="hint">The deal would run ${extNewYears(c, e.years)} years in total, through ${firstYear + e.years - 1}.</div>
+    <div class="hint" data-extrun="1">His deal would then run through <b>${firstYear + e.years - 1}</b>: ${y0} as it is, then ${e.years} new year${e.years===1?'':'s'} from ${firstYear}
+      — ${1 + (+e.years||0)} seasons from now. With ${left} year${left===1?'':'s'} left he can add up to ${extMaxAdd(c)}${rx != null ? ' (fewer while the rookie rule holds him)' : ''}: a deal can run ${extMaxTotal()} years from now, extensions included.</div>
     ${rx != null ? '<div class="hint warn">Taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
       ' \u2014 his last rookie year \u2014 his deal cannot run past '+rookieEndLimit(p)+'.</div>' : ''}
     ${lp?'<div class="hint bad">'+esc(lp)+'</div>':''}
     ${roomYears<=0?'<div class="hint bad">This contract is already at the longest the league permits, extensions included.</div>':''}`,
     '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+    (canManage(c.teamId) ? '<button class="btn" data-a="mextOpen" data-team="'+c.teamId+'" data-pid="'+p.id+'">Extend several</button>' : '')+
     '<button class="btn pri" data-a="extGo"'+((lp||roomYears<=0)?' disabled':'')+'>Sign the extension</button>');
 }
+/* ---- Several extensions at once ------------------------------------------------
+   Pick any of a team's men who can be extended, set the years and the shape for
+   each, and see what the lot costs and what it leaves under the cap in every
+   year before anything is signed. Signing them asks twice. */
+function mextEligible(tid){
+  return teamPlayers(tid).filter(p=>{
+    if(!p.contract || waiverBarsExtension(p)) return false;
+    const g = canExtend(p); if(!g.ok) return false;
+    if(!ladderQuote(p)) return false;
+    const rx = rookieExtRoom(p);
+    return extMaxAdd(p.contract) > 0 && (rx == null || rx > 0);
+  }).sort((a,b)=> capHit(b, S.league.season) - capHit(a, S.league.season));
+}
+function mextRoom(p){ const rx = rookieExtRoom(p); return Math.max(0, Math.min(extMaxAdd(p.contract), rx != null ? rx : Infinity)); }
+/* The extensions ticked, with what each is signed at. */
+function mextChosen(){
+  const m = ui.tmp.mext; if(!m) return [];
+  return Object.keys(m.rows).filter(pid=> m.rows[pid].on).map(pid=>{
+    const p = byId(S.players, pid), r = m.rows[pid], lq = p && ladderQuote(p);
+    if(!p || !lq) return null;
+    return {p, years:clamp(+r.years||1, 1, Math.max(1, mextRoom(p))), aav:lq.price, structId:r.structId};
+  }).filter(Boolean);
+}
+/* Everything that stops the lot, checked one after another as if each were
+   signed — so two that each fit on their own but not together are caught. */
+function mextProblems(list){
+  if(!list.length) return [];
+  const out = [];
+  trialContracts(list.map(x=> x.p), ()=>{
+    list.forEach(x=>{
+      const why = extLimitProblem(x.p, x.years, x.aav, x.structId);
+      if(why) out.push(x.p.name+': '+why);
+      else applyExtension(x.p, x.years, x.aav, x.structId);
+      clearCapCache();
+    });
+  });
+  return out;
+}
+function mextBody(){
+  const m = ui.tmp.mext, tid = m.team, y0 = S.league.season, from = extFirstYear();
+  const elig = mextEligible(tid);
+  const list = mextChosen();
+  const fz = extFreeze();
+  const cards = elig.map(p=>{
+    const r = m.rows[p.id] = m.rows[p.id] || {on:false, years:Math.max(1, Math.min(2, mextRoom(p))), structId:p.contract.structId || S.settings.contracts.defaultStruct};
+    r.years = clamp(+r.years||1, 1, Math.max(1, mextRoom(p)));
+    const lq = ladderQuote(p), c = p.contract, owed = extBackloadGap(c);
+    const pay = extSalaries(c, r.years, lq.price, r.structId);
+    const rk = lq.gate && lq.gate.rank;
+    return '<div class="assetbox" data-mextrow="'+p.id+'" style="margin-bottom:8px'+(r.on?';border-color:var(--brass)':'')+'">'+
+      '<label class="check" style="margin:0"><input type="checkbox" data-a="mextOn" data-pid="'+p.id+'"'+(r.on?' checked':'')+'>'+
+        '<span><b>'+esc(p.name)+'</b> '+posTag(p.pos)+(rk?' <span class="dim tiny">'+esc(p.pos)+rk.rank+'</span>':'')+
+        '<span class="dim tiny"> · '+yearsLeft(c)+' yr left · '+money(lq.price)+' a year'+(lq.raised?' (his draft price)':'')+'</span></span></label>'+
+      (r.on ? '<div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">'+
+        '<label class="f" style="flex:0 0 110px;margin:0"><span>Years (up to '+mextRoom(p)+')</span>'+
+          '<select data-oninput="mextField" data-f="years" data-pid="'+p.id+'">'+
+          Array.from({length:mextRoom(p)}, (_,i)=> '<option value="'+(i+1)+'"'+(r.years===i+1?' selected':'')+'>'+(i+1)+'</option>').join('')+'</select></label>'+
+        '<label class="f" style="flex:1 1 160px;margin:0"><span>Structure</span><select data-oninput="mextField" data-f="structId" data-pid="'+p.id+'">'+
+          S.settings.contracts.structures.map(x=> '<option value="'+x.id+'"'+(x.id===r.structId?' selected':'')+'>'+esc(x.name)+'</option>').join('')+'</select></label></div>'+
+        '<div class="tiny" style="margin-top:6px">'+pay.map((v,i)=> '<span style="white-space:nowrap">'+(from+i)+' <b class="num">'+money(v)+'</b></span>').join(' · ')+'</div>'+
+        (owed ? '<div class="tiny bad" style="margin-top:2px">includes '+money(owed)+' backload on '+from+' (his '+from+' is '+money(extNextYearPay(c))+' on a '+money(dealBase(c))+' base)</div>' : '')
+        : '')+
+    '</div>';
+  }).join('');
+  /* The whole picture, every year any of them reaches. */
+  const last = list.length ? Math.max.apply(null, list.map(x=> from + x.years - 1)) : from;
+  const years = []; for(let y = from; y <= last; y++) years.push(y);
+  const cap = list.length ? extCapPreview(tid, list, years) : null;
+  const adds = years.map(y=> sum(list.map(x=>{ const pay = extSalaries(x.p.contract, x.years, x.aav, x.structId); const i = y - from; return i < pay.length ? pay[i] : 0; })));
+  const probs = mextProblems(list);
+  return '<p class="muted" style="margin-top:0">Tick the men to extend, set each one’s years and shape, and the table at the bottom shows what '+
+      esc(teamName(tid))+' has left under the cap in every year once they are all signed. Every extension starts in '+from+'.</p>'+
+    (fz.frozen ? '<div class="hint warn">'+esc(fz.why)+' You can plan now; they can be signed '+esc(fz.back)+'.</div>' : '')+
+    (cards || '<div class="hint">Nobody on '+esc(teamName(tid))+' can be extended right now.</div>')+
+    (list.length ? '<div class="flabel" style="margin-top:10px">'+list.length+' extension'+(list.length===1?'':'s')+' together</div>'+
+      '<div class="scrollx"><table data-mextcap="1"><thead><tr><th>Year</th>'+years.map(y=> '<th class="right">'+y+'</th>').join('')+'</tr></thead><tbody>'+
+        '<tr><td class="dim">They would pay</td>'+adds.map(v=> '<td class="right money">'+money(v)+'</td>').join('')+'</tr>'+
+        capCellsRow('Cap space now', cap.before, 'data-capnow="1"')+
+        capCellsRow('Left after these', cap.after, 'data-capafter="1"')+
+      '</tbody></table></div>'+
+      '<div class="tiny dim" style="margin-top:4px">'+y0+' is not touched by any extension. Room now already counts what their deals pay in those years; '+
+        '“left after” takes that off and puts the extensions on.</div>' : '')+
+    (probs.length ? '<div class="hint bad" data-mextprob="1">'+probs.map(esc).join('<br>')+'</div>' : '');
+}
+function mextFoot(){
+  const n = mextChosen().length;
+  return '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    '<button class="btn pri" data-a="mextReview"'+(n?'':' disabled')+'>Sign '+(n||'')+' extension'+(n===1?'':'s')+'…</button>';
+}
+function mextShow(){
+  const m = ui.tmp.mext;
+  modal('Extend several — '+teamName(m.team), mextBody(), mextFoot());
+}
+function mextRedraw(){
+  const box = $('#modalBox .mb'), top = box ? box.scrollTop : 0, mb = document.getElementById('modalBox'), top2 = mb ? mb.scrollTop : 0;
+  if(!box) return mextShow();
+  box.innerHTML = mextBody();
+  const ft = document.querySelector('#modalBox .mf, #modalBox .modal-foot, #modalBox footer');
+  if(ft) ft.innerHTML = mextFoot();
+  box.scrollTop = top; if(mb) mb.scrollTop = top2;
+}
+ACT.mextOpen = (d)=>{
+  const tid = d.team || currentTeamId();
+  if(!mustManage(tid)) return;
+  ui.tmp.mext = {team:tid, rows:{}};
+  if(d.pid){
+    const p = byId(S.players, d.pid), e = ui.tmp.ext;
+    if(p) ui.tmp.mext.rows[p.id] = {on:true, years:(e && e.pid===p.id && +e.years) || Math.max(1, Math.min(2, mextRoom(p))),
+      structId:(e && e.pid===p.id && e.structId) || p.contract.structId || S.settings.contracts.defaultStruct};
+  }
+  mextShow();
+};
+ACT.mextOn = (d, el)=>{
+  const m = ui.tmp.mext; if(!m) return;
+  const r = m.rows[d.pid] = m.rows[d.pid] || {years:1, structId:S.settings.contracts.defaultStruct};
+  r.on = !!(el ? el.checked : !r.on);
+  mextRedraw();
+};
+ACT.mextField = (d, el)=>{
+  const m = ui.tmp.mext; if(!m || !m.rows[d.pid]) return;
+  if(d.f === 'years') m.rows[d.pid].years = +el.value || 1; else m.rows[d.pid].structId = el.value;
+  mextRedraw();
+};
+/* First ask: here is everything that is about to be signed. */
+ACT.mextReview = ()=>{
+  const m = ui.tmp.mext; if(!m) return;
+  const list = mextChosen();
+  if(!list.length) return toast('Tick at least one','bad');
+  { const fz = extFreeze(); if(fz.frozen) return toast(fz.why+' Extensions open again '+fz.back+'.','bad'); }
+  { const w = extWindowOpen(); if(!w.ok && !isCommish()) return toast(w.why,'bad'); }
+  const probs = mextProblems(list);
+  if(probs.length) return toast(probs[0],'bad', 7000);
+  const from = extFirstYear();
+  modal('Sign these '+list.length+' extension'+(list.length===1?'':'s')+'?',
+    '<p style="margin-top:0">For <b>'+esc(teamName(m.team))+'</b>, each starting in '+from+':</p>'+
+    '<div class="stack" data-mextsum="1">'+list.map(x=>{
+      const pay = extSalaries(x.p.contract, x.years, x.aav, x.structId);
+      return '<div class="assetbox"><b>'+esc(x.p.name)+'</b> — '+x.years+' year'+(x.years===1?'':'s')+' at '+money(x.aav)+' a year, '+
+        esc(structById(x.structId).name)+', through '+(from + x.years - 1)+
+        '<div class="tiny dim">'+pay.map((v,i)=> (from+i)+' '+money(v)).join(' · ')+'</div></div>';
+    }).join('')+'</div>'+
+    '<div class="hint">Nothing has been signed yet. One more check comes after this.</div>',
+    '<button class="btn ghost" data-a="mextBack">Go back</button><button class="btn pri" data-a="mextConfirm">Yes, these '+list.length+'</button>');
+};
+ACT.mextBack = ()=>{ if(ui.tmp.mext) mextShow(); else closeModal(); };
+/* Second ask, so it never happens by a stray tap. */
+ACT.mextConfirm = ()=>{
+  const m = ui.tmp.mext; if(!m) return;
+  const list = mextChosen();
+  if(!list.length) return mextShow();
+  m.confirmed = Date.now();
+  modal('Last check',
+    '<p style="margin-top:0">This signs <b>'+list.length+' extension'+(list.length===1?'':'s')+'</b> for '+esc(teamName(m.team))+': '+
+      list.map(x=> esc(x.p.name)).join(', ')+'.</p>'+
+    '<p class="muted">Once signed they are on the books. Only the commissioner can undo an extension.</p>',
+    '<button class="btn ghost" data-a="mextBack">Go back</button><button class="btn danger" data-a="mextGo">Sign all '+list.length+'</button>');
+};
+ACT.mextGo = async ()=>{
+  const m = ui.tmp.mext;
+  if(!m || !m.confirmed || Date.now() - m.confirmed > 10*60000) return toast('Confirm them again first','bad');
+  if(!mustManage(m.team)) return;
+  const list = mextChosen();
+  if(!list.length) return closeModal();
+  { const fz = extFreeze(); if(fz.frozen){ closeModal(); render(); return toast(fz.why+' Extensions open again '+fz.back+'.','bad'); } }
+  { const w = extWindowOpen(); if(!w.ok && !isCommish()){ closeModal(); return toast(w.why,'bad'); } }
+  for(const x of list){ const g = canExtend(x.p); if(!g.ok){ closeModal(); return toast(x.p.name+': '+(g.why||'he cannot be extended yet'),'bad'); } }
+  const probs = mextProblems(list);
+  if(probs.length){ mextShow(); return toast(probs[0],'bad', 7000); }
+  for(const x of list){
+    if(S.settings.players.on){ const w = willAccept(x.p, x.p.contract.teamId, x.aav, x.years);
+      if(!w.ok){ mextShow(); return toast(x.p.name+' turns it down. '+askLabel(x.p, x.p.contract.teamId, x.years),'bad'); } }
+  }
+  /* A copy of the league just before, kept until it is deleted. */
+  try{ await keepCopyNow('before extending '+list.map(x=> x.p.name).join(', ')); }catch(e){}
+  list.forEach(x=>{
+    const lq = ladderQuote(x.p);
+    applyExtension(x.p, x.years, x.aav, x.structId);
+    logIt(teamName(m.team)+' extended '+x.p.name+' — '+x.years+' more year'+(x.years>1?'s':'')+' at '+money(x.aav)+' a year'+
+      (lq && lq.raised ? ' (his draft price; the ladder asked '+money(lq.ladder)+')' : ''),
+      {type:'extend', teams:[m.team], players:[x.p.id]});
+  });
+  notify('Extensions', teamName(m.team)+' extended '+list.map(x=> x.p.name).join(', ')+'.', 'good');
+  ui.tmp.mext = null;
+  closeModal(); save(); render(); toast(list.length+' extension'+(list.length===1?'':'s')+' signed','good');
+};
 ACT.extField = (d,el)=>{
   const e = ui.tmp.ext, c = byId(S.players,e.pid).contract;
-  const maxTotal = (+S.settings.contracts.maxYears||10) + (+S.settings.contracts.extendExtra||0);
   if(d.f==='years'){
     const rx = rookieExtRoom(byId(S.players,e.pid));
-    e.years = clamp(+el.value||1, 1, Math.max(1, Math.min(maxTotal - extNewYears(c, 0), rx != null ? rx : Infinity)));
+    e.years = clamp(+el.value||1, 1, Math.max(1, Math.min(extMaxAdd(c), rx != null ? rx : Infinity)));
     /* On the ladder the price is a base salary — the same every year whatever
        the length — so changing the years does not change it. */
     const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
@@ -17125,6 +17431,7 @@ ACT.extGo = ()=>{
       {type:'admin', teams:[c.teamId], players:[p.id]});
     return toast(p.name+' turns it down. '+askLabel(p, c.teamId, e.years),'bad');
   }
+  try{ keepBackup(deep(S), 'before extending '+p.name); }catch(e2){}
   applyExtension(p, e.years, e.aav, e.structId);
   logIt(teamName(c.teamId)+' extended '+p.name+' — '+e.years+' more year'+(e.years>1?'s':'')+' at '+money(e.aav)+' a year'+
     (extRaised ? ' (his draft price; the ladder asked '+money(extRaised.ladder)+')' : ''),
@@ -31083,7 +31390,8 @@ VIEWS.settings = function(){
               : 'Trades may push you past the limits — you can take on a long deal you could not have signed. Everything else is held to them, so you cannot then extend or sign your way further over.'}</div>
             <div class="hr"></div>
             <div class="hint">Blank means no limit. Slots are counted from the top down, so a long slot can always be filled with a shorter deal — but you can never carry more long deals than you have long slots.
-            ${(+ct.extendExtra)?'An extension may run '+ct.extendExtra+' year'+(ct.extendExtra>1?'s':'')+' past the '+ct.maxYears+'-year maximum, and still counts in the '+ct.maxYears+'-year row.':''}</div></div>
+            ${(+ct.extendExtra)?'An extension may run '+ct.extendExtra+' year'+(ct.extendExtra>1?'s':'')+' past the '+ct.maxYears+'-year maximum, and still counts in the '+ct.maxYears+'-year row. '+
+              'An extended deal can run '+(+ct.maxYears + +ct.extendExtra)+' years from now at most, counting the years it has left: two left, up to '+(+ct.maxYears + +ct.extendExtra - 2)+' more; one left, up to '+(+ct.maxYears + +ct.extendExtra - 1)+'.':''}</div></div>
         </div>
         <div class="stack">
           <div class="panel"><div class="ph"><h3>Settling contract terms</h3></div><div class="pb stack">
@@ -32470,6 +32778,7 @@ VIEWS.settings = function(){
           : '<div class="hint ok">Every deal is counting in at least one year.</div>'; })()}
         <div class="hr"></div>
         <button class="btn" data-a="openBackups">Saved copies</button>
+        <button class="btn" data-a="keepCopyNow">Keep a copy now</button>
         <button class="btn" data-a="rollSeason">Start the ${S.league.season+1} season</button>
         <button class="btn" data-a="demoLeague">Rebuild the demo league</button>
         <button class="btn danger" data-a="wipe">Erase everything</button>
@@ -34003,13 +34312,19 @@ function bakRow(b, n){
     '<div class="bakwhen"><b>'+dstr(b.at)+'</b> <span class="tiny dim">· '+agoWords(b.at)+'</span>'+
     '<div class="tiny dim">'+esc(b.why||'saved')+' · '+esc(b.league)+' '+(b.season||'')+
     ' · '+b.teams+' teams · '+b.players+' contracts · '+Math.round((b.size||0)/1024)+' KB</div></div>'+
-    '<button class="btn sm" data-a="restoreBackup" '+(b.day ? 'data-day="'+esc(b.day)+'"' : 'data-slot="'+b.slot+'"')+'>Restore</button></div>';
+    '<button class="btn sm" data-a="restoreBackup" '+(b.kept ? 'data-kept="'+esc(String(b.kept))+'"' : b.day ? 'data-day="'+esc(b.day)+'"' : 'data-slot="'+b.slot+'"')+'>Restore</button>'+
+    (b.kept ? '<button class="btn sm ghost" data-a="dropKept" data-kept="'+esc(String(b.kept))+'" title="delete this copy">×</button>' : '')+'</div>';
 }
 ACT.openBackups = async ()=>{
   const list = (await listBackups()).sort((x,y)=> (+y.at||0) - (+x.at||0));
   const days = await listDaily();
+  const kept = await listKept();
   const top = list.slice(0, 5);
   modal('Saved copies of your league',
+    '<div class="row" style="gap:8px;margin-bottom:10px;flex-wrap:wrap"><button class="btn pri" data-a="keepCopyNow">Keep a copy now</button>'+
+      '<span class="tiny dim" style="align-self:center">A copy you keep stays until you delete it.</span></div>'+
+    '<div data-keptlist="1">'+(kept.length ? '<div class="bakhead muted">Kept by hand</div><div class="bakgroup newest" data-kept="1">'+
+      kept.map((b,k)=> bakRow(b, k+1)).join('')+'</div>' : '')+'</div>'+
     (list.length
       ? '<p class="muted" style="margin-top:0">A copy is kept every half hour while you are working, every time the '+
         'app opens, and before anything drastic. The last '+BAKS+' are kept — '+
@@ -34039,9 +34354,24 @@ ACT.openBackups = async ()=>{
     '<button class="btn" data-a="exportJSON">Download the one on screen</button>');
   const box = document.getElementById('modalBox'); if(box) box.scrollTop = 0;
 };
+ACT.keepCopyNow = async ()=>{
+  const r = await keepCopyNow('kept by hand');
+  if(!r) return toast('There is no league to keep a copy of','bad');
+  toast(r === 'rolling' ? 'Copy kept with the saved copies' : 'Copy kept \u2014 it stays until you delete it','good', 5000);
+  if(document.querySelector('#modal.on #modalBox [data-keptlist]')) ACT.openBackups();
+};
+ACT.dropKept = async (d)=>{
+  try{
+    let idx = (await bakDB.get(KEY + '.kept')) || [];
+    idx = idx.filter(x=> String(x) !== String(d.kept));
+    await bakDB.del(keptKey(d.kept)); await bakDB.set(KEY + '.kept', idx);
+  }catch(e){}
+  ACT.openBackups();
+};
 ACT.restoreBackup = async (d)=>{
   let b = null;
-  if(d.day){ try{ b = await bakDB.get(dayBakKey(d.day)); }catch(e){} }
+  if(d.kept){ try{ b = await bakDB.get(keptKey(d.kept)); }catch(e){} }
+  else if(d.day){ try{ b = await bakDB.get(dayBakKey(d.day)); }catch(e){} }
   else b = await Baks.get(+d.slot);
   if(!b || !b.state) return toast('That copy has gone','bad');
   await keepBackup(S, 'before restoring');
