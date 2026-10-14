@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-13c · cap space after an extension, several extensions at once, and copies kept by hand';
+const APP_BUILD = '2026-10-13d · copy the details of an extension once it is signed';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -15818,6 +15818,7 @@ ACT.playerCard = (d)=>{
           (interestList().some(x=> x.from===actingTeam() && x.playerId===p.id && !x.cleared) ? 'Update interest' : 'Show interest')+'</button>'+
         '<button class="btn pri" data-a="tradeFor" data-id="'+p.id+'">Start a trade</button>' : '')+
     (c && !isWaiver(p) && !rookieExtBarred(p)?'<button class="btn" data-a="extend" data-id="'+p.id+'">Extend</button>':'')+
+    (c && (c.extensions||[]).length ? '<button class="btn ghost" data-a="extCopy" data-id="'+p.id+'">Copy extension</button>' : '')+
     (c && isCommish() && (c.extensions||[]).length ? '<button class="btn ghost danger" data-a="undoExtension" data-id="'+p.id+'">Undo extension</button>' : '')+
     '<button class="btn pri" data-a="editContract" data-id="'+p.id+'">'+(c?'Edit contract':'Sign him')+'</button>');
 };
@@ -17391,6 +17392,7 @@ ACT.mextGo = async ()=>{
   notify('Extensions', teamName(m.team)+' extended '+list.map(x=> x.p.name).join(', ')+'.', 'good');
   ui.tmp.mext = null;
   closeModal(); save(); render(); toast(list.length+' extension'+(list.length===1?'':'s')+' signed','good');
+  extSignedModal(list.map(x=> x.p));
 };
 ACT.extField = (d,el)=>{
   const e = ui.tmp.ext, c = byId(S.players,e.pid).contract;
@@ -17413,6 +17415,57 @@ ACT.extUseLadder = ()=>{
   if(lq){ e.aav = lq.price; extModal(); }
 };
 ACT.extMeetAsk = ()=>{ extModal(); };
+/* ---- The extension, in words to paste ---------------------------------------
+   Once signed: his new base, the shape, the years, and what each year pays —
+   ready to paste into a sheet, a message or the league chat. */
+function extSummaryText(p, e){
+  const c = p && p.contract; if(!c) return '';
+  e = e || (c.extensions||[]).slice(-1)[0]; if(!e) return '';
+  const from = +e.from || extFirstYear(), n = +e.years || 1, to = from + n - 1;
+  const lines = [];
+  lines.push(p.name+' ('+(p.pos||'')+', '+teamName(c.teamId)+') \u2014 extension signed'+(e.at ? ' '+new Date(e.at).toLocaleDateString(undefined,{month:'short', day:'numeric', year:'numeric'}) : ''));
+  lines.push('New base salary: '+money(+e.aav||0));
+  lines.push('Contract type: '+structById(e.structId).name);
+  lines.push('Years: '+n+' ('+(n === 1 ? from : from+'\u2013'+to)+')');
+  lines.push('Per year:');
+  for(let y = from; y <= to; y++){
+    const v = grossHit(p, y);
+    lines.push('  '+y+' \u2013 '+money(v)+(y === from && +e.backload > 0 ? ' (includes '+money(+e.backload)+' backload)' : ''));
+  }
+  return lines.join('\n');
+}
+function copyText(txt){
+  const done = ()=> toast('Copied','good');
+  const byHand = ()=>{
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = txt; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.top = '-1000px';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, txt.length);
+      const ok = document.execCommand('copy'); ta.remove();
+      ok ? done() : toast('Select the text and copy it by hand','warn');
+    }catch(e){ toast('Select the text and copy it by hand','warn'); }
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, byHand);
+  else byHand();
+}
+/* After signing: the details, each with its own Copy, and all of them at once. */
+function extSignedModal(players){
+  const blocks = players.map(p=> ({p, txt:extSummaryText(p)})).filter(x=> x.txt);
+  ui.tmp.extCopy = blocks.map(x=> x.txt);
+  modal(blocks.length === 1 ? 'Extension signed' : blocks.length+' extensions signed',
+    blocks.map((x,i)=> '<div class="assetbox" data-extsum="'+x.p.id+'" style="margin-bottom:8px">'+
+      '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font:13px/1.45 var(--mono)">'+esc(x.txt)+'</pre>'+
+      '<div class="row" style="margin-top:8px"><button class="btn sm" data-a="extCopy" data-i="'+i+'">Copy</button></div></div>').join('')+
+    '<div class="tiny dim">The same details are on his card, under Copy extension, whenever you need them again.</div>',
+    '<button class="btn ghost" data-a="closeModal">Done</button>'+
+    (blocks.length > 1 ? '<button class="btn pri" data-a="extCopy" data-all="1">Copy all '+blocks.length+'</button>' : '<button class="btn pri" data-a="extCopy" data-i="0">Copy</button>'));
+}
+ACT.extCopy = (d)=>{
+  if(d.id){ const p = byId(S.players, d.id); const t = extSummaryText(p); return t ? copyText(t) : toast('He has no extension','bad'); }
+  const list = ui.tmp.extCopy || [];
+  if(d.all) return copyText(list.join('\n\n'));
+  const t = list[+d.i||0]; if(t) copyText(t);
+};
 ACT.extGo = ()=>{
   const e = ui.tmp.ext, p = byId(S.players,e.pid), c = p.contract;
   /* Checked again here, at the moment of signing — a dialog left open over
@@ -17436,8 +17489,9 @@ ACT.extGo = ()=>{
   logIt(teamName(c.teamId)+' extended '+p.name+' — '+e.years+' more year'+(e.years>1?'s':'')+' at '+money(e.aav)+' a year'+
     (extRaised ? ' (his draft price; the ladder asked '+money(extRaised.ladder)+')' : ''),
     {type:'extend', teams:[c.teamId], players:[p.id]});
-  notify('Extension', teamName(c.teamId)+' locked up '+p.name+' through '+(c.startYear+c.years-1)+'.','good');
+  notify('Extension', teamName(c.teamId)+' locked up '+p.name+' through '+(p.contract.startYear+p.contract.years-1)+'.','good');
   closeModal(); save(); render(); toast('Extension signed','good');
+  extSignedModal([p]);
 };
 ACT.voidContract = (d)=>{ const p=byId(S.players,d.id); p.contract=null; closeModal(); save(); render(); toast('Deal voided'); };
 
