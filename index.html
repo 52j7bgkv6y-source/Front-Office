@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-13d · copy the details of an extension once it is signed';
+const APP_BUILD = '2026-10-14a · a manager can extend his own players: his phone no longer sends league settings';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -35388,7 +35388,39 @@ function adoptLostNote(n){
    league on this phone, and what a person did here that has not gone up yet is
    put back on top of it. Returns whether this phone now has something the
    server lacks. */
+/* ---- What a manager's phone sends ---------------------------------------------
+   The league server turns down a save from anybody but a commissioner that
+   changes how the league is run — its settings, and the league's own details.
+   A manager's phone writes small things there by itself all the time: when the
+   waivers last ran, its own live-feed switches, a reminder clock, a note that a
+   message was shown. None of it is the manager's to decide, but any of it sent
+   up made the server refuse the whole save — so a manager extending his own
+   man, or doing anything else of his own, was refused and had it undone.
+   Now a manager's phone sends the settings and league details exactly as the
+   server last gave them, and everything else as it has it. */
+const SRV_BASE_KEY = 'frontoffice.srvbase.v1';
+function srvBaseGet(){
+  if(typeof Supa !== 'object') return null;
+  if(Supa.srvBase) return Supa.srvBase;
+  /* Kept on the phone, so the first save after the app opens has it too. It
+     stays right until the server's own settings change — and a save made
+     after that clashes on the revision anyway, which brings the new ones down. */
+  try{ const v = JSON.parse(localStorage.getItem(SRV_BASE_KEY) || 'null'); if(v && v.settings && v.league) Supa.srvBase = v; }catch(e){}
+  return Supa.srvBase || null;
+}
+function pushShape(st){
+  const copy = syncCopy(st);
+  if(typeof Supa !== 'object' || Supa.boss() || !srvBaseGet()) return copy;
+  return Object.assign({}, copy, {settings: Supa.srvBase.settings, league: Supa.srvBase.league});
+}
 function adoptRemote(state, rev, force){
+  /* The server's own settings and league details, as they came, before this
+     phone puts anything of its own on them. */
+  try{
+    if(state && typeof state === 'object' && state.settings && state.league && typeof Supa === 'object')
+      Supa.srvBase = {settings: JSON.parse(JSON.stringify(state.settings)), league: JSON.parse(JSON.stringify(state.league)), rev};
+    try{ localStorage.setItem(SRV_BASE_KEY, JSON.stringify(Supa.srvBase)); }catch(e2){}
+  }catch(e){}
   /* A copy with no league in it is not a copy. Once the league passed 1 MB,
      Realtime started sending updates with the league stripped out (its limit),
      every phone read that as "the server has lost the contracts", and every
@@ -35979,7 +36011,7 @@ const Supa = {
       const seq = saveSeq, sentAt = Date.now();
       Journal.sentUpTo = sentAt;
       /* The league as it travels: without what each phone fetches for itself. */
-      const json = JSON.stringify(syncCopy(S));
+      const json = JSON.stringify(pushShape(S));
       Net.add('up', json.length);
       const {data, error} = await this.client.rpc('push_league', {
         p_id:this.cfg().leagueId, p_rev:+S.rev||0, p_state:JSON.parse(json), p_note: note || null
