@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-14a · a manager can extend his own players: his phone no longer sends league settings';
+const APP_BUILD = '2026-10-15a · contracts counted at the years they have left, and exactly how many of each every team holds';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -10236,8 +10236,8 @@ VIEWS.teams = function(){
         /* How many contracts this team has left, and how the longer allowances
            carry down. Everybody can see it, not just commissioners. */
         const b = limitBoardHTML(tid);
-        if(!b) return '';
-        return '<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Contract limits</h3>'+
+        if(!b) return lengthExactHTML(tid);
+        return lengthExactHTML(tid)+'<div class="panel" style="margin-bottom:14px"><div class="ph"><h3>Contract limits</h3>'+
           '<div class="spacer"></div><span class="tiny muted">'+esc(limitSummary(tid))+'</span></div>'+
           '<div class="pb">'+b+'</div></div>';
       })()}
@@ -16668,7 +16668,7 @@ ACT.saveContract = ()=>{
       toast('Rookie signed in the week after the draft \u2014 held at '+money(min)+' a year','warn');
     }
   }
-  const lp = limitProblemFor('signings', cd.teamId, cd.years, p.id);
+  const lp = limitProblemFor('signings', cd.teamId, Math.max(1, (+cd.years||1) - Math.max(0, S.league.season - (+cd.startYear||S.league.season))), p.id);
   if(lp) return toast(teamName(cd.teamId)+' already has '+lp.have+' deals of '+lp.length+' years or longer and is allowed '+lp.allow,'bad');
   const c = makeContract(cd.teamId, cd.total, cd.years, cd.structId, cd.startYear);
   if(cd.byYear){                       // exact figures beat any structure
@@ -16834,7 +16834,7 @@ function extLimitProblem(p, add, aav, structId){
     if(lim != null && extFirstYear() + add - 1 > lim)
       return p.name+' was taken in the '+rookieFrom(p)+' rookie draft, so until '+rookieFinalYear(p)+
         ', his last rookie year, his deal cannot run past '+lim+'.'; }
-  const lp = limitProblemFor('extensions', c.teamId, n, p.id);
+  const lp = limitProblemFor('extensions', c.teamId, extFirstYear() + add - S.league.season, p.id);
   if(lp) return teamName(c.teamId)+' would hold '+lp.have+' deals of '+lp.length+' years or longer, and the league allows '+lp.allow+
     '. Shorten it, or let another long deal run out first.';
   const cp = extCapProblem(p, add, aav, structId);
@@ -25016,11 +25016,31 @@ function applyBackload(p, teamId){
    an extension, say — sits in the top bucket.
    ============================================================ */
 function lengthBucket(years){ return Math.min(+years||1, +S.settings.contracts.maxYears||10); }
+/* ---- How long a deal is, for the limits --------------------------------------
+   The seasons it has left, this one included. A deal is counted at the length
+   it has now, not the length it was signed at: a four-year deal signed two
+   seasons ago is a two-year deal today, and a deal extended to six years this
+   season is a five-year deal next season. It used to be counted at its whole
+   stored length, which for an extended deal took in seasons already played,
+   so the limits and the counts did not match what anybody actually held. */
+function contractLen(c){ return c ? Math.max(1, yearsLeft(c)) : 0; }
+/* Exactly what a team holds, by seasons left, longest first, with who. Nothing
+   capped or carried: a six-year deal is a six. Waiver deals apart, as they do
+   not count towards the limits. */
+function lengthExact(teamId){
+  const by = {}, waiver = [];
+  teamPlayers(teamId).forEach(p=>{
+    if(isWaiver(p)){ waiver.push(p); return; }
+    const L = contractLen(p.contract);
+    (by[L] = by[L] || []).push(p);
+  });
+  return {by, waiver, longest: Math.max(0, ...Object.keys(by).map(Number))};
+}
 function lengthCounts(teamId, excludePid, addYears){
   const out = {};
   teamPlayers(teamId).forEach(p=>{
     if(p.id===excludePid || isWaiver(p)) return;
-    const b = lengthBucket(p.contract.years);
+    const b = lengthBucket(contractLen(p.contract));
     out[b] = (out[b]||0)+1;
   });
   if(addYears){ const b = lengthBucket(addYears); out[b] = (out[b]||0)+1; }
@@ -25080,6 +25100,38 @@ function limitSummary(teamId){
   return shortest.left>0
     ? shortest.left+' more contract'+(shortest.left===1?'':'s')+' of any length before you are out'
     : 'no room left for another contract of any length';
+}
+/* What each team holds, exactly, by seasons left — the team on screen with the
+   names, then every team side by side. */
+function lengthExactHTML(tid){
+  const y = S.league.season;
+  const mine = lengthExact(tid);
+  const all = S.teams.map(t=> ({t, x: lengthExact(t.id)}));
+  const top = Math.max(1, +S.settings.contracts.maxYears||1, ...all.map(a=> a.x.longest));
+  const lens = []; for(let L = top; L >= 1; L--) lens.push(L);
+  const thru = (L)=> L === 1 ? String(y) : y+'\u2013'+(y+L-1);
+  const lim = S.settings.contracts.limits || {};
+  const mineRows = lens.map(L=>{
+    const list = mine.by[L] || [];
+    return '<tr data-lenrow="'+L+'"><td class="num" style="white-space:nowrap">'+L+' yr <div class="tiny dim">'+thru(L)+'</div></td>'+
+      '<td class="right num"><b>'+list.length+'</b>'+(lim[L] !== '' && lim[L] != null ? '<div class="tiny dim">limit '+lim[L]+'</div>' : '')+'</td>'+
+      '<td class="tiny">'+(list.length ? list.map(p=> esc(p.name)).join(', ') : '<span class="dim">\u2014</span>')+'</td></tr>';
+  }).join('');
+  const total = sum(lens.map(L=> (mine.by[L]||[]).length));
+  const league = '<div class="scrollx" style="margin-top:8px"><table data-lenleague="1"><thead><tr><th>Team</th>'+
+      lens.map(L=> '<th class="right">'+L+' yr</th>').join('')+'<th class="right">W</th></tr></thead><tbody>'+
+    all.map(a=> '<tr'+(a.t.id === tid ? ' style="background:var(--well)"' : '')+'><td>'+esc(a.t.name)+'</td>'+
+      lens.map(L=>{ const n = (a.x.by[L]||[]).length; return '<td class="right num'+(n ? '' : ' dim')+'">'+n+'</td>'; }).join('')+
+      '<td class="right num dim">'+a.x.waiver.length+'</td></tr>').join('')+
+    '</tbody></table></div>';
+  return '<div class="panel" style="margin-bottom:14px" data-lenexact="1"><div class="ph"><h3>Contracts held, by years left</h3>'+
+      '<div class="spacer"></div><span class="tiny muted">'+total+' contract'+(total===1?'':'s')+(mine.waiver.length ? ' + '+mine.waiver.length+' waiver' : '')+'</span></div>'+
+    '<div class="pb tight scrollx"><table><thead><tr><th>Left</th><th class="right">Held</th><th>Who</th></tr></thead><tbody>'+mineRows+'</tbody></table></div>'+
+    '<div class="pb"><div class="hint">Every deal counted at the seasons it has left, '+y+' included \u2014 exactly, nothing carried or capped. '+
+      'A deal is one year shorter each season, so a six this year is a five next year.'+
+      (mine.waiver.length ? ' Waiver deals ('+mine.waiver.map(p=> esc(p.name)).join(', ')+') do not count towards the limits.' : '')+'</div>'+
+    '<details style="margin-top:8px"><summary class="tiny" style="cursor:pointer">Every team</summary>'+league+
+      '<div class="tiny dim" style="margin-top:4px">W is waiver deals, which do not count towards the limits.</div></details></div></div>';
 }
 function limitBoardHTML(teamId, excludePid){
   const rows = limitBoard(teamId, excludePid);
