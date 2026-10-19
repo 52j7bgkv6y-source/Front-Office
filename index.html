@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-19a · the free agent list checks Sleeper once a day, and on demand';
+const APP_BUILD = '2026-10-19b · mascot brawl: whoever is behind this week gets hurt, left or right';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -7835,7 +7835,13 @@ function brawlPanel(myId, oppId, myPts, oppPts){
   const me = actingTeam();
   const canAct = myId === me;                 /* your own matchup, not one you are watching */
   const sa = brawlSide(myPts, oppPts), sb = brawlSide(oppPts, myPts);
-  const ko = S.live.koLosers || {};
+  /* Last week's loser lies on the floor only until this week's fight starts.
+     Once either side has a point on the board the brawl is about this week's
+     score — left or right, whoever is behind takes the punishment. It used to
+     keep last week's loser knocked out all week, whatever the score, so the
+     same corner stayed down even while it was winning. */
+  const fresh = !(+myPts > 0 || +oppPts > 0) && (+S.live.koWeek || 0) === (+S.live.week || 1) - 1;
+  const ko = fresh ? (S.live.koLosers || {}) : {};
   const look = (side, other, team)=>{
     if(ko[team.id]){ const k = koClass(team.id); return {cls:k.cls, start:k.start, stage:3}; }
     const t = tauntNow(team.id);
@@ -7882,10 +7888,10 @@ function brawlPanel(myId, oppId, myPts, oppPts){
           <ellipse cx="300" cy="202" rx="46" ry="7" fill="#000" opacity=".35"/>
           <g transform="${FO_SPOT.A}">${teamMascot(A, la.stage, la.cls, {phase:foPhase(la.cls, la.start)})}</g>
           <g transform="${FO_SPOT.B}">${teamMascot(B, lb.stage, lb.cls, {phase:foPhase(lb.cls, lb.start), mir:true})}</g>
-          ${margin>=6?`<g class="pow" transform="translate(230,112)">
+          ${margin>=6?`<g transform="translate(230,112)"><g class="pow">
             <path d="M0-26 7-9 25-13 13 1 26 14 8 12 4 30-4 13-22 17-11 2-24-12-6-9z" fill="var(--brass)"/>
             <text x="0" y="6" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="700"
-              font-size="15" fill="#231704">${margin>=45?'DONE':margin>=25?'CRUNCH':'POW'}</text></g>`:''}
+              font-size="15" fill="#231704">${margin>=45?'DONE':margin>=25?'CRUNCH':'POW'}</text></g></g>`:''}
         </svg>
       </div>
       ${replay ? `<div class="replay"><span aria-hidden="true">${TAUNTS[replay.key].icon}</span> <b>${esc(replayWho.name)}</b> ${esc(TAUNTS[replay.key].verb)}
