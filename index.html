@@ -1501,7 +1501,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-15a · contracts counted at the years they have left, and exactly how many of each every team holds';
+const APP_BUILD = '2026-10-19a · the free agent list checks Sleeper once a day, and on demand';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -10435,6 +10435,7 @@ VIEWS.teams = function(){
             ${bids.length>1 ? ' The arrows set which of <i>your own</i> bids is tried first when two of them are level.' : ''}</div></div>
         </div>`;
       })()}<div class="panel"><div class="ph"><h3>Free agents</h3><div class="spacer"></div>
+      <button class="btn sm ghost" data-a="faRefresh" data-fareflabel="1"${ui.tmp.faRefBusy?' disabled':''} title="${esc(faRefreshSays())}">${ui.tmp.faRefBusy ? 'Checking\u2026' : 'Check Sleeper'}</button>
       ${faabOn() ? '<span class="pill" title="your waiver budget for the season">'+
         money(faabLeft(actingTeam()))+' to bid</span>' : ''}
       <label class="row" style="gap:6px"><span class="eyebrow">Week</span>
@@ -10463,7 +10464,8 @@ VIEWS.teams = function(){
         ${sortTh('fa','nfl','NFL','hide-xs')}${sortTh('fa','age','Age','right')}
         ${sortTh('fa','proj','Projected','right')}${sortTh('fa','act','Actual','right')}
         ${sortTh('fa','price', waiverDeadlinePassed()?'Claim price':'Market', 'right')}<th></th></tr></thead>
-      <tbody id="faBody">${faRows(fa)}</tbody></table></div></div>` : ''}
+      <tbody id="faBody">${faRows(fa)}</tbody></table></div>
+      <div class="pb"><div class="tiny dim" data-farefsays="1">${esc(faRefreshSays())}</div></div></div>` : ''}
 
     ${sub==='picks' ? (()=>{
       const nextY = S.league.season+1;
@@ -10874,7 +10876,9 @@ function faRows(list){
     ${isCommish()? '<button class="btn sm ghost" data-a="assignPlayer" data-id="'+p.id+
       '" title="put him on a team yourself, for a price or for nothing">Award</button>' : ''}
     </td></tr>`).join('')
-    || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.</td></tr>';
+    || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody matches that.'+
+      (q ? '<div style="margin-top:8px"><button class="btn sm" data-a="faRefresh"'+(ui.tmp.faRefBusy?' disabled':'')+'>'+
+        (ui.tmp.faRefBusy ? 'Checking Sleeper\u2026' : 'Not here? Check Sleeper for him')+'</button></div>' : '')+'</td></tr>';
 }
 ACT.sub = (d)=>{
   /* The Data tab is the head commissioner's alone. */
@@ -29543,6 +29547,110 @@ ACT.schedClear = ()=>{
   logIt('Schedule cleared — back to the rotation the app works out', {type:'admin'});
   save(); render(); toast('Schedule cleared');
 };
+/* ---- The free agent list, kept up to date from Sleeper ---------------------------
+   Once a day the commissioner's phone looks at Sleeper and brings in anybody new
+   to the NFL pool who is on nobody's roster there — a man just signed off a
+   practice squad, an undrafted rookie, someone back from retirement — as a free
+   agent here, on the same one-year shell every free agent carries. Anyone can
+   press Check Sleeper to do it there and then when a man they want is missing.
+   Nothing on a roster here is touched, and no contract is changed. The free
+   agents already here have their NFL club and injury brought up to date.
+   Sleeper's player list is about five megabytes, so it is fetched once a day
+   on one phone, not on every phone, and only when somebody asks otherwise. */
+const FA_REFRESH_EVERY = 24*3600000;
+const FA_REFRESH_KEY = 'frontoffice.farefresh.v1';
+function faRefreshLast(){
+  let local = 0; try{ local = +localStorage.getItem(FA_REFRESH_KEY) || 0; }catch(e){}
+  return Math.max(local, +((S.league||{}).faPoolAt) || 0);
+}
+function faRefreshSays(){
+  const at = faRefreshLast();
+  return at ? 'Checked against Sleeper '+dstr(at)+(+((S.league||{}).faPoolAdded) && (S.league||{}).faPoolAt === at ? ' \u2014 '+S.league.faPoolAdded+' new' : '')+
+      '. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.'
+    : 'Not checked against Sleeper yet. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.';
+}
+async function faRefresh(opts){
+  opts = opts || {};
+  const id = sleeperLeague();
+  if(!id) return {ok:false, why:'This league has no Sleeper league set yet (Import \u203a Sleeper).'};
+  const rosters = await getJSON(SLEEPER+'/league/'+id+'/rosters');
+  const players = await getJSON(SLEEPER+'/players/nfl');
+  SLEEPER_PLAYERS = players;
+  const rostered = {};
+  (rosters||[]).forEach(r=> [].concat(r.players||[], r.taxi||[], r.reserve||[]).forEach(pid=>{ if(pid) rostered[String(pid)] = true; }));
+  const idx = faIndexHere();
+  const minSal = +S.settings.contracts.minSalary || 1;
+  const added = [];
+  let updated = 0;
+  Object.keys(players||{}).forEach(pid=>{
+    const pl = players[pid]; if(!pl) return;
+    const raw = String(pl.position || (pl.fantasy_positions||[])[0] || '');
+    if(!/^(QB|RB|WR|TE|K|DEF|DL|LB|DB)$/.test(raw)) return;
+    if(!idpOn() && IDP_POS.indexOf(raw.toUpperCase()) >= 0) return;
+    if(!pl.team && raw !== 'DEF') return;                   /* not on an NFL club */
+    if(pl.active === false && raw !== 'DEF') return;
+    const here = idx.byId[String(pid)] || idx.byName[faSleeperMatchKey(sleeperName(pl,pid), raw)];
+    if(here){
+      /* A free agent here: his club and his injury, as Sleeper has them. Nobody
+         on a roster here is touched. */
+      if(!(here.contract && here.contract.teamId)){
+        if(!here.sleeperId){ here.sleeperId = String(pid); updated++; }
+        if(pl.team && here.nfl !== pl.team){ here.nfl = pl.team; updated++; }
+        const inj = pl.injury_status || '';
+        if(inj && (!here.injury || here.injury.status !== inj)){ here.injury = {status:inj, body:pl.injury_body_part||'', at:Date.now()}; updated++; }
+        else if(!inj && here.injury && here.injury.status){ delete here.injury; updated++; }
+      }
+      return;
+    }
+    if(rostered[String(pid)]) return;                       /* on a roster in Sleeper but not here: not ours to add */
+    const p = {id:uid('p'), sleeperId:String(pid), name:sleeperName(pl,pid), pos:raw, nfl:pl.team||'', age:+pl.age||0, value:1,
+      exp:(pl.years_exp!=null) ? (+pl.years_exp||0) : null,
+      contract: makeContract(null, minSal, 1, 'ev', S.league.season)};
+    if(pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+    const st = String(pl.status||pl.roster_status||'').toLowerCase();
+    if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
+    S.players.push(p);
+    idx.byId[String(pid)] = p;
+    added.push(p);
+  });
+  const now = Date.now();
+  try{ localStorage.setItem(FA_REFRESH_KEY, String(now)); }catch(e){}
+  if(added.length || updated){
+    S.league.faPoolAt = now; S.league.faPoolAdded = added.length;
+    if(added.length) logIt('Free agents brought up to date from Sleeper \u2014 '+added.length+' new: '+
+      added.slice(0, 25).map(p=> p.name+' ('+p.pos+(p.nfl?', '+p.nfl:'')+')').join(', ')+(added.length > 25 ? ' and '+(added.length-25)+' more' : ''),
+      {type:'admin', players:added.map(p=> p.id)});
+    clearCapCache();
+    save();
+  }
+  return {ok:true, added, updated};
+}
+/* The button, for anybody. */
+ACT.faRefresh = async ()=>{
+  if(ui.tmp.faRefBusy) return;
+  ui.tmp.faRefBusy = true; render();
+  let r = null;
+  try{ r = await userPromise(faRefresh({})); }
+  catch(e){ r = {ok:false, why:'Could not reach Sleeper \u2014 '+(e.message||'no answer')+'.'}; }
+  ui.tmp.faRefBusy = false; render();
+  if(!r.ok) return toast(r.why, 'bad', 6000);
+  const q = String(ui.tmp.faq||'').trim().toLowerCase();
+  const found = q ? r.added.filter(p=> p.name.toLowerCase().includes(q)) : [];
+  toast(r.added.length
+      ? r.added.length+' new free agent'+(r.added.length===1?'':'s')+' from Sleeper'+(found.length ? ' \u2014 including '+found.map(p=> p.name).join(', ') : '')
+      : (q ? 'Sleeper has nobody new by that name who is free \u2014 he may be on a roster there, or not on an NFL club'
+           : 'Up to date \u2014 nobody new on Sleeper'), r.added.length ? 'good' : 'warn', 6000);
+};
+/* Once a day, on the commissioner's phone. */
+function faRefreshRun(){
+  if(!isCommish() || (S.meta && S.meta.demo) || ui.tmp.faRefBusy || !sleeperLeague()) return;
+  if(Date.now() - faRefreshLast() < FA_REFRESH_EVERY) return;
+  if(Date.now() - (ui.tmp.faRefTried||0) < 3600000) return;   /* a failure waits an hour */
+  if(document.visibilityState && document.visibilityState !== 'visible') return;
+  ui.tmp.faRefTried = Date.now();
+  ui.tmp.faRefBusy = true;
+  scoped(faRefresh)({auto:true}).then(()=>{ ui.tmp.faRefBusy = false; renderQuiet(); }, ()=>{ ui.tmp.faRefBusy = false; });
+}
 ACT.faPullGo = async ()=>{
   const id = sleeperLeagueId(($('#faSlId')||{}).value || ui.tmp.faSlId || '');
   if(!id) return toast('Paste your Sleeper league id, or the address','bad');
@@ -36799,6 +36907,7 @@ function tickBody(){
     try{ if(duesLogRepair()){ settled = true; needsRender = true; } }catch(e){}
     try{ healPicsRun(); }catch(e){}
     try{ if(ladderLockRun()){ settled = true; needsRender = true; } }catch(e){}
+    try{ faRefreshRun(); }catch(e){}
     try{ if(remadeNoticeRun()){ settled = true; needsRender = true; } }catch(e){}
     try{ orphanStatsRun(); }catch(e){}
   }
