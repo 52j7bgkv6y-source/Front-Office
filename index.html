@@ -601,6 +601,7 @@ th.sortable .sarr{font-style:normal;font-size:11px;margin-left:4px;opacity:.85}
   #tabbar{
     display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:50;
     background:var(--tab-bg);backdrop-filter:blur(12px);border-top:1px solid var(--rule);
+    -webkit-transform:translate3d(0,0,0);will-change:transform;
     padding-bottom:var(--sa-b);
     padding-left:var(--sa-l);
     padding-right:var(--sa-r);
@@ -1501,7 +1502,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-19b · mascot brawl: whoever is behind this week gets hurt, left or right';
+const APP_BUILD = '2026-10-20b · taxi squads around the league: last week\u2019s points and a tap on a name opens his card';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -10114,23 +10115,29 @@ VIEWS.teams = function(){
           <span class="tiny dim">${S.settings.taxi.windowHours}-hour window</span></div>
         <div class="pb tight scrollx"><table>
         <thead><tr>${sortTh('tx','name','Player')}${sortTh('tx','pos','Pos')}${sortTh('tx','with','Sitting with')}
+          ${taxiPtsWeek() ? sortTh('tx','pts','Wk '+taxiPtsWeek(),'right') : ''}
           ${sortTh('tx','sal','Salary','right')}${sortTh('tx','yrs','Yrs','right')}<th></th></tr></thead><tbody>
         ${sortRows('tx', board, {
             name:p=>p.name, pos:p=>p.pos, with:p=>teamName(p.contract.teamId),
+            pts:p=>{ const v = weekPoints(p, taxiPtsWeek()); return v == null ? -1 : v; },
             sal:p=> fixInc(Math.max(0, grossHit(p,S.league.season)-retainedOn(p,S.league.season))),
             yrs:p=>p.contract.years
           }, {key:'sal',dir:-1}).map(p=>{
           const c = openClaimFor(p.id);
           const hit = fixInc(Math.max(0, grossHit(p,S.league.season)-retainedOn(p,S.league.season)));
-          return `<tr><td>${esc(p.name)} ${waiverTag(p)}</td><td>${posTag(p.pos)}</td>
+          const wk = taxiPtsWeek(), pts = wk ? weekPoints(p, wk) : null;
+          return `<tr><td><a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a> ${waiverTag(p)}</td><td>${posTag(p.pos)}</td>
             <td class="tiny muted">${esc(teamName(p.contract.teamId))}</td>
+            ${wk ? (pts == null
+              ? '<td class="right dim" title="did not play in week '+wk+'">\u2014</td>'
+              : '<td class="right num" title="what he scored in week '+wk+'">'+pts.toFixed(1)+'</td>') : ''}
             <td class="right money">${money(hit)}</td><td class="right num">${p.contract.years}</td>
             <td class="right">${c
               ? '<span class="pill live">'+esc(teamName(c.toTeam))+' claiming</span>'
               : (taxiLimitBlock(tid)
                 ? '<span class="tiny dim">no claims left</span>'
                 : '<button class="btn sm" data-a="taxiClaim" data-id="'+p.id+'">Claim</button>')}</td></tr>`;
-        }).join('') || '<tr><td colspan="6" class="dim center" style="padding:20px">Nobody else is stashing anyone.</td></tr>'}
+        }).join('') || '<tr><td colspan="'+(taxiPtsWeek()?7:6)+'" class="dim center" style="padding:20px">Nobody else is stashing anyone.</td></tr>'}
         </tbody></table></div>
         <div class="pb"><div class="hint">Put a claim in and the owner has ${S.settings.taxi.windowHours} hours to promote him
           or put a trade together with you. If they do neither he comes straight onto your active roster and you give up nothing —
@@ -15907,6 +15914,14 @@ ACT.taxiWho = (d)=>{
 ACT.taxiDetail = ()=>{ ui.tmp.taxiDetail = !ui.tmp.taxiDetail; render(); };
 /* Who has been raiding whom. Only worth showing once somebody has actually
    tried something, or it is a table of zeroes. */
+/* The most recent week that has been played to the end — what the taxi board
+   shows each stashed man's points for. Nothing before week 1 is over. */
+function taxiPtsWeek(){
+  const cur = +S.live.week || 1;
+  const closed = Math.min(lastClosedWeek() || 0, cur);
+  const w = closed || (cur - 1);
+  return w >= 1 ? w : 0;
+}
 function taxiStealBoard(){
   const all = (S.taxiClaims||[]);
   const any = all.length;
@@ -27701,8 +27716,33 @@ function namedStarters(pos, week){
       (byClub[String(p.nfl).toUpperCase()] = byClub[String(p.nfl).toUpperCase()] || []).push(p);
     });
     const out = {};
+    /* A club on a bye still has its starter. He is projected for nothing this
+       week only because there is no game, which used to drop him from the count
+       — so a side holding four starting quarterbacks could get away with it
+       whenever one of them had a week off. On a bye the starter is the man
+       first on the club's depth chart, or failing that the one who has started
+       its games this season. */
+    const byeStarter = (club, men)=>{
+      const d1 = men.filter(p=> +p.depth === 1);
+      if(d1.length === 1) return {id:d1[0].id, how:'his club\u2019s starter (first on the depth chart) \u2014 a bye week does not change that'};
+      const played = men.map(p=>{ const l = seasonLine(p.id, S.league.season); return {p, gp:(l && +l.gp)||0, pts:(l && +l.fpts)||0}; })
+        .filter(x=> x.gp > 0).sort((a,b)=> (b.gp - a.gp) || (b.pts - a.pts));
+      if(played.length && (played.length === 1 || played[0].gp > played[1].gp || played[0].pts > played[1].pts))
+        return {id:played[0].p.id, how:'his club\u2019s starter ('+played[0].gp+' game'+(played[0].gp===1?'':'s')+' this season) \u2014 a bye week does not change that'};
+      return null;
+    };
+    const card = ((S.live.nfl||{})[w]) || [];
     Object.keys(byClub).forEach(club=>{
       const men = byClub[club];
+      const proj = men.map(p=> weekProjOnly(p, w)).filter(v=> v != null);
+      /* On a bye when the week's card is out and his club is not on it, or —
+         with no card yet — when every man the club has is projected for nothing. */
+      const onBye = card.length ? !thisWeekOpponent(club, w) : (proj.length > 0 && proj.every(v=> +v < 0.5));
+      if(onBye){
+        const s2 = byeStarter(club, men);
+        if(s2) out[club] = s2;
+        return;
+      }
       const withProj = men.map(p=> ({p, v:weekProjOnly(p, w)})).filter(x=> x.v != null);
       if(withProj.length){
         const best = withProj.sort((a,b)=> b.v - a.v)[0];
@@ -36349,6 +36389,51 @@ function flushSaves(){
   if(supaT){ clearTimeout(supaT); supaT = null; try{ if(Supa.ready()) Supa.push(); }catch(e){} }
 }
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'hidden') flushSaves(); });
+/* ---- Keeping the bars where they belong on an iPhone --------------------------
+   On an iPhone, once the keyboard has been up (a search, the chat, a lineup
+   box), the phone can leave the page shifted under the screen when it goes
+   away. Anything pinned to the edges — the bar along the bottom, the bar along
+   the top — then sits where the page thinks the edge is, not where the screen
+   is: the bottom bar floating in the middle with the page carrying on beneath
+   it, the top bar gone and the page running up under the clock. The same can
+   happen coming back to the app after it has been in the background.
+   So whenever the visible part of the page moves or changes size, the bottom
+   bar is held to the bottom of what can actually be seen, and a page left
+   shifted with nothing being typed is put back where it belongs. While the
+   keyboard is up, or the page has been pinched in or out, nothing is moved. */
+function vvTyping(){
+  const a = document.activeElement;
+  return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
+}
+function vvFix(){
+  const vv = window.visualViewport, bar = document.getElementById('tabbar');
+  if(!vv || !bar) return;
+  const typing = vvTyping();
+  if(Math.abs((+vv.scale || 1) - 1) > 0.01 || (typing && vv.height < window.innerHeight - 100)){
+    if(bar.style.transform) bar.style.transform = '';
+    return;
+  }
+  const off = Math.round(vv.offsetTop + vv.height - window.innerHeight);
+  const want = Math.abs(off) > 1 ? 'translate3d(0,'+off+'px,0)' : '';
+  if(bar.style.transform !== want) bar.style.transform = want;
+  /* Left shifted with nothing being typed: put the page back under the screen. */
+  if(!typing && vv.offsetTop > 1){
+    try{ window.scrollTo(window.scrollX, window.scrollY); }catch(e){}
+  }
+}
+let vvQueued = false;
+function vvSoon(){ if(vvQueued) return; vvQueued = true; requestAnimationFrame(()=>{ vvQueued = false; vvFix(); }); }
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize', vvSoon);
+  window.visualViewport.addEventListener('scroll', vvSoon);
+}
+window.addEventListener('scroll', vvSoon, {passive:true});
+window.addEventListener('resize', vvSoon);
+window.addEventListener('orientationchange', ()=> setTimeout(vvFix, 300));
+window.addEventListener('pageshow', ()=> setTimeout(vvFix, 50));
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible'){ setTimeout(vvFix, 50); setTimeout(vvFix, 400); } });
+/* The keyboard going away is the usual moment: look again once it has gone. */
+document.addEventListener('focusout', ()=>{ setTimeout(vvFix, 60); setTimeout(vvFix, 350); });
 window.addEventListener('pagehide', flushSaves);
 /* ---- A phone still running yesterday's build -----------------------------------
    An update only reaches a phone when the page is loaded again, and an app left
