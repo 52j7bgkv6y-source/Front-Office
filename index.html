@@ -589,6 +589,20 @@ th.sortable .sarr{font-style:normal;font-size:11px;margin-left:4px;opacity:.85}
 }
 @media (max-width:860px){
   #rail{display:none}
+  /* On a phone the page itself never scrolls — the area under the top bar
+     does. An iPhone (iOS 26 especially, and any app added to the home screen)
+     lets a bar fixed to the bottom of the screen come loose and ride up the
+     page with the content after it has been scrolled to the bottom and back.
+     That only happens when the whole page is what is scrolling, so here it
+     never is: the page is exactly the height of the screen, and everything
+     scrolls inside it, under a bar that has nothing to come loose from. */
+  html,body{height:100%;overflow:hidden}
+  body{padding-bottom:0}
+  #app{height:100%;min-height:0}
+  #main{height:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+  /* A column of fixed height squeezes what is in it to fit; the top bar and the
+     page keep their own heights and the column scrolls instead. */
+  #main > *{flex-shrink:0}
   #view{padding:14px calc(13px + var(--sa-r)) calc(var(--tabbar-h, 56px) + 44px) calc(13px + var(--sa-l))}
   #topbar{
     padding:calc(9px + var(--sa-t)) calc(13px + var(--sa-r)) 9px calc(13px + var(--sa-l));
@@ -1173,6 +1187,15 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .grade.gC{color:var(--brass);border-color:var(--brass)}
 .grade.gD,.grade.gF{color:var(--signal);border-color:var(--signal)}
 .tgrades{margin-top:4px}
+.tdeal{display:grid;gap:6px;margin-top:8px;padding:8px;border:1px solid var(--rule);border-radius:10px;background:var(--ink-3)}
+.tdeal .tds{min-width:0}
+.tdeal .tds-h{font-size:12px;font-weight:600;margin-bottom:3px}
+.tdeal .tds-h .dim{font-weight:400}
+.tdeal .tdl{display:flex;flex-wrap:wrap;gap:4px}
+.tdeal .tdi{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 8px;border:1px solid var(--rule);border-radius:999px;font-size:12.5px;background:var(--ink-2)}
+.tdeal .tdi a{color:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tdeal .tdi .money{font-size:11.5px}
+@media (min-width:700px){.tdeal.two{grid-template-columns:1fr 1fr}}
 /* The draft room */
 .drclock{margin-top:8px;font-size:15px}
 .drorder{margin:4px 0 0;padding-left:24px;columns:2;column-gap:18px;font-size:14px}
@@ -1502,7 +1525,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-20b · taxi squads around the league: last week\u2019s points and a tap on a name opens his card';
+const APP_BUILD = '2026-10-26a · on a phone the page scrolls under the bars, so the bottom bar can no longer ride up the screen';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2680,6 +2703,33 @@ function irAllows(){
   const o = (S.settings.roster||{}).irOk || {};
   return {out: o.out !== false, doubtful: !!o.doubtful, sus: o.sus !== false, dnr: o.dnr !== false, na: !!o.na};
 }
+/* A man's injury listing as Sleeper has it. Sleeper puts it in injury_status;
+   a man moved to IR, PUP or NFI, or suspended, sometimes has that only in his
+   roster status, with injury_status left empty — so that is read too, or he
+   would look healthy here while Sleeper has him on IR. */
+function sleeperInjury(pl){
+  if(!pl) return null;
+  let st = String(pl.injury_status || '').trim();
+  if(!st){
+    const rs = String(pl.status || '').toLowerCase();
+    if(/injured reserve/.test(rs)) st = 'IR';
+    else if(/physically unable|\bpup\b/.test(rs)) st = 'PUP';
+    else if(/non.?football/.test(rs)) st = 'NFI';
+    else if(/suspend/.test(rs)) st = 'Sus';
+  }
+  return st ? {status:st, body:String(pl.injury_body_part || '')} : null;
+}
+/* Bring one man's listing into line with Sleeper's. True when it changed.
+   Left untouched when it already matches, so nothing is saved for nothing. */
+function applySleeperInjury(p, pl){
+  if(!p || !pl) return false;
+  const want = sleeperInjury(pl);
+  const have = p.injury && p.injury.status ? p.injury : null;
+  if(!want){ if(have){ delete p.injury; return true; } return false; }
+  if(have && String(have.status) === want.status && String(have.body||'') === want.body) return false;
+  p.injury = {status:want.status, body:want.body, at:Date.now()};
+  return true;
+}
 function irEligible(p){
   if(!p) return false;
   /* Put on season-ending IR: he is done for the year whatever the listing says. */
@@ -2745,6 +2795,12 @@ function lineupOverHTML(teamId, compact){
     lines.push('<div>Taking '+(o.badIR.length===1 ? 'him' : 'them')+' off IR puts your active roster at '+
       (o.active + o.badIR.length)+' of '+o.limit+', so you would need to remove '+n(need,'player','players')+
       ' in all to make lineup changes again.</div>');
+  }
+  if(o.badIR.length){
+    const at = +((S.meta||{}).injAt) || 0;
+    lines.push('<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="dim">Injury listings come from Sleeper'+
+      (at ? ', last checked '+esc(dstr(at)) : '')+'. If Sleeper has him on IR, check again.</span>'+
+      '<button class="btn sm" data-a="injRefresh"'+(ui.tmp.faRefBusy ? ' disabled' : '')+'>'+(ui.tmp.faRefBusy ? 'Checking\u2026' : 'Check Sleeper now')+'</button></div>');
   }
   return '<div class="panel lineuplock" data-lineuplock="'+esc(teamId)+'" style="margin-bottom:14px;border-color:var(--bad-edge)"><div class="pb">'+
     '<b class="bad">Lineup locked — '+esc(teamName(teamId))+' is '+n(o.over,'player','players')+' over the limit.</b>'+
@@ -4440,10 +4496,25 @@ function badgeCounts(){
   const b = S.auctions.filter(x=> x.status==='open' || x.status==='running').length;
   return {trades:t, block:b, dues:duesOwing().length};
 }
+/* What scrolls the page: on a phone the area under the top bar, otherwise the
+   page itself. Everything that reads or sets where the page is scrolled to
+   goes through these. */
+function pageScroller(){
+  const m = document.getElementById('main');
+  if(m){ const oy = getComputedStyle(m).overflowY; if(oy === 'auto' || oy === 'scroll') return m; }
+  return null;
+}
+function pageY(){ const m = pageScroller(); return m ? m.scrollTop : window.scrollY; }
+function pageScrollTo(y, smooth){
+  const m = pageScroller();
+  const t = m || window;
+  try{ t.scrollTo(smooth ? {top:y, behavior:'smooth'} : {top:y}); }
+  catch(e){ if(m) m.scrollTop = y; else window.scrollTo(0, y); }
+}
 function go(r){
   route = r; ui.sub = null; closeSheet();
   try{ if(location.hash.slice(1)!==r) history.replaceState(null,'','#'+r); }catch(e){}
-  window.scrollTo(0,0); render();
+  pageScrollTo(0); render();
 }
 
 function navHTML(active){
@@ -4618,7 +4689,7 @@ function grabBoxScroll(){
     const k = scrollBoxKey(el, seen);
     if(el.scrollTop || el.scrollLeft) was[k] = [el.scrollTop, el.scrollLeft];
   });
-  return {boxes:was, page:window.scrollY, where:scrollWhere()};
+  return {boxes:was, page:pageY(), where:scrollWhere()};
 }
 /* Which page is on screen — the page, its tab, and whose it is — so a place
    is only ever put back on the same page it was taken from. */
@@ -4635,7 +4706,7 @@ function putBoxScroll(was){
     if(v){ el.scrollTop = v[0]; el.scrollLeft = v[1]; }
   });
   /* Same page as before: the page itself stays put too. */
-  if(Math.abs(window.scrollY - was.page) > 1) window.scrollTo(window.scrollX, was.page);
+  if(Math.abs(pageY() - was.page) > 1) pageScrollTo(was.page);
 }
 document.addEventListener('pointerdown', pressStart, true);
 document.addEventListener('pointerup', pressEnd, true);
@@ -5247,7 +5318,7 @@ ACT.go = (d)=> go(d.r);
 /* The tab bar: a tab takes you to its page, and the tab you are already on
    takes you back to the top of it, the way a phone's own apps do. */
 ACT.tab = (d)=>{
-  if(d.r === route && !ui.sub){ closeSheet(); try{ window.scrollTo({top:0, behavior:'smooth'}); }catch(e){ window.scrollTo(0,0); } return; }
+  if(d.r === route && !ui.sub){ closeSheet(); pageScrollTo(0, true); return; }
   go(d.r);
 };
 ACT.sheet = ()=> $('#sheet').classList.contains('on') ? closeSheet() : openSheet();
@@ -12349,8 +12420,7 @@ ACT.depthPull = async (quiet)=>{
         pl.nfl = src.team; moved++;
       }
       /* And whether he is hurt, which decides whether he is starting at all. */
-      if(src.injury_status) pl.injury = {status:src.injury_status, body:src.injury_body_part||'', at:Date.now()};
-      else if(pl.injury && pl.injury.status) pl.injury = null;
+      applySleeperInjury(pl, src);
     });
     impProgress('', 100);
     ui.tmp.depthBusy = false;
@@ -14728,6 +14798,42 @@ function tradeWatchRun(){
   });
   return n;
 }
+/* Everything that changed hands in a deal, side by side — so a reporter asking
+   who won it can be answered without going off to look the trade up. Each name
+   opens his card. Built from the trade itself, so nothing extra is saved. */
+/* The grade and the vote go up together; the deal is shown once, on the vote. */
+function tradePollPosted(tradeId){
+  return (S.chat||[]).some(m=> m && m.poll && m.poll.kind === 'trade' && m.poll.tradeId === tradeId);
+}
+function tradeDealHTML(tradeId){
+  const tr = tradeId && byId(S.trades||[], tradeId);
+  if(!tr) return '';
+  const parties = tradeParties(tr).filter(p=> p.tid);
+  if(parties.length < 2) return '';
+  const season = +S.league.season;
+  const plr = (id)=>{
+    const p = byId(S.players, id);
+    if(!p) return '<span class="tdi dim">a player no longer in the league</span>';
+    const c = p.contract || {};
+    const yrs = +c.years || 0;
+    return '<span class="tdi">'+posTag(p.pos)+'<a href="#" data-a="playerCard" data-id="'+esc(p.id)+'">'+esc(p.name)+'</a>'+
+      (c.teamId ? '<span class="money">'+money(grossHit(p, season))+(yrs ? ' · '+yrs+'yr' : '')+'</span>' : '')+'</span>';
+  };
+  const pick = (id)=>{ const k = byId(S.picks||[], id);
+    return '<span class="tdi">\u{1F39F}️ '+(k ? esc(pickLabel(k)) : 'a draft pick since used')+'</span>'; };
+  const g = (eng().grades||{})[tr.id];
+  const gradeOf = (tid)=>{ const r = g && (g.rows||[]).find(x=> x[0] === tid);
+    return r ? ' <b class="grade g'+esc(String(r[1]).charAt(0))+'">'+esc(r[1])+'</b>' : ''; };
+  const when = +tr.processedAt || +tr.createdAt || 0;
+  return '<div class="tdeal'+(parties.length === 2 ? ' two' : '')+'">'+parties.map(p=>{
+      const bits = posSortIds(p.gets.players).map(plr)
+        .concat((p.gets.picks||[]).map(pick))
+        .concat(+p.gets.cash ? ['<span class="tdi money">'+money(+p.gets.cash)+' cap</span>'] : []);
+      return '<div class="tds"><div class="tds-h">'+esc(teamName(p.tid))+' <span class="dim">gets</span>'+gradeOf(p.tid)+'</div>'+
+        '<div class="tdl">'+(bits.join('') || '<span class="tdi dim">nothing</span>')+'</div></div>';
+    }).join('')+
+    (when ? '<div class="tiny dim">Went through '+esc(dstr(when))+'</div>' : '')+'</div>';
+}
 function tradeGradeHTML(tr){
   const g = eng().grades[tr && tr.id];
   if(!g) return '';
@@ -14872,7 +14978,8 @@ function pollHTML(mm){
   const show = mine >= 0 || p.closed || !canManage(me);
   const top = Math.max(...c.counts);
   const canClose = isCommish() || (mm.teamId && mm.teamId === me);
-  return '<div class="poll">'+p.opts.map((o,i)=>{
+  return (p.kind === 'trade' && p.tradeId ? tradeDealHTML(p.tradeId) : '')+
+    '<div class="poll">'+p.opts.map((o,i)=>{
       const pc = c.total ? Math.round(c.counts[i]/c.total*100) : 0;
       const lead = show && c.total && c.counts[i] === top;
       return '<button class="pollopt'+(mine===i?' on':'')+(lead?' lead':'')+'" data-a="pollVote" data-id="'+esc(mm.id)+'" data-i="'+i+'"'+
@@ -20953,6 +21060,7 @@ function chatBubble(mm){
           (mm.replyToName ? '<span class="dim tiny">to '+esc(mm.replyToName)+'</span>' : '')+
           '<span class="dim tiny">'+esc(mm.outlet||'')+(mm.reporterWeek ? ' \u00b7 week '+mm.reporterWeek : '')+'</span></div>'+
         '<div class="chattext">'+esc(mm.text||'')+'</div>'+
+        ((mm.grade || mm.revisit) && mm.tradeId && !(mm.grade && tradePollPosted(mm.tradeId)) ? tradeDealHTML(mm.tradeId) : '')+
         pollHTML(mm)+
         (()=>{
           /* On a phone every piece carrying its own reply box made the chat twice
@@ -29612,8 +29720,8 @@ function faRefreshLast(){
 function faRefreshSays(){
   const at = faRefreshLast();
   return at ? 'Checked against Sleeper '+dstr(at)+(+((S.league||{}).faPoolAdded) && (S.league||{}).faPoolAt === at ? ' \u2014 '+S.league.faPoolAdded+' new' : '')+
-      '. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.'
-    : 'Not checked against Sleeper yet. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.';
+      '. The commissioner\u2019s phone checks once a day \u2014 new free agents, and every player\u2019s injury listing; Check Sleeper looks now.'
+    : 'Not checked against Sleeper yet. The commissioner\u2019s phone checks once a day \u2014 new free agents, and every player\u2019s injury listing; Check Sleeper looks now.';
 }
 async function faRefresh(opts){
   opts = opts || {};
@@ -29642,9 +29750,7 @@ async function faRefresh(opts){
       if(!(here.contract && here.contract.teamId)){
         if(!here.sleeperId){ here.sleeperId = String(pid); updated++; }
         if(pl.team && here.nfl !== pl.team){ here.nfl = pl.team; updated++; }
-        const inj = pl.injury_status || '';
-        if(inj && (!here.injury || here.injury.status !== inj)){ here.injury = {status:inj, body:pl.injury_body_part||'', at:Date.now()}; updated++; }
-        else if(!inj && here.injury && here.injury.status){ delete here.injury; updated++; }
+        if(applySleeperInjury(here, pl)) updated++;
       }
       return;
     }
@@ -29652,15 +29758,27 @@ async function faRefresh(opts){
     const p = {id:uid('p'), sleeperId:String(pid), name:sleeperName(pl,pid), pos:raw, nfl:pl.team||'', age:+pl.age||0, value:1,
       exp:(pl.years_exp!=null) ? (+pl.years_exp||0) : null,
       contract: makeContract(null, minSal, 1, 'ev', S.league.season)};
-    if(pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+    applySleeperInjury(p, pl);
     const st = String(pl.status||pl.roster_status||'').toLowerCase();
     if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
     S.players.push(p);
     idx.byId[String(pid)] = p;
     added.push(p);
   });
+  /* And everybody on a roster here: his injury listing only — IR, Out,
+     Questionable and the rest — so whether he can sit on IR follows Sleeper.
+     Nothing else about a rostered man is touched. */
+  const hurtNow = [];
+  S.players.forEach(p=>{
+    if(!(p.contract && p.contract.teamId) || !p.sleeperId) return;
+    const pl = players[String(p.sleeperId)];
+    if(pl && applySleeperInjury(p, pl)) hurtNow.push(p);
+  });
   const now = Date.now();
   try{ localStorage.setItem(FA_REFRESH_KEY, String(now)); }catch(e){}
+  S.meta = S.meta || {};
+  S.meta.injAt = now;
+  if(hurtNow.length){ clearCapCache(); save(); }
   if(added.length || updated){
     S.league.faPoolAt = now; S.league.faPoolAdded = added.length;
     if(added.length) logIt('Free agents brought up to date from Sleeper \u2014 '+added.length+' new: '+
@@ -29669,7 +29787,7 @@ async function faRefresh(opts){
     clearCapCache();
     save();
   }
-  return {ok:true, added, updated};
+  return {ok:true, added, updated, injuries:hurtNow};
 }
 /* The button, for anybody. */
 ACT.faRefresh = async ()=>{
@@ -29686,6 +29804,20 @@ ACT.faRefresh = async ()=>{
       ? r.added.length+' new free agent'+(r.added.length===1?'':'s')+' from Sleeper'+(found.length ? ' \u2014 including '+found.map(p=> p.name).join(', ') : '')
       : (q ? 'Sleeper has nobody new by that name who is free \u2014 he may be on a roster there, or not on an NFL club'
            : 'Up to date \u2014 nobody new on Sleeper'), r.added.length ? 'good' : 'warn', 6000);
+};
+/* The same look at Sleeper, pressed from a lineup locked over an IR listing. */
+ACT.injRefresh = async ()=>{
+  if(ui.tmp.faRefBusy) return;
+  ui.tmp.faRefBusy = true; render();
+  let r = null;
+  try{ r = await userPromise(faRefresh({})); }
+  catch(e){ r = {ok:false, why:'Could not reach Sleeper \u2014 '+(e.message||'no answer')+'.'}; }
+  ui.tmp.faRefBusy = false; render();
+  if(!r.ok) return toast(r.why, 'bad', 6000);
+  const hurt = r.injuries || [];
+  toast(hurt.length
+      ? 'Injury listings updated from Sleeper: '+hurt.slice(0, 6).map(p=> p.name+' '+((p.injury||{}).status || 'healthy')).join(', ')+(hurt.length > 6 ? ' and '+(hurt.length-6)+' more' : '')
+      : 'Listings already match Sleeper', hurt.length ? 'good' : 'warn', 7000);
 };
 /* Once a day, on the commissioner's phone. */
 function faRefreshRun(){
@@ -29748,7 +29880,7 @@ ACT.faPullGo = async ()=>{
         nfl:pl.team||'', age:+pl.age||0, value:1,
         exp:(pl.years_exp!=null) ? (+pl.years_exp||0) : null,
         contract: makeContract(null, minSal, 1, 'ev', S.league.season)};
-      if(pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+      applySleeperInjury(p, pl);
       const st = String(pl.status||pl.roster_status||'').toLowerCase();
       if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
       S.players.push(p);
@@ -29912,7 +30044,7 @@ ACT.sleeperGo = async ()=>{
         if(pl.team) p.nfl = pl.team;
         if(+pl.age) p.age = +pl.age;
         if(p.exp == null && pl.years_exp != null) p.exp = +pl.years_exp||0;
-        if(pl.injury_status && !p.injury) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+        applySleeperInjury(p, pl);
         const st = String(pl.status||pl.roster_status||'').toLowerCase();
         if(st.indexOf('practice')>=0 || st==='ps') p.nflPractice = true;
       };
@@ -29920,7 +30052,7 @@ ACT.sleeperGo = async ()=>{
         const p = {id:uid('p'), sleeperId:pid, name:sleeperName(pl,pid), pos,
           nfl:(pl && pl.team) || '', age:(pl && +pl.age) || 0, value:1, contract:null,
           exp:(pl && pl.years_exp!=null) ? (+pl.years_exp||0) : null};
-        if(pl && pl.injury_status) p.injury = {status:pl.injury_status, body:pl.injury_body_part||'', at:Date.now()};
+        if(pl) applySleeperInjury(p, pl);
         /* Sleeper reports a roster status; "PS"/"Practice Squad" sets our flag
            so a taxi player on a real practice squad can be cut free without
            anyone marking it by hand. */
@@ -36413,21 +36545,40 @@ function vvFix(){
     if(bar.style.transform) bar.style.transform = '';
     return;
   }
+  /* Pulled past the top or the bottom of the page — the bounce. The visible
+     part of the page slides about while it springs back, and following it with
+     the bar is what threw the bar up the screen whenever somebody scrolled to
+     the bottom and back. Nothing is wrong there, so nothing is moved. */
+  const se = document.scrollingElement || document.documentElement;
+  const y = window.scrollY, maxY = Math.max(0, se.scrollHeight - window.innerHeight);
+  if(y < 0 || y > maxY + 1){ if(bar.style.transform) bar.style.transform = ''; return; }
   const off = Math.round(vv.offsetTop + vv.height - window.innerHeight);
-  const want = Math.abs(off) > 1 ? 'translate3d(0,'+off+'px,0)' : '';
+  /* Only a real gap is put right — a few pixels is the screen settling. */
+  const want = Math.abs(off) > 24 ? 'translate3d(0,'+off+'px,0)' : '';
   if(bar.style.transform !== want) bar.style.transform = want;
   /* Left shifted with nothing being typed: put the page back under the screen. */
-  if(!typing && vv.offsetTop > 1){
+  if(!typing && vv.offsetTop > 24){
     try{ window.scrollTo(window.scrollX, window.scrollY); }catch(e){}
   }
 }
 let vvQueued = false;
 function vvSoon(){ if(vvQueued) return; vvQueued = true; requestAnimationFrame(()=>{ vvQueued = false; vvFix(); }); }
+/* While the page is being scrolled the bar is left exactly where the browser
+   puts it, and nothing is scrolled under the finger — the check is made only
+   once the page has come to rest. Doing it on every frame of a scroll made the
+   bar jump about. */
+let vvRestT = 0;
+function vvScrolling(){
+  const bar = document.getElementById('tabbar');
+  if(bar && bar.style.transform && !vvTyping()) bar.style.transform = '';
+  clearTimeout(vvRestT);
+  vvRestT = setTimeout(vvFix, 350);
+}
 if(window.visualViewport){
   window.visualViewport.addEventListener('resize', vvSoon);
-  window.visualViewport.addEventListener('scroll', vvSoon);
+  window.visualViewport.addEventListener('scroll', vvScrolling);
 }
-window.addEventListener('scroll', vvSoon, {passive:true});
+window.addEventListener('scroll', vvScrolling, {passive:true});
 window.addEventListener('resize', vvSoon);
 window.addEventListener('orientationchange', ()=> setTimeout(vvFix, 300));
 window.addEventListener('pageshow', ()=> setTimeout(vvFix, 50));
