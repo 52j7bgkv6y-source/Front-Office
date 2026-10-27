@@ -1187,6 +1187,11 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .grade.gC{color:var(--brass);border-color:var(--brass)}
 .grade.gD,.grade.gF{color:var(--signal);border-color:var(--signal)}
 .tgrades{margin-top:4px}
+.pcsched{width:100%;table-layout:auto}
+.pcsched td,.pcsched th{padding:5px 6px}
+.pcsched td:first-child,.pcsched th:first-child{width:34px}
+.pcsched .pill{font-size:10.5px;padding:3px 7px;margin:0}
+.pcsched tr.pcnow td{background:rgba(229,161,60,.08);background:color-mix(in srgb, var(--brass) 8%, transparent)}
 .ttbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .ttwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:start}
 .ttcol{min-width:0;border:1px solid var(--rule);border-radius:10px;overflow:hidden;background:var(--ink-2)}
@@ -1563,7 +1568,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-26d · trade table: both rosters side by side with prices and this week\u2019s points; dues for every future season';
+const APP_BUILD = '2026-10-26e · player cards: future weeks, with how each defense ranks against his position';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -15944,6 +15949,8 @@ ACT.playerCard = (d)=>{
       })();
     })()}
 
+    ${pcScheduleHTML(p)}
+
     ${(()=>{
       /* ---- Past seasons ----
          This season is shown game by game at the top of the card, so this is
@@ -23093,6 +23100,135 @@ function matchupInfo(p){
                 m.bySplit ? m.bySplit.rank+' of '+m.bySplit.of+' vs the '+m.kind : ''].filter(Boolean).join(' · ');
   return {o, face, when, label:m.diff.label, cls:m.diff.cls, note:m.diff.note, rank:lead.rank, of:lead.of, what};
 }
+/* ---- The weeks ahead ----------------------------------------------------------
+   Who his club plays each week from here to the end of the NFL season, and how
+   that defense ranks against his position. The fixtures come from ESPN, one
+   small request per week, only when somebody asks to see them, and are kept on
+   this phone for a few days — never in the league, so the league stays small. */
+const NFL_SCHED_KEY = 'frontoffice.nflsched.v1';
+const NFL_LAST_WEEK = 18;
+let NFL_SCHED = null, nflSchedBusy = null;
+function nflSchedBook(){
+  if(NFL_SCHED && NFL_SCHED.season === +S.league.season) return NFL_SCHED;
+  try{
+    const j = JSON.parse(localStorage.getItem(NFL_SCHED_KEY) || 'null');
+    if(j && +j.season === +S.league.season && j.weeks){ NFL_SCHED = j; return j; }
+  }catch(e){}
+  NFL_SCHED = {season:+S.league.season, weeks:{}, at:{}};
+  return NFL_SCHED;
+}
+/* A week's fixtures: the card already on the league for the week in play,
+   otherwise what this phone has fetched. [home, away, kickoff] each. */
+function nflWeekGames(w){
+  const real = ((S.live||{}).nfl||{})[w];
+  if(real && real.length) return real.map(g=> [g.home, g.away, +g.at||0]);
+  const b = nflSchedBook().weeks[w];
+  return b && b.length ? b : null;
+}
+function nflSchedMissing(from){
+  const out = [], book = nflSchedBook(), stale = 4*86400000;
+  for(let w = from; w <= NFL_LAST_WEEK; w++){
+    const real = ((S.live||{}).nfl||{})[w];
+    if(real && real.length) continue;
+    if(book.weeks[w] && Date.now() - (+book.at[w]||0) < stale) continue;
+    out.push(w);
+  }
+  return out;
+}
+async function pullNflSchedule(from){
+  if(nflSchedBusy) return nflSchedBusy;
+  const need = nflSchedMissing(from);
+  if(!need.length) return 0;
+  nflSchedBusy = (async ()=>{
+    const book = nflSchedBook(), season = +S.league.season;
+    let got = 0;
+    await Promise.all(need.map(async w=>{
+      try{
+        const j = await getJSON('https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week='+w+'&dates='+season);
+        const games = [];
+        ((j && j.events) || []).forEach(ev=>{
+          const comp = (ev.competitions||[])[0] || {};
+          let home = null, away = null;
+          (comp.competitors||[]).forEach(c=>{
+            const ab = c && c.team && (c.team.abbreviation || c.team.shortDisplayName);
+            if(!ab) return;
+            if(String(c.homeAway||'').toLowerCase() === 'away') away = String(ab).toUpperCase(); else home = String(ab).toUpperCase();
+          });
+          if(home && away) games.push([home, away, ev.date ? (Date.parse(ev.date) || 0) : 0]);
+        });
+        if(games.length){ book.weeks[w] = games; book.at[w] = Date.now(); got++; }
+      }catch(e){}
+    }));
+    try{ localStorage.setItem(NFL_SCHED_KEY, JSON.stringify(book)); }catch(e){}
+    return got;
+  })();
+  try{ return await nflSchedBusy; } finally { nflSchedBusy = null; }
+}
+/* His club's opponent in a given week: {code, atHome, at}, {bye:true}, or null
+   when that week's fixtures are not known here. */
+function weekOpponent(nfl, w){
+  const games = nflWeekGames(w);
+  if(!games) return null;
+  const cc = clubCode(String(nfl||'').toUpperCase());
+  const g = games.find(x=> clubCode(x[0]) === cc || clubCode(x[1]) === cc);
+  if(!g) return {bye:true};
+  const atHome = clubCode(g[0]) === cc;
+  return {code: atHome ? g[1] : g[0], atHome, at: g[2]};
+}
+/* How hard a given defense is for him — the same rating the rest of the app
+   uses for this week's matchup. Rank 1 is the hardest. */
+function matchupVs(p, code){
+  if(!p || !code) return null;
+  if(p.pos === 'DEF'){
+    const ds = defStreamDifficulty(code);
+    if(!ds) return null;
+    return {label:ds.band.label, cls:ds.band.cls, rank:ds.rank, of:ds.of, what:'offense'};
+  }
+  const byPos = dvpRank(code, p.pos, null), kind = primaryKind(p.pos), bySplit = dvpRank(code, null, kind);
+  const lead = byPos || bySplit, diff = difficultyOf(lead);
+  if(!diff) return null;
+  return {label:diff.label, cls:diff.cls, rank:lead.rank, of:lead.of, what: byPos ? 'vs '+p.pos : 'vs the '+kind};
+}
+const PC_FUTURE_KEY = 'frontoffice.pcfuture.v1';
+function pcFutureOn(){
+  if(ui.tmp.pcFuture != null) return !!ui.tmp.pcFuture;
+  try{ return localStorage.getItem(PC_FUTURE_KEY) === '1'; }catch(e){ return false; }
+}
+function pcScheduleHTML(p){
+  if(!p || !p.nfl || p.nfl === 'FA') return '';
+  const cur = +S.live.week || 1, on = pcFutureOn();
+  const last = on ? NFL_LAST_WEEK : cur;
+  const rows = [];
+  for(let w = cur; w <= last; w++){
+    const o = weekOpponent(p.nfl, w);
+    if(!o){ rows.push('<tr><td class="num">'+w+'</td><td colspan="3" class="dim">'+(nflSchedBusy ? 'reading the fixtures\u2026' : 'not known yet')+'</td></tr>'); continue; }
+    if(o.bye){ rows.push('<tr class="dim"><td class="num">'+w+'</td><td colspan="3">Bye</td></tr>'); continue; }
+    const r = matchupVs(p, o.code);
+    rows.push('<tr'+(w===cur?' class="pcnow"':'')+'><td class="num">'+w+'</td>'+
+      '<td class="nowrap"><b>'+(o.atHome ? 'vs ' : '@ ')+esc(o.code)+'</b>'+(o.at ? '<div class="tiny dim">'+esc(new Date(o.at).toLocaleDateString(undefined,{month:'short', day:'numeric'}))+'</div>' : '')+'</td>'+
+      '<td class="right num">'+(r ? '#'+r.rank+'<span class="dim"> of '+r.of+'</span>' : '<span class="dim">\u2014</span>')+'</td>'+
+      '<td class="right">'+(r ? '<span class="pill '+(r.cls==='bad'?'live':r.cls==='good'?'ok':'')+'">'+esc(r.label)+'</span>' : '')+'</td></tr>');
+  }
+  const posWord = p.pos === 'DEF' ? 'the offense he faces, by fantasy points scored' : 'that defense against '+esc(p.pos)+'s, by fantasy points given up';
+  return '<div class="hr"></div><div class="row" style="align-items:center;gap:8px;margin-bottom:6px"><div class="flabel" style="margin:0">'+(on ? 'This week and the weeks ahead' : 'This week')+'</div>'+
+      '<div class="spacer"></div><button class="btn sm '+(on?'pri':'ghost')+'" data-a="pcFuture" aria-pressed="'+(on?'true':'false')+'">Future weeks: '+(on?'on':'off')+'</button></div>'+
+    '<div class="scrollx"><table class="pcsched"><thead><tr><th>Wk</th><th>Opponent</th><th class="right">Def rank</th><th class="right"></th></tr></thead><tbody>'+rows.join('')+'</tbody></table></div>'+
+    '<div class="hint">Rank is '+posWord+' this season. #1 is the hardest matchup; the higher the number, the easier.</div>';
+}
+ACT.pcFuture = async ()=>{
+  ui.tmp.pcFuture = !pcFutureOn();
+  try{ localStorage.setItem(PC_FUTURE_KEY, ui.tmp.pcFuture ? '1' : '0'); }catch(e){}
+  const id = ui.tmp.pcId;
+  const redraw = ()=>{
+    const box = $('#modalBox'); if(!box || !id || ui.tmp.pcId !== id || !box.querySelector('[data-a="pcFuture"]')) return;
+    const top = box.scrollTop; ACT.playerCard({id}); box.scrollTop = top;
+  };
+  redraw();
+  if(ui.tmp.pcFuture && nflSchedMissing((+S.live.week||1) + 1).length){
+    await pullNflSchedule((+S.live.week||1) + 1);
+    redraw();
+  }
+};
 function matchupChip(p, opts){
   const mi = matchupInfo(p);
   if(!mi || mi.bye) return '';
