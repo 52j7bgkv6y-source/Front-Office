@@ -1187,6 +1187,27 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .grade.gC{color:var(--brass);border-color:var(--brass)}
 .grade.gD,.grade.gF{color:var(--signal);border-color:var(--signal)}
 .tgrades{margin-top:4px}
+.ttbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.ttwrap{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:start}
+.ttcol{min-width:0;border:1px solid var(--rule);border-radius:10px;overflow:hidden;background:var(--ink-2)}
+.ttcol .tth{padding:8px;background:var(--ink-3)}
+.ttcol .tthn{font-weight:600;font-size:13.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ttcol .ttph{display:flex;justify-content:space-between;padding:3px 8px;font-size:10.5px;color:var(--mute);border-top:1px solid var(--rule)}
+.ttg{padding:4px 8px;font:600 11px/1.4 var(--disp);letter-spacing:.08em;text-transform:uppercase;color:var(--mute);background:var(--ink);border-top:1px solid var(--rule)}
+.ttg.taxi{color:var(--chalk)}
+.ttrow{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--rule);min-height:44px}
+.ttrow.tap{cursor:pointer}
+.ttrow.on{background:rgba(229,161,60,.14);background:color-mix(in srgb, var(--brass) 15%, transparent)}
+.ttrow .ttn{flex:1;min-width:0}
+.ttrow .ttn a{display:block;color:inherit;font-size:13px;line-height:1.3;overflow-wrap:anywhere;text-decoration:underline;text-decoration-color:var(--rule);text-underline-offset:2px}
+.ttrow .tts{font-size:11px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ttrow .tts .money{font-size:11px}
+.ttrow .ttp{font-size:12px;min-width:30px;text-align:right;flex:0 0 auto}
+.ttrow .ttpk{font-size:13px}
+.tttog{width:24px;height:24px;flex:0 0 24px;border-radius:50%;border:1px solid var(--rule);display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;color:var(--mute)}
+.ttrow.on .tttog{background:var(--brass);color:var(--on-brass,#111);border-color:var(--brass)}
+.ttrow.taxi .ttn a{font-style:italic}
+.tttaxi{color:var(--chalk);font-weight:600}
 .duesph{display:none}
 .duesrow{display:grid;gap:6px;padding:10px 14px;border-bottom:1px solid var(--rule)}
 .duesrow:last-child{border-bottom:0}
@@ -1196,6 +1217,11 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .duesrow .dr-amt{display:flex;align-items:center;gap:6px}
 .duesrow .dr-btns{display:flex;gap:8px}
 .duesrow .dr-btns .btn{flex:1;justify-content:center;min-height:40px}
+.dryears{display:flex;flex-wrap:wrap;gap:5px}
+.dry{font:500 12px/1 var(--mono);padding:7px 9px;border-radius:999px;border:1px solid var(--rule);color:var(--mute);background:none;white-space:nowrap}
+.dry.late{border-color:var(--bad-edge);color:var(--signal)}
+button.dry{cursor:pointer;min-height:32px}
+.dry.paid{border-color:var(--sage);color:var(--sage)}
 @media (max-width:860px){ .duesph{display:block} .duesdesk{display:none} }
 .tbrec{font-size:12px;color:var(--mute);white-space:nowrap}
 .tbrec b{color:var(--bone);font-weight:600}
@@ -1537,7 +1563,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-26c · dues on a phone: mark paid and send reminders, which now reach their phones';
+const APP_BUILD = '2026-10-26d · trade table: both rosters side by side with prices and this week\u2019s points; dues for every future season';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -5314,7 +5340,8 @@ function modal(title, bodyHTML, footHTML, opts){
   const locked = !!(opts && opts.locked);
   ui.modalLocked = locked;
   $('#modalBox').innerHTML =
-    '<div class="mh"><h2>'+esc(title)+'</h2><div class="spacer"></div>'+
+    '<div class="mh">'+(ui.tmp && ui.tmp.modalReturn ? '<button class="btn ghost sm" data-a="modalBack" data-modalback="1">\u2190 Trade</button>' : '')+
+    '<h2>'+esc(title)+'</h2><div class="spacer"></div>'+
     (locked ? '' : '<button class="btn ghost sm" data-a="closeModal">✕</button>')+'</div>'+
     '<div class="mb">'+bodyHTML+'</div>'+
     (footHTML ? '<div class="mf">'+footHTML+'</div>' : '');
@@ -5322,10 +5349,26 @@ function modal(title, bodyHTML, footHTML, opts){
 }
 function closeModal(force){
   if(ui.modalLocked && force!==true) return;
+  /* A player card opened from the trade table closes back to the trade. */
+  if(force !== true && ui.tmp && ui.tmp.modalReturn) return modalBack();
+  if(ui.tmp) ui.tmp.modalReturn = null;
   ui.modalLocked = false;
   $('#modal').classList.remove('on'); $('#modalBox').innerHTML='';
 }
 ACT.closeModal = closeModal;
+function modalBack(){
+  const r = ui.tmp.modalReturn; ui.tmp.modalReturn = null;
+  if(!r) return closeModal();
+  ui.modalLocked = false;
+  $('#modalBox').innerHTML = r.html;
+  $('#modal').classList.add('on');
+  /* The builder is drawn again from what is on the workbench, so anything
+     changed on the card side of things shows. */
+  if(r.ctx === 'builder' && ui.tmp.tb && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeForm();
+  else if(r.ctx === 'view' && r.id && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeTableView(r.id);
+  $('#modalBox').scrollTop = r.scroll || 0;
+}
+ACT.modalBack = ()=> modalBack();
 ACT.go = (d)=> go(d.r);
 /* The tab bar: a tab takes you to its page, and the tab you are already on
    takes you back to the top of it, the way a phone's own apps do. */
@@ -19644,7 +19687,111 @@ function teamStandingHTML(tid){
   return '<span class="tbrec"><b class="num">'+esc(b.rec)+'</b>'+
     (b.rank ? ' \u00b7 '+(b.played ? ordinal(b.rank)+' of '+b.of : 'no games yet') : '')+'</span>';
 }
-function tbSide(side){
+/* ---- The trade as a table -------------------------------------------------------
+   Both rosters side by side, the way Sleeper's trade screen lays them out, but
+   with what each man costs this season and — if wanted — what he has scored
+   this week. Grouped by position as the roster page is, injured reserve after,
+   the taxi squad at the bottom, then the picks. A tap on a row puts him in the
+   deal or takes him out; a tap on his name opens his card. */
+const TT_PTS_KEY = 'frontoffice.tradetable.pts.v1';
+const TT_VIEW_KEY = 'frontoffice.tradeview.v1';
+function ttPtsOn(){
+  if(ui.tmp.ttPts != null) return !!ui.tmp.ttPts;
+  try{ return localStorage.getItem(TT_PTS_KEY) !== '0'; }catch(e){ return true; }
+}
+function tbViewIsTable(){
+  if(ui.tmp.tbView) return ui.tmp.tbView === 'table';
+  try{ return localStorage.getItem(TT_VIEW_KEY) === 'table'; }catch(e){ return false; }
+}
+function ttColumn(tid, side, deal, editable){
+  const y = S.league.season, w = +S.live.week || 1, pts = ttPtsOn();
+  const inDeal = new Set((deal && deal.players) || []), picksIn = new Set((deal && deal.picks) || []);
+  const all = teamPlayers(tid);
+  const slotOf = (p)=> playerSlot(p);
+  const main = all.filter(p=> ['ir','taxi','practice'].indexOf(slotOf(p)) < 0);
+  const keys = Array.from(new Set(main.map(p=> posKey(p.pos) || 'Other')))
+    .sort((a,b)=>{ const ia = POS_SORT.indexOf(a), ib = POS_SORT.indexOf(b); return (ia<0?99:ia) - (ib<0?99:ib) || a.localeCompare(b); });
+  const groups = keys.map(k=> ({label:k, list:byPosition(main.filter(p=> (posKey(p.pos) || 'Other') === k), y)}));
+  const ir = all.filter(p=> slotOf(p) === 'ir'), prac = all.filter(p=> slotOf(p) === 'practice'), taxi = all.filter(p=> slotOf(p) === 'taxi');
+  if(ir.length) groups.push({label:'Injured reserve', list:byPosition(ir, y), mixed:true});
+  if(prac.length) groups.push({label:'Practice squad', list:byPosition(prac, y), mixed:true});
+  if(taxi.length) groups.push({label:'Taxi squad', list:byPosition(taxi, y), mixed:true, taxi:true});
+  const row = (p, g)=>{
+    const on = inDeal.has(p.id), v = pts ? weekPoints(p, w) : null;
+    const tag = editable ? ' data-a="ttTog" data-side="'+side+'" data-kind="players" data-id="'+esc(p.id)+'"' : '';
+    return '<div class="ttrow'+(on?' on':'')+(g.taxi?' taxi':'')+(editable?' tap':'')+'"'+tag+'>'+
+      (editable ? '<span class="tttog" aria-hidden="true">'+(on ? '\u2713' : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
+      '<div class="ttn"><a href="#" data-a="ttCard" data-id="'+esc(p.id)+'">'+esc(p.name)+'</a>'+
+        '<div class="tts">'+(g.mixed ? esc(posKey(p.pos)||'')+' \u00b7 ' : '')+'<span class="money">'+money(tradeHit(p, y))+'</span>'+
+          (p.nfl ? ' \u00b7 '+esc(p.nfl) : '')+(g.taxi ? ' \u00b7 <b class="tttaxi">taxi</b>' : '')+'</div></div>'+
+      (pts ? '<div class="ttp num'+(v == null ? ' dim' : '')+'">'+(v == null ? '\u2014' : v.toFixed(1))+'</div>' : '')+
+    '</div>';
+  };
+  const picks = ownedPicks(tid);
+  const total = sum(all.map(p=> tradeHit(p, y)));
+  return '<div class="ttcol" data-ttcol="'+esc(side)+'">'+
+    '<div class="tth"><div class="tthn">'+esc(teamName(tid))+'</div>'+
+      '<div class="tiny">'+teamStandingHTML(tid)+'</div>'+
+      '<div class="tiny dim">'+all.length+' players \u00b7 <span class="money">'+money(total)+'</span> this year</div></div>'+
+    (pts ? '<div class="ttph"><span>'+y+' price</span><span>Wk '+w+'</span></div>' : '<div class="ttph"><span>'+y+' price</span><span></span></div>')+
+    groups.map(g=> '<div class="ttg'+(g.taxi?' taxi':'')+'">'+esc(g.label)+' <span class="dim">'+g.list.length+'</span></div>'+
+      g.list.map(p=> row(p, g)).join('')).join('')+
+    (picks.length ? '<div class="ttg">Draft picks <span class="dim">'+picks.length+'</span></div>'+
+      picks.map(k=>{ const on = picksIn.has(k.id);
+        const tag = editable ? ' data-a="ttTog" data-side="'+side+'" data-kind="picks" data-id="'+esc(k.id)+'"' : '';
+        return '<div class="ttrow'+(on?' on':'')+(editable?' tap':'')+'"'+tag+'>'+
+          (editable ? '<span class="tttog" aria-hidden="true">'+(on ? '\u2713' : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
+          '<div class="ttn"><span class="ttpk">'+esc(pickLabel(k))+'</span></div></div>'; }).join('') : '')+
+  '</div>';
+}
+function tradeTableHTML(tidA, tidB, dealA, dealB, editable){
+  const w = +S.live.week || 1, pts = ttPtsOn();
+  return '<div class="ttbar"><span class="tiny dim">'+(editable ? 'Tap a row to put him in the deal or take him out. Tap a name for his card.' : 'What is in the deal is marked. Tap a name for his card.')+'</span>'+
+      '<button class="btn sm '+(pts?'pri':'ghost')+'" data-a="ttPts" aria-pressed="'+(pts?'true':'false')+'">Week '+w+' points: '+(pts?'on':'off')+'</button></div>'+
+    '<div class="ttwrap">'+ttColumn(tidA, 'a', dealA, editable)+ttColumn(tidB, 'b', dealB, editable)+'</div>';
+}
+/* An offer already made, looked at the same way. */
+function tradeTableView(id){
+  const tr = byId(S.trades||[], id);
+  if(!tr || tr.type === 'multi' || !tr.a || !tr.b) return '<div class="hint">That trade has gone.</div>';
+  ui.tmp.ttCtx = 'view'; ui.tmp.ttTradeId = id;
+  return tradeTableHTML(tr.a.teamId, tr.b.teamId, tr.a, tr.b, false);
+}
+ACT.tradeTable = (d)=>{
+  const tr = byId(S.trades||[], d.id); if(!tr) return toast('That trade has gone','bad');
+  modal(teamName(tr.a.teamId)+' \u21c4 '+teamName(tr.b.teamId), tradeTableView(d.id),
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
+ACT.ttTog = (d)=>{
+  const tb = ui.tmp.tb; if(!tb || !tb[d.side]) return;
+  const s = tb[d.side], arr = s[d.kind] = s[d.kind] || [];
+  const i = arr.indexOf(d.id);
+  if(i >= 0){ arr.splice(i, 1); if(d.kind === 'players' && s.retain) delete s.retain[d.id]; }
+  else arr.push(d.id);
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0;
+  $('#modalBox .mb').innerHTML = tradeForm();
+  if(box) box.scrollTop = top;
+};
+ACT.ttPts = ()=>{
+  ui.tmp.ttPts = !ttPtsOn();
+  try{ localStorage.setItem(TT_PTS_KEY, ui.tmp.ttPts ? '1' : '0'); }catch(e){}
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0;
+  if(ui.tmp.ttCtx === 'view' && ui.tmp.ttTradeId) $('#modalBox .mb').innerHTML = tradeTableView(ui.tmp.ttTradeId);
+  else if(ui.tmp.tb) $('#modalBox .mb').innerHTML = tradeForm();
+  if(box) box.scrollTop = top;
+};
+ACT.tbView = (d)=>{
+  ui.tmp.tbView = d.v === 'table' ? 'table' : 'list';
+  try{ localStorage.setItem(TT_VIEW_KEY, ui.tmp.tbView); }catch(e){}
+  $('#modalBox .mb').innerHTML = tradeForm();
+};
+/* His card, with a way back to the trade exactly as it was. */
+ACT.ttCard = (d)=>{
+  const box = $('#modalBox');
+  ui.tmp.modalReturn = {html: box.innerHTML, scroll: box.scrollTop, ctx: ui.tmp.ttCtx, id: ui.tmp.ttTradeId};
+  ACT.playerCard({id:d.id});
+};
+function tbSide(side, compact){
   tbFixSender();
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
   /* Somebody on the taxi squad costs nothing where he is, but he cannot stay
@@ -19652,7 +19799,7 @@ function tbSide(side){
   const out = sum(s.players.map(id=>{const p=byId(S.players,id);return p?tradeHit(p,y):0;}));
   return `<div class="assetbox">
     <label class="f" style="margin-bottom:8px"><span>${side==='a'?'You are sending':'Receiving team'}</span>
-      ${(side==='a' || ui.tmp.tb.editId)
+      ${(side==='a' || ui.tmp.tb.editId || compact)
         ? '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><div class="pill">'+esc(teamName(tid))+'</div>'+teamStandingHTML(tid)+'</div>'
         : '<select data-a="tbTeam" data-side="'+side+'">'+
           S.teams.filter(t=> t.id!==(ui.tmp.tb&&ui.tmp.tb.a&&ui.tmp.tb.a.teamId))
@@ -19660,7 +19807,7 @@ function tbSide(side){
               return '<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+(b ? ' ('+b.rec+(b.played && b.rank ? ', '+ordinal(b.rank) : '')+')' : '')+'</option>'; }).join('')+
           '</select>'+(tid ? '<div style="margin-top:4px">'+teamStandingHTML(tid)+'</div>' : '')}</label>
     <div style="margin-bottom:8px">${assetChips(s,{rm:'tbRm', side:side})}</div>
-    <div class="row">
+    ${compact ? '' : `<div class="row">
       <select id="tbp_${side}" style="flex:1;min-width:140px"><option value="">Player…</option>
         ${posOptions(ownedPlayers(tid), p=> ' · '+money(tradeHit(p,y))+(offCap(p)?' (off the cap now)':''))}</select>
       <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="players">Add</button>
@@ -19669,7 +19816,7 @@ function tbSide(side){
       <select id="tbk_${side}" style="flex:1;min-width:140px"><option value="">Pick…</option>
         ${ownedPicks(tid).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
       <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="picks">Add</button>
-    </div>
+    </div>`}
     <div class="row" style="margin-top:6px">
       <input type="number" id="tbc_${side}" min="0" step="${S.settings.cap.increment}"
         placeholder="Cap dollars…" style="flex:1;min-width:140px">
@@ -19719,7 +19866,21 @@ function tradeForm(){
   const editing = !!ui.tmp.tb.editId;
   return `${editing ? '<div class="hint" data-tbedit="1" style="margin-bottom:10px">This is the offer you sent. Add to it or take things off, then save: '+
       esc(teamName(ui.tmp.tb.b.teamId))+' is told it has changed, and sees only the new one. It can be changed until they answer.</div>' : ''}
-  <div class="grid g2">${tbSide('a')}${tbSide('b')}</div>
+  <div class="row" style="margin-bottom:10px;gap:8px;align-items:center"><span class="eyebrow">View</span>
+    <div class="seg" role="group" aria-label="Trade view"><button class="${tbViewIsTable()?'':'on'}" data-a="tbView" data-v="list">Pick lists</button><button class="${tbViewIsTable()?'on':''}" data-a="tbView" data-v="table">Table</button></div></div>
+  ${tbViewIsTable()
+    ? (()=>{ ui.tmp.ttCtx = 'builder'; ui.tmp.ttTradeId = null;
+        const tb = ui.tmp.tb;
+        /* Who the deal is with, then both rosters, then what is in it so far,
+           with the cap money and anything kept on the books. */
+        const pickTeam = tb.editId ? '' :
+          '<label class="f" style="margin-bottom:10px"><span>Trading with</span><select data-a="tbTeam" data-side="b">'+
+            S.teams.filter(t=> t.id !== tb.a.teamId).map(t=>{ const b2 = teamStandingBits(t.id);
+              return '<option value="'+t.id+'"'+(t.id===tb.b.teamId?' selected':'')+'>'+esc(t.name)+(b2 ? ' ('+b2.rec+(b2.played && b2.rank ? ', '+ordinal(b2.rank) : '')+')' : '')+'</option>'; }).join('')+
+          '</select></label>';
+        return pickTeam+tradeTableHTML(tb.a.teamId, tb.b.teamId, tb.a, tb.b, true)+
+          '<div class="grid g2" style="margin-top:12px">'+tbSide('a', true)+tbSide('b', true)+'</div>'; })()
+    : '<div class="grid g2">'+tbSide('a')+tbSide('b')+'</div>'}
   ${tradeReadHTML(ui.tmp.tb)}
   <div id="capBoardBox">${capBoard(builderTrade())}</div>
   ${editing ? '' : '<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tbGoMulti">Bring in a third team</button></div>'}
@@ -22280,6 +22441,7 @@ VIEWS.trades = function(){
           <div><div class="flabel">${esc(teamName(tr.a.teamId))} sends</div><div class="assetbox">${assetChips(tr.a)}</div></div>
           <div><div class="flabel">${esc(teamName(tr.b.teamId))} sends</div><div class="assetbox">${assetChips(tr.b)}</div></div>
         </div>
+        ${(tr.status==='proposed' || tr.status==='review') ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tradeTable" data-id="'+tr.id+'">See both rosters as a table</button></div>' : ''}
         ${retainNote(tr.a)}${retainNote(tr.b)}
         ${tradeGradeHTML(tr)}
         ${tr.reason?'<div class="hint bad">'+esc(tr.reason)+'</div>':''}
@@ -29074,16 +29236,59 @@ function duesFor(t, year){
 }
 function dueAmount(t, year){
   const d = duesFor(t, year);
-  return d.amount!=null && d.amount!=='' ? +d.amount : +S.settings.dues.amount||0;
+  return d.amount!=null && d.amount!=='' ? +d.amount : duesBaseAmount(year);
+}
+/* Each season can have its own amount and due date. Set nothing and a later
+   season takes this season's amount, due on the same day of its own year. */
+function duesYearOf(year){ return (+year >= 2000 && +year <= 2100) ? +year : duesYear(); }
+function duesBaseAmount(year){
+  const y = duesYearOf(year), d = S.settings.dues || {};
+  const by = d.amountBy || {};
+  if(y !== +S.league.season && by[y] != null && by[y] !== '') return +by[y] || 0;
+  return +d.amount || 0;
+}
+function duesDueDate(year){
+  const y = duesYearOf(year), d = S.settings.dues || {};
+  if(y === +S.league.season) return d.dueDate || '';
+  const by = d.dueBy || {};
+  if(by[y]) return by[y];
+  if(!d.dueDate) return '';
+  const base = +String(d.dueDate).slice(0, 4) || +S.league.season;
+  return String(base + (y - +S.league.season)) + String(d.dueDate).slice(4);
 }
 function duesSym(){ return S.settings.dues.symbol || '$'; }
 function duesMoney(n){ return duesSym() + Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2}); }
-function daysUntilDue(){
-  const d = S.settings.dues.dueDate; if(!d) return null;
+function daysUntilDue(year){
+  const d = duesDueDate(year); if(!d) return null;
   return Math.ceil((new Date(d+'T23:59:59').getTime() - Date.now())/86400000);
 }
 /* On a phone the table ran off the side, with Mark paid and Remind out of
    sight past the edge. There each team is a row of its own, buttons in reach. */
+/* Every other season on the list, paid or owing, a tap to change it. */
+function duesOtherYears(t){
+  const ed = canEditDues(), y0 = duesYear();
+  const yrs = Array.from({length:6}, (_, i)=> +S.league.season + i).filter(y=> y !== y0);
+  return '<div class="dryears">'+yrs.map(y=>{
+    const r = duesFor(t, y), paid = !!r.paid;
+    /* Not paid yet is only owing once that season's dues are actually due. */
+    const late = !paid && (daysUntilDue(y) != null && daysUntilDue(y) < 0);
+    const lab = y+' '+(paid ? '\u2713' : late ? 'owing' : 'unpaid');
+    const ttl = paid ? 'Paid'+(r.paidOn ? ' '+dstr(r.paidOn) : '')+(ed ? ' \u2014 tap to mark unpaid' : '') : (ed ? 'Owing \u2014 tap to mark paid' : 'Owing');
+    return ed
+      ? '<button class="dry'+(paid?' paid':late?' late':'')+'" data-a="togglePaidYear" data-id="'+esc(t.id)+'" data-y="'+y+'" title="'+esc(ttl)+'">'+esc(lab)+'</button>'
+      : '<span class="dry'+(paid?' paid':late?' late':'')+'" title="'+esc(ttl)+'">'+esc(lab)+'</span>';
+  }).join('')+'</div>';
+}
+ACT.togglePaidYear = (d)=>{
+  if(!canEditDues()) return toast('Commissioners only','bad');
+  const t = byId(S.teams, d.id), y = +d.y; if(!t || !(y >= 2000 && y <= 2100)) return;
+  const rec = duesFor(t, y);
+  rec.paid = !rec.paid; rec.paidOn = rec.paid ? Date.now() : null;
+  if(rec.paid) rec.remindedAt = null;
+  logIt(t.name+(rec.paid ? ' paid '+y+' dues' : ' marked unpaid for '+y), {type:'admin', teams:[t.id]});
+  save(); render();
+  toast(t.name+(rec.paid ? ' marked paid for '+y : ' marked unpaid for '+y)+' \u2014 tap it again to undo', 'good');
+};
 function duesRowPhone(t, d){
   const rec = duesFor(t), paid = !!rec.paid, ed = canEditDues();
   return '<div class="duesrow" data-duesrow="'+esc(t.id)+'">'+
@@ -29097,15 +29302,16 @@ function duesRowPhone(t, d){
     (ed ? '<div class="dr-btns">'+
       '<button class="btn sm '+(paid?'ghost':'pri')+'" data-a="togglePaid" data-id="'+t.id+'">'+(paid?'Mark unpaid':'Mark paid')+'</button>'+
       (!paid ? '<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>' : '')+'</div>' : '')+
+    '<div class="tiny dim" style="margin-top:2px">Other seasons</div>'+duesOtherYears(t)+
   '</div>';
 }
 VIEWS.dues = function(){
   const d = S.settings.dues, paid = S.teams.filter(t=>duesFor(t).paid), owing = S.teams.filter(t=>!duesFor(t).paid);
   const collected = sum(paid.map(t=> dueAmount(t))), expected = sum(S.teams.map(t=> dueAmount(t)));
-  const dl = daysUntilDue();
+  const dl = daysUntilDue(), due = duesDueDate(), yv = duesYear(), future = yv !== +S.league.season;
   return `
   <div class="section">
-    <header><div><div class="eyebrow">${dl==null?'No due date set':dl<0?Math.abs(dl)+' days overdue':dl+' days to go'} · due ${dayOnly(d.dueDate)}</div>
+    <header><div><div class="eyebrow">${yv} dues · ${dl==null?'No due date set':dl<0?Math.abs(dl)+' days overdue':dl+' days to go'} · due ${dayOnly(due)}</div>
       <h1>League dues</h1></div><div class="spacer"></div>
       <label class="row" style="gap:6px"><span class="eyebrow">Season</span>
         <select data-a="duesYearPick">${Array.from({length:6},(_,i)=>S.league.season+i).map(yy=>
@@ -29119,7 +29325,7 @@ VIEWS.dues = function(){
       <div class="tile"><div class="k">Paid up</div><div class="v">${paid.length}<span class="dim" style="font-size:15px">/${S.teams.length}</span></div><div class="s">teams</div></div>
       <div class="tile"><div class="k">Still owing</div><div class="v ${owing.length?'bad':'good'}">${duesMoney(sum(owing.map(t=> dueAmount(t))))}</div>
         <div class="s">${owing.length} team${owing.length===1?'':'s'}</div></div>
-      <div class="tile"><div class="k">Due date</div><div class="v" style="font-size:18px">${dayOnly(d.dueDate)}</div>
+      <div class="tile"><div class="k">Due date</div><div class="v" style="font-size:18px">${dayOnly(due)}</div>
         <div class="s ${dl!=null&&dl<0?'bad':''}">${dl==null?'—':dl<0?'past due':'in '+dl+' days'}</div></div>
     </div>
 
@@ -29127,7 +29333,7 @@ VIEWS.dues = function(){
       <div class="panel"><div class="ph"><h3>Who has paid</h3></div>
         <div class="pb tight duesph">${S.teams.map(t=> duesRowPhone(t, d)).join('')}</div>
         <div class="pb tight scrollx duesdesk">
-        <table><thead><tr><th>Team</th><th>Owner</th><th class="right">Owes</th><th class="right">Paid on</th><th class="right">Status</th><th></th></tr></thead><tbody>
+        <table><thead><tr><th>Team</th><th>Owner</th><th class="right">Owes</th><th class="right">Paid on</th><th class="right">Status</th><th></th><th>Other seasons</th></tr></thead><tbody>
         ${S.teams.map(t=>`<tr>
           <td><b style="font-weight:500">${esc(t.name)}</b></td>
           <td class="muted tiny">${esc(t.owner||'')}${t.email?'<br><span class="dim">'+esc(t.email)+'</span>':''}</td>
@@ -29139,17 +29345,22 @@ VIEWS.dues = function(){
           <td class="right nowrap">${!canEditDues() ? '' : `
             <button class="btn sm ${duesFor(t).paid?'ghost':'pri'}" data-a="togglePaid" data-id="${t.id}">${duesFor(t).paid?'Mark unpaid':'Mark paid'}</button>
             ${!duesFor(t).paid?'<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>':''}`}
-          </td></tr>`).join('')}
+          </td><td>${duesOtherYears(t)}</td></tr>`).join('')}
         </tbody></table></div></div>
 
       <div class="stack">
         <div class="panel"><div class="ph"><h3>Terms</h3></div><div class="pb stack">
           ${canEditDues() ? `
+          ${future ? '<div class="hint" style="margin:0">Terms for <b>'+yv+'</b>. Leave them as they are and '+yv+' takes this season\u2019s amount, due the same day of the year.</div>' : ''}
           <div class="grid g2">
-            <label class="f"><span>Amount per team</span><input type="number" data-set="settings.dues.amount" value="${d.amount}"></label>
+            ${future
+              ? '<label class="f"><span>Amount per team in '+yv+'</span><input type="number" data-set="settings.dues.amountBy.'+yv+'" value="'+esc(String(((d.amountBy||{})[yv] ?? '')))+'" placeholder="'+esc(String(d.amount))+'"></label>'
+              : '<label class="f"><span>Amount per team</span><input type="number" data-set="settings.dues.amount" value="'+esc(String(d.amount))+'"></label>'}
             <label class="f"><span>Symbol</span><input type="text" data-set="settings.dues.symbol" value="${esc(d.symbol)}"></label>
           </div>
-          <label class="f"><span>Due date</span><input type="date" data-norender data-set="settings.dues.dueDate" value="${esc(d.dueDate||'')}"></label>
+          ${future
+            ? '<label class="f"><span>Due date in '+yv+'</span><input type="date" data-norender data-set="settings.dues.dueBy.'+yv+'" value="'+esc(due||'')+'"></label>'
+            : '<label class="f"><span>Due date</span><input type="date" data-norender data-set="settings.dues.dueDate" value="'+esc(d.dueDate||'')+'"></label>'}
           <label class="f"><span>Pay to</span><input type="text" data-set="settings.dues.payTo" value="${esc(d.payTo||'')}" placeholder="Venmo @commissioner"></label>
           <label class="f"><span>Instructions</span><textarea data-set="settings.dues.instructions" placeholder="Note your team name in the payment.">${esc(d.instructions||'')}</textarea></label>
           <div class="hr"></div>
@@ -29165,7 +29376,7 @@ VIEWS.dues = function(){
             if(d2.remindWeekly === false) return 'No weekly reminder is being sent.';
             const last = +d2.lastRemind||0;
             const next = duesNextRemind();
-            const owing = duesOwing();
+            const owing = duesOwing(S.league.season);
             return 'A reminder goes to <b>everyone still owing</b> — a notice in the app, a pop-up on '+
               'their phone if they have those on, and a post in the league room naming them. '+
               'It is not an email; the app has no way to send one.'+
@@ -29183,8 +29394,8 @@ VIEWS.dues = function(){
               ? owing+' team'+(owing===1?'':'s')+' would be reminded. Anyone marked paid drops off straight away.'
               : 'Everyone has paid, so nothing would be sent.';
           })()}</div>`}`
-          : `<div class="row"><span class="eyebrow" style="width:110px">Each team</span><b>${duesMoney(d.amount)}</b></div>
-             <div class="row"><span class="eyebrow" style="width:110px">Due</span><b>${dayOnly(d.dueDate)}</b></div>
+          : `<div class="row"><span class="eyebrow" style="width:110px">Each team</span><b>${duesMoney(duesBaseAmount())}</b></div>
+             <div class="row"><span class="eyebrow" style="width:110px">Due</span><b>${dayOnly(due)}</b></div>
              ${d.payTo?'<div class="row"><span class="eyebrow" style="width:110px">Pay to</span><b>'+esc(d.payTo)+'</b></div>':''}
              ${d.instructions?'<div class="hint">'+esc(d.instructions)+'</div>':''}`}
         </div></div>
@@ -29289,9 +29500,9 @@ function duesLogRepair(){
 }
 function reminderText(t){
   const d = S.settings.dues, dl = daysUntilDue();
-  return 'Dues reminder for '+S.league.name+'\n\n'+
-    (t?t.name+' — ':'')+'amount owed: '+duesMoney(dueAmount(t||{dues:{}}))+'\n'+
-    'Due: '+dayOnly(d.dueDate)+(dl!=null?(dl<0?' ('+Math.abs(dl)+' days overdue)':' (in '+dl+' days)'):'')+'\n'+
+  return 'Dues reminder for '+S.league.name+' \u2014 '+duesYear()+' season\n\n'+
+    (t?t.name+' — ':'')+'amount owed: '+duesMoney(t ? dueAmount(t) : duesBaseAmount())+'\n'+
+    'Due: '+dayOnly(duesDueDate())+(dl!=null?(dl<0?' ('+Math.abs(dl)+' days overdue)':' (in '+dl+' days)'):'')+'\n'+
     (d.payTo?'Send to: '+d.payTo+'\n':'')+(d.instructions?'\n'+d.instructions+'\n':'')+
     /* Read the season's own record, not the old single field — that is why
        teams already marked paid were still being named in the message. */
@@ -29306,9 +29517,9 @@ function sendDuesReminder(t, year){
   const rec = duesFor(t, y);
   if(rec.paid) return false;
   const d = S.settings.dues || {};
-  notify('You still owe your dues',
+  notify('You still owe your '+y+' dues',
     'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
-    (d.dueDate ? ', due '+dayOnly(d.dueDate) : '')+
+    (duesDueDate(y) ? ', due '+dayOnly(duesDueDate(y)) : '')+
     (d.payTo ? '. Send to '+d.payTo : '')+'.', 'dues', [t.id]);
   rec.remindedAt = Date.now();
   return true;
@@ -34754,7 +34965,15 @@ ACT.rollSeasonGo = ()=>{
   S.auctions = S.auctions.filter(a=> a.status==='open'||a.status==='running');
   S.faAuctions = [];
   if(S.settings.waivers.deadline) S.settings.waivers.deadline = String(S.league.season)+S.settings.waivers.deadline.slice(4);
-  if(S.settings.dues.dueDate) S.settings.dues.dueDate = String(S.league.season)+S.settings.dues.dueDate.slice(4);
+  {
+    /* A season set up ahead of time brings its own terms with it. */
+    const dd = S.settings.dues, ny = +S.league.season;
+    if(dd.dueBy && dd.dueBy[ny]) dd.dueDate = dd.dueBy[ny];
+    else if(dd.dueDate) dd.dueDate = String(ny)+dd.dueDate.slice(4);
+    if(dd.amountBy && dd.amountBy[ny] != null && dd.amountBy[ny] !== '') dd.amount = +dd.amountBy[ny] || 0;
+    if(dd.dueBy) delete dd.dueBy[ny];
+    if(dd.amountBy) delete dd.amountBy[ny];
+  }
   for(let r=1;r<=4;r++) S.teams.forEach(t=> S.picks.push({id:uid('pk'), year:S.league.season+3, round:r, ownerTeamId:t.id, originTeamId:t.id}));
   S.picks = S.picks.filter(k=> k.year > S.league.season - 1);
   S.tagOffers = [];
