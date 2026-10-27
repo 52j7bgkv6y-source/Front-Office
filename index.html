@@ -1223,6 +1223,10 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .duesrow .dr-btns{display:flex;gap:8px}
 .duesrow .dr-btns .btn{flex:1;justify-content:center;min-height:40px}
 .dryears{display:flex;flex-wrap:wrap;gap:5px}
+.tilebtn{display:block;width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer;border-color:var(--bad-edge)}
+.tilebtn .tilego{color:var(--brass);font-weight:600}
+.remwho{display:grid;gap:6px}
+.remwho .check{align-items:center}
 .dry{font:500 12px/1 var(--mono);padding:7px 9px;border-radius:999px;border:1px solid var(--rule);color:var(--mute);background:none;white-space:nowrap}
 .dry.late{border-color:var(--bad-edge);color:var(--signal)}
 button.dry{cursor:pointer;min-height:32px}
@@ -1568,7 +1572,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-26e · player cards: future weeks, with how each defense ranks against his position';
+const APP_BUILD = '2026-10-26f · dues: tap Still owing to remind everyone who owes \u2014 edit, copy or send the message';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -29459,8 +29463,11 @@ VIEWS.dues = function(){
       <div class="tile"><div class="k">Collected</div><div class="v good">${duesMoney(collected)}</div>
         ${meter(collected, expected)}<div class="s">of ${duesMoney(expected)}</div></div>
       <div class="tile"><div class="k">Paid up</div><div class="v">${paid.length}<span class="dim" style="font-size:15px">/${S.teams.length}</span></div><div class="s">teams</div></div>
-      <div class="tile"><div class="k">Still owing</div><div class="v ${owing.length?'bad':'good'}">${duesMoney(sum(owing.map(t=> dueAmount(t))))}</div>
-        <div class="s">${owing.length} team${owing.length===1?'':'s'}</div></div>
+      ${canEditDues() && owing.length
+        ? `<button class="tile tilebtn" data-a="remindAll" aria-label="Remind everyone still owing"><div class="k">Still owing</div><div class="v bad">${duesMoney(sum(owing.map(t=> dueAmount(t))))}</div>
+            <div class="s">${owing.length} team${owing.length===1?'':'s'} \u00b7 <span class="tilego">tap to remind them</span></div></button>`
+        : `<div class="tile"><div class="k">Still owing</div><div class="v ${owing.length?'bad':'good'}">${duesMoney(sum(owing.map(t=> dueAmount(t))))}</div>
+            <div class="s">${owing.length} team${owing.length===1?'':'s'}</div></div>`}
       <div class="tile"><div class="k">Due date</div><div class="v" style="font-size:18px">${dayOnly(due)}</div>
         <div class="s ${dl!=null&&dl<0?'bad':''}">${dl==null?'—':dl<0?'past due':'in '+dl+' days'}</div></div>
     </div>
@@ -29647,12 +29654,18 @@ function reminderText(t){
 /* A dues reminder to one side: a notice in the app and a pop-up on their phone
    if they have those on. Remembered against the season so the page can say
    when they were last told. Nothing about a team that has paid. */
-function sendDuesReminder(t, year){
+function sendDuesReminder(t, year, text){
   if(!t) return false;
   const y = year || duesYear();
   const rec = duesFor(t, y);
   if(rec.paid) return false;
   const d = S.settings.dues || {};
+  /* A message written (or edited) by the commissioner goes as it is. */
+  if(text){
+    notify('Dues reminder \u2014 '+y, String(text).slice(0, 1500), 'dues', [t.id]);
+    rec.remindedAt = Date.now();
+    return true;
+  }
   notify('You still owe your '+y+' dues',
     'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
     (duesDueDate(y) ? ', due '+dayOnly(duesDueDate(y)) : '')+
@@ -29779,21 +29792,62 @@ function duesWeeklyRun(){
   save();
   return owing.length;
 }
+/* Remind everyone still owing — from Send reminders, or a tap on the Still
+   owing figure. Nothing goes until Send is pressed: the message can be edited
+   first, copied to paste into a group text or the league chat, or opened in the
+   mail app, and any team can be left out. */
 ACT.remindAll = ()=>{
   if(!canEditDues()) return toast('Commissioners only','bad');
   const owing = duesOwing();
   if(!owing.length) return toast('Nobody owes anything','warn');
-  owing.forEach(t=> sendDuesReminder(t));
-  logIt('Reminded '+owing.length+' side'+(owing.length===1?'':'s')+' about '+duesYear()+' dues', {type:'admin', teams:owing.map(t=> t.id)});
-  save();
-  modal('Reminders sent to '+owing.length+' team'+(owing.length===1?'':'s'),
-    '<div class="hint good" style="margin:0 0 10px">Sent \u2014 each is in their notices, and on their phone if they have pop-ups on.</div>'+
-    '<textarea id="remtext" style="min-height:220px">'+esc(reminderText(null))+'</textarea>'+
-    '<div class="hint">Everyone still owing: '+esc(owing.map(t=>t.name+(t.email?' <'+t.email+'>':'')).join(', '))+'</div>',
+  ui.tmp.remSent = false;
+  const y = duesYear();
+  modal('Remind everyone still owing — '+y,
+    '<div class="hint" style="margin:0 0 10px">Edit the message if you like. <b>Send</b> puts it in each team’s notices and on their phone if they have pop-ups on. '+
+      '<b>Copy</b> lets you paste it into the league chat or a group text.</div>'+
+    '<div class="flabel">Who it goes to</div>'+
+    '<div class="remwho">'+owing.map(t=> '<label class="check"><input type="checkbox" data-remteam="'+esc(t.id)+'" checked>'+
+      '<span>'+esc(t.name)+' <span class="dim">'+esc(duesMoney(dueAmount(t)))+(duesRemindedLine(t) ? ' · '+esc(duesRemindedLine(t)) : '')+'</span></span></label>').join('')+'</div>'+
+    '<div class="flabel" style="margin-top:10px">Message</div>'+
+    '<textarea id="remtext" style="min-height:220px;width:100%">'+esc(reminderText(null))+'</textarea>'+
+    '<div class="hint" id="remSentNote" style="display:none"></div>',
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
-    (owing.some(t=>t.email)?'<a class="btn" href="mailto:'+encodeURIComponent(owing.filter(t=>t.email).map(t=>t.email).join(','))+'?subject='+encodeURIComponent('Dues — '+S.league.name)+'&body='+encodeURIComponent(reminderText(null))+'">Open in mail</a>':'')+
-    '<button class="btn pri" data-a="copyRem">Copy</button>');
-  render();
+    '<button class="btn" data-a="copyRem">Copy</button>'+
+    (owing.some(t=> t.email) ? '<button class="btn" data-a="remMail">Open in mail</button>' : '')+
+    '<button class="btn pri" data-a="remindAllSend" id="remSendBtn">Send to '+owing.length+'</button>');
+};
+function remChosen(){
+  return Array.from(document.querySelectorAll('#modalBox [data-remteam]')).filter(x=> x.checked)
+    .map(x=> byId(S.teams, x.dataset.remteam)).filter(Boolean);
+}
+document.addEventListener('change', e=>{
+  if(!e.target.closest || !e.target.closest('[data-remteam]')) return;
+  const b = $('#remSendBtn'); if(!b || ui.tmp.remSent) return;
+  const n = remChosen().length;
+  b.textContent = 'Send to '+n; b.disabled = !n;
+});
+ACT.remindAllSend = ()=>{
+  if(!canEditDues()) return toast('Commissioners only','bad');
+  if(ui.tmp.remSent) return toast('Already sent','warn');
+  const who = remChosen().filter(t=> !duesFor(t).paid);
+  const text = String((($('#remtext')||{}).value) || '').trim();
+  if(!who.length) return toast('Tick at least one team','bad');
+  if(!text) return toast('The message is empty','bad');
+  who.forEach(t=> sendDuesReminder(t, null, text));
+  ui.tmp.remSent = true;
+  logIt('Reminded '+who.length+' side'+(who.length===1?'':'s')+' about '+duesYear()+' dues', {type:'admin', teams:who.map(t=> t.id)});
+  save(); render();
+  const b = $('#remSendBtn'); if(b){ b.textContent = 'Sent ✓'; b.disabled = true; }
+  const n = $('#remSentNote');
+  if(n){ n.style.display = ''; n.className = 'hint good'; n.textContent = 'Sent to '+who.map(t=> t.name).join(', ')+'. You can still copy the message.'; }
+  toast('Reminder sent to '+who.length+' team'+(who.length===1?'':'s'),'good');
+};
+/* The mail app, with the message as it now reads. */
+ACT.remMail = ()=>{
+  const who = remChosen().filter(t=> t.email);
+  if(!who.length) return toast('None of those teams has an email address set','warn');
+  const text = String((($('#remtext')||{}).value) || '');
+  location.href = 'mailto:'+encodeURIComponent(who.map(t=> t.email).join(','))+'?subject='+encodeURIComponent('Dues — '+S.league.name)+'&body='+encodeURIComponent(text);
 };
 ACT.copyRem = ()=>{
   const el = $('#remtext'); el.select();
