@@ -1187,6 +1187,18 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .grade.gC{color:var(--brass);border-color:var(--brass)}
 .grade.gD,.grade.gF{color:var(--signal);border-color:var(--signal)}
 .tgrades{margin-top:4px}
+.duesph{display:none}
+.duesrow{display:grid;gap:6px;padding:10px 14px;border-bottom:1px solid var(--rule)}
+.duesrow:last-child{border-bottom:0}
+.duesrow .dr-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.duesrow .dr-who{min-width:0}
+.duesrow .dr-mid{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.duesrow .dr-amt{display:flex;align-items:center;gap:6px}
+.duesrow .dr-btns{display:flex;gap:8px}
+.duesrow .dr-btns .btn{flex:1;justify-content:center;min-height:40px}
+@media (max-width:860px){ .duesph{display:block} .duesdesk{display:none} }
+.tbrec{font-size:12px;color:var(--mute);white-space:nowrap}
+.tbrec b{color:var(--bone);font-weight:600}
 .tdeal{display:grid;gap:6px;margin-top:8px;padding:8px;border:1px solid var(--rule);border-radius:10px;background:var(--ink-3)}
 .tdeal .tds{min-width:0}
 .tdeal .tds-h{font-size:12px;font-weight:600;margin-bottom:3px}
@@ -1525,7 +1537,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-26a · on a phone the page scrolls under the bars, so the bottom bar can no longer ride up the screen';
+const APP_BUILD = '2026-10-26c · dues on a phone: mark paid and send reminders, which now reach their phones';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -19617,6 +19629,21 @@ function posOptions(list, tail){
     byPosition(groups[k]).map(p=> '<option value="'+p.id+'">'+esc(k)+' · '+esc(p.name)+(p.nfl?' · '+esc(p.nfl):'')+(tail?tail(p):'')+'</option>').join('')+
     '</optgroup>').join('');
 }
+/* A team's record and where it sits in the standings, for the trade builder —
+   the same figures as the Standings page. */
+function teamStandingBits(tid){
+  const t = byId(S.teams, tid); if(!t) return null;
+  const r = liveRecord(t);
+  const rec = r.w+'-'+r.l+(r.t ? '-'+r.t : '');
+  const table = standings();
+  const i = table.findIndex(x=> x && x.id === tid);
+  return {rec, rank: i >= 0 ? i+1 : 0, of: table.length, played: (r.w + r.l + r.t) > 0};
+}
+function teamStandingHTML(tid){
+  const b = teamStandingBits(tid); if(!b) return '';
+  return '<span class="tbrec"><b class="num">'+esc(b.rec)+'</b>'+
+    (b.rank ? ' \u00b7 '+(b.played ? ordinal(b.rank)+' of '+b.of : 'no games yet') : '')+'</span>';
+}
 function tbSide(side){
   tbFixSender();
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
@@ -19626,11 +19653,12 @@ function tbSide(side){
   return `<div class="assetbox">
     <label class="f" style="margin-bottom:8px"><span>${side==='a'?'You are sending':'Receiving team'}</span>
       ${(side==='a' || ui.tmp.tb.editId)
-        ? '<div class="pill" style="align-self:flex-start">'+esc(teamName(tid))+'</div>'
+        ? '<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap"><div class="pill">'+esc(teamName(tid))+'</div>'+teamStandingHTML(tid)+'</div>'
         : '<select data-a="tbTeam" data-side="'+side+'">'+
           S.teams.filter(t=> t.id!==(ui.tmp.tb&&ui.tmp.tb.a&&ui.tmp.tb.a.teamId))
-            .map(t=>'<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+'</option>').join('')+
-          '</select>'}</label>
+            .map(t=>{ const b = teamStandingBits(t.id);
+              return '<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+(b ? ' ('+b.rec+(b.played && b.rank ? ', '+ordinal(b.rank) : '')+')' : '')+'</option>'; }).join('')+
+          '</select>'+(tid ? '<div style="margin-top:4px">'+teamStandingHTML(tid)+'</div>' : '')}</label>
     <div style="margin-bottom:8px">${assetChips(s,{rm:'tbRm', side:side})}</div>
     <div class="row">
       <select id="tbp_${side}" style="flex:1;min-width:140px"><option value="">Player…</option>
@@ -19778,7 +19806,7 @@ function multiForm(){
   return `${m.editId ? '<div class="hint" data-tbedit="1" style="margin-bottom:10px">This is the deal you put up. Change it and save: every team in it is told, and everybody has to accept it again. It can be changed until it goes to review.</div>' : ''}
     <div class="row" style="margin-bottom:10px">
       <span class="eyebrow">Teams in it</span>
-      ${m.teams.map(t=>'<span class="chip">'+esc(teamName(t))+
+      ${m.teams.map(t=>'<span class="chip">'+esc(teamName(t))+' '+teamStandingHTML(t)+
         (m.teams.length>2?'<button data-a="mtDropTeam" data-id="'+t+'">×</button>':'')+'</span>').join('')}
       <select data-a="mtAddTeam" style="width:150px"><option value="">Add a team…</option>
         ${S.teams.filter(t=> m.teams.indexOf(t.id)<0).map(t=>'<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')}</select>
@@ -29054,6 +29082,23 @@ function daysUntilDue(){
   const d = S.settings.dues.dueDate; if(!d) return null;
   return Math.ceil((new Date(d+'T23:59:59').getTime() - Date.now())/86400000);
 }
+/* On a phone the table ran off the side, with Mark paid and Remind out of
+   sight past the edge. There each team is a row of its own, buttons in reach. */
+function duesRowPhone(t, d){
+  const rec = duesFor(t), paid = !!rec.paid, ed = canEditDues();
+  return '<div class="duesrow" data-duesrow="'+esc(t.id)+'">'+
+    '<div class="dr-top"><div class="dr-who"><b>'+esc(t.name)+'</b>'+
+      (t.owner ? '<div class="tiny muted">'+esc(t.owner)+'</div>' : '')+'</div>'+
+      (paid ? '<span class="pill ok">Paid</span>' : '<span class="pill" style="border-color:var(--bad-edge);color:var(--signal)">Owing</span>')+'</div>'+
+    '<div class="dr-mid">'+
+      (ed ? '<label class="dr-amt"><span class="tiny dim">Owes</span><input type="number" inputmode="decimal" style="width:92px;text-align:right" placeholder="'+d.amount+'" value="'+(rec.amount??'')+'" data-a="dueAmt" data-id="'+t.id+'" data-k="dap_'+t.id+'"></label>'
+          : '<span class="num">'+money(dueAmount(t))+'</span>')+
+      '<span class="tiny dim">'+(paid && rec.paidOn ? 'paid '+esc(dstr(rec.paidOn)) : esc(duesRemindedLine(t)))+'</span></div>'+
+    (ed ? '<div class="dr-btns">'+
+      '<button class="btn sm '+(paid?'ghost':'pri')+'" data-a="togglePaid" data-id="'+t.id+'">'+(paid?'Mark unpaid':'Mark paid')+'</button>'+
+      (!paid ? '<button class="btn sm ghost" data-a="remindOne" data-id="'+t.id+'">Remind</button>' : '')+'</div>' : '')+
+  '</div>';
+}
 VIEWS.dues = function(){
   const d = S.settings.dues, paid = S.teams.filter(t=>duesFor(t).paid), owing = S.teams.filter(t=>!duesFor(t).paid);
   const collected = sum(paid.map(t=> dueAmount(t))), expected = sum(S.teams.map(t=> dueAmount(t)));
@@ -29079,7 +29124,9 @@ VIEWS.dues = function(){
     </div>
 
     <div class="split">
-      <div class="panel"><div class="ph"><h3>Who has paid</h3></div><div class="pb tight scrollx">
+      <div class="panel"><div class="ph"><h3>Who has paid</h3></div>
+        <div class="pb tight duesph">${S.teams.map(t=> duesRowPhone(t, d)).join('')}</div>
+        <div class="pb tight scrollx duesdesk">
         <table><thead><tr><th>Team</th><th>Owner</th><th class="right">Owes</th><th class="right">Paid on</th><th class="right">Status</th><th></th></tr></thead><tbody>
         ${S.teams.map(t=>`<tr>
           <td><b style="font-weight:500">${esc(t.name)}</b></td>
@@ -29087,7 +29134,7 @@ VIEWS.dues = function(){
           <td class="right">${canEditDues()
             ? '<input type="number" style="width:92px;text-align:right" placeholder="'+d.amount+'" value="'+(duesFor(t).amount??'')+'" data-a="dueAmt" data-id="'+t.id+'" data-k="da_'+t.id+'">'
             : '<span class="num">'+money(dueAmount(t))+'</span>'}</td>
-          <td class="right num tiny">${duesFor(t).paid&&duesFor(t).paidOn?dstr(duesFor(t).paidOn):'—'}</td>
+          <td class="right num tiny">${duesFor(t).paid&&duesFor(t).paidOn?dstr(duesFor(t).paidOn):(duesRemindedLine(t)?'<span class="dim">'+esc(duesRemindedLine(t))+'</span>':'—')}</td>
           <td class="right">${duesFor(t).paid?'<span class="pill ok">Paid</span>':'<span class="pill" style="border-color:var(--bad-edge);color:var(--signal)">Owing</span>'}</td>
           <td class="right nowrap">${!canEditDues() ? '' : `
             <button class="btn sm ${duesFor(t).paid?'ghost':'pri'}" data-a="togglePaid" data-id="${t.id}">${duesFor(t).paid?'Mark unpaid':'Mark paid'}</button>
@@ -29110,6 +29157,9 @@ VIEWS.dues = function(){
             <span>Remind anyone still owing, once a week</span></label>
           ${d.remindWeekly===false ? '' : `<label class="f"><span>On a</span>
             <select data-set="settings.dues.remindDay">
+              ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
+                '<option value="'+i+'"'+((+d.remindDay||0)===i?' selected':'')+'>'+nm+'</option>').join('')}
+            </select></label>
           <div class="hint" style="grid-column:1/-1">${(()=>{
             const d2 = S.settings.dues||{};
             if(d2.remindWeekly === false) return 'No weekly reminder is being sent.';
@@ -29127,9 +29177,6 @@ VIEWS.dues = function(){
                 : 'Nobody owes anything, so none will go.')+
               (isCommish()? ' <button class="btn sm ghost" data-a="duesRemindNow">Send one now</button>' : '');
           })()}</div>
-              ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((nm,i)=>
-                '<option value="'+i+'"'+((+d.remindDay||0)===i?' selected':'')+'>'+nm+'</option>').join('')}
-            </select></label>
           <div class="hint">${(()=>{
             const owing = duesOwing(S.league.season).length;
             return owing
@@ -29250,12 +29297,37 @@ function reminderText(t){
        teams already marked paid were still being named in the message. */
     '\nStill outstanding: '+(duesOwing().map(x=>x.name).join(', ') || 'nobody, everyone has paid');
 }
+/* A dues reminder to one side: a notice in the app and a pop-up on their phone
+   if they have those on. Remembered against the season so the page can say
+   when they were last told. Nothing about a team that has paid. */
+function sendDuesReminder(t, year){
+  if(!t) return false;
+  const y = year || duesYear();
+  const rec = duesFor(t, y);
+  if(rec.paid) return false;
+  const d = S.settings.dues || {};
+  notify('You still owe your dues',
+    'Dues for '+y+' are '+duesMoney(dueAmount(t, y))+
+    (d.dueDate ? ', due '+dayOnly(d.dueDate) : '')+
+    (d.payTo ? '. Send to '+d.payTo : '')+'.', 'dues', [t.id]);
+  rec.remindedAt = Date.now();
+  return true;
+}
+function duesRemindedLine(t){
+  const at = +duesFor(t).remindedAt || 0;
+  return at && !duesFor(t).paid ? 'reminded '+dstr(at) : '';
+}
 ACT.remindOne = (d)=>{
-  const t = byId(S.teams,d.id);
-  noteReminder(t);
-  save();
-  modal('Reminder for '+t.name, '<textarea id="remtext" style="min-height:200px">'+esc(reminderText(t))+'</textarea>'+
-    '<div class="hint">Copy this into your league chat, or open it in your mail app. This page has no mail server of its own.</div>',
+  if(!canEditDues()) return toast('Commissioners only','bad');
+  const t = byId(S.teams,d.id); if(!t) return;
+  if(duesFor(t).paid) return toast(t.name+' has already paid','warn');
+  if(Date.now() - (+duesFor(t).remindedAt||0) < 5*60000) return toast(t.name+' was reminded a moment ago','warn');
+  sendDuesReminder(t);
+  logIt('Reminded '+t.name+' about '+duesYear()+' dues', {type:'admin', teams:[t.id]});
+  save(); render();
+  modal('Reminder sent to '+t.name, '<div class="hint good" style="margin:0 0 10px">Sent \u2014 it is in their notices, and on their phone if they have pop-ups on.</div>'+
+    '<textarea id="remtext" style="min-height:200px">'+esc(reminderText(t))+'</textarea>'+
+    '<div class="hint">You can also copy this into your league chat, or open it in your mail app.</div>',
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
     (t.email?'<a class="btn" href="mailto:'+encodeURIComponent(t.email)+'?subject='+encodeURIComponent('Dues — '+S.league.name)+'&body='+encodeURIComponent(reminderText(t))+'">Open in mail</a>':'')+
     '<button class="btn pri" data-a="copyRem">Copy</button>');
@@ -29361,10 +29433,14 @@ function duesWeeklyRun(){
   return owing.length;
 }
 ACT.remindAll = ()=>{
+  if(!canEditDues()) return toast('Commissioners only','bad');
   const owing = duesOwing();
-  owing.forEach(t=> noteReminder(t));
+  if(!owing.length) return toast('Nobody owes anything','warn');
+  owing.forEach(t=> sendDuesReminder(t));
+  logIt('Reminded '+owing.length+' side'+(owing.length===1?'':'s')+' about '+duesYear()+' dues', {type:'admin', teams:owing.map(t=> t.id)});
   save();
-  modal('Reminders for '+owing.length+' teams',
+  modal('Reminders sent to '+owing.length+' team'+(owing.length===1?'':'s'),
+    '<div class="hint good" style="margin:0 0 10px">Sent \u2014 each is in their notices, and on their phone if they have pop-ups on.</div>'+
     '<textarea id="remtext" style="min-height:220px">'+esc(reminderText(null))+'</textarea>'+
     '<div class="hint">Everyone still owing: '+esc(owing.map(t=>t.name+(t.email?' <'+t.email+'>':'')).join(', '))+'</div>',
     '<button class="btn ghost" data-a="closeModal">Close</button>'+
