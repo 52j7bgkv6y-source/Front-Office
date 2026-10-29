@@ -1188,6 +1188,17 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .grade.gC{color:var(--brass);border-color:var(--brass)}
 .grade.gD,.grade.gF{color:var(--signal);border-color:var(--signal)}
 .tgrades{margin-top:4px}
+.ladder .lsect{padding:8px 8px 4px;font:600 11px/1.2 var(--disp);letter-spacing:.08em;text-transform:uppercase;color:var(--mute);border-bottom:1px solid var(--rule-soft)}
+.ladder .lrow.xrow{cursor:pointer}
+.ladder .lrow.xrow:hover{background:var(--hover-2)}
+.ladder .lrow.xrow .pm{color:var(--mute)}
+.cell.adjcell{display:flex;align-items:center;justify-content:center;font-size:12px;border:1px dashed var(--rule);border-radius:4px}
+.cell.adjcell .amt{position:static;color:inherit;font-weight:600}
+.cell.adjcell.pos{color:var(--signal)}
+.cell.adjcell.neg{color:var(--sage)}
+.ladder .xrow .cell.void .amt{color:var(--bone)}
+.ladder .xrow .cell.void.small .amt{color:var(--signal)}
+.ladder .xrow .lname .pm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .planrows{display:grid;gap:8px}
 .planrow{border:1px solid var(--rule);border-radius:10px;padding:8px 10px;display:grid;gap:6px;background:var(--ink-2)}
 .planrow.off{opacity:.55}
@@ -1583,7 +1594,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29f · squads: injury listing by every name; IR and taxi buttons only where allowed; the IR player locking a lineup is named';
+const APP_BUILD = '2026-10-29i · coming free: extension price today and franchise tag price for every player';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2767,14 +2778,16 @@ function irAllows(){
    would look healthy here while Sleeper has him on IR. */
 function sleeperInjury(pl){
   if(!pl) return null;
-  let st = String(pl.injury_status || '').trim();
-  if(!st){
-    const rs = String(pl.status || '').toLowerCase();
-    if(/injured reserve/.test(rs)) st = 'IR';
-    else if(/physically unable|\bpup\b/.test(rs)) st = 'PUP';
-    else if(/non.?football/.test(rs)) st = 'NFI';
-    else if(/suspend/.test(rs)) st = 'Sus';
-  }
+  /* His roster status comes first. A man moved to IR keeps whatever game
+     designation he last had in injury_status — "Questionable" from the week
+     before, say — while his status says Injured Reserve, and Sleeper shows him
+     as IR. Reading injury_status first left him Questionable here. */
+  const rs = String(pl.status || '').toLowerCase();
+  let st = /injured reserve/.test(rs) ? 'IR'
+    : /physically unable|\bpup\b/.test(rs) ? 'PUP'
+    : /non.?football/.test(rs) ? 'NFI'
+    : /suspend/.test(rs) ? 'Sus' : '';
+  if(!st) st = String(pl.injury_status || '').trim();
   return st ? {status:st, body:String(pl.injury_body_part || '')} : null;
 }
 /* Does a listing, on its own, let a man sit on IR? */
@@ -10297,7 +10310,9 @@ VIEWS.teams = function(){
                   'which puts him out of reach of a claim for the year. You pay his salary while he sits.');
             })() : ''}</div></div></div>
 
-        <div class="panel"><div class="ph"><h3>Injured reserve</h3></div>
+        <div class="panel"><div class="ph"><h3>Injured reserve</h3><div class="spacer"></div>
+          <button class="btn sm ghost" data-a="injRefresh"${ui.tmp.faRefBusy ? ' disabled' : ''} title="Read every player\u2019s injury listing from Sleeper now">${ui.tmp.faRefBusy ? 'Checking\u2026' : 'Check Sleeper'}</button></div>
+          <div class="pb" style="padding-bottom:0"><div class="tiny dim" data-injat>Injury listings come from Sleeper${(S.meta||{}).injAt ? ', last checked '+esc(dstr(S.meta.injAt)) : ''}. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.</div></div>
           <div class="pb tight scrollx"><table>
           <thead><tr>${sortTh('sqI','name','Player')}${sortTh('sqI','pos','Pos')}${sortTh('sqI','nfl','Deal','hide-xs')}
             ${sortTh('sqI','hit','Cap hit','right')}<th></th></tr></thead>
@@ -10454,7 +10469,8 @@ VIEWS.teams = function(){
             '<option value="'+y2+'"'+(y2===yr?' selected':'')+'>'+y2+'</option>').join('')}</select></label>
       </div><div class="pb stack">
         <p class="muted" style="margin:0">Everyone whose deal has run out by the start of ${yr} — who they are
-          leaving, how old they will be, and what they were on.</p>
+          leaving, how old they will be, what they were on, and what it would cost to keep them: the extension price a year today,
+          and the franchise tag.</p>
         <div class="grid g4 keep2">
           <label class="f"><span>Position</span>
             <select data-a="freeFilter" data-f="offPos">
@@ -10486,12 +10502,14 @@ VIEWS.teams = function(){
         <thead><tr>${sortTh('off','name','Player')}${sortTh('off','pos','Pos')}${sortTh('off','age','Age','right')}
           ${sortTh('off','ppg','Pts / game','right')}${sortTh('off','team','Leaving')}
           ${sortTh('off','aav','Was on','right')}
-          ${sortTh('off','last','Through','right')}<th></th></tr></thead>
+          ${sortTh('off','last','Through','right')}${sortTh('off','ext','Extension','right')}${sortTh('off','tag','Tag','right')}<th></th></tr></thead>
         <tbody>${sortRows('off', rows, {
           name:p=>p.name, pos:p=>p.pos, age:p=>+p.age||0,
           team:p=>teamName(p.contract.teamId), aav:p=>capHit(p,S.league.season),
           ppg:p=>{ const k=lastKnownPPG(p); return k? k.ppg : -1; },
-          last:p=>p.contract.startYear + p.contract.years - 1
+          last:p=>p.contract.startYear + p.contract.years - 1,
+          ext:p=>{ const x = extTodayFor(p); return x ? x.price : -1; },
+          tag:p=> (S.settings.tag||{}).on === false ? -1 : tagPriceFor(p)
         }, {key:'ppg',dir:-1}).map(p=>`<tr>
           <td><div class="pname">${playerFace(p, 28)}<div class="pn">
             <a href="#" data-a="playerCard" data-id="${p.id}" style="color:inherit">${esc(p.name)}</a>
@@ -10509,8 +10527,19 @@ VIEWS.teams = function(){
           <td class="right money">${money(tradeHit(p,S.league.season))}${
             offCap(p) ? '<div class="tiny dim">off the cap</div>' : ''}</td>
           <td class="right num dim">${p.contract.startYear + p.contract.years - 1}</td>
+          <td class="right" data-offext="${p.id}">${(()=>{
+            /* Today's price a year; if he cannot be extended right now, the
+               ladder's price for where he ranks, marked as such. */
+            const x = extTodayFor(p);
+            if(!x) return '<span class="dim" title="No games this season to rank him on yet">\u2014</span>';
+            return '<span class="money">'+money(x.price)+'</span>'+
+              '<div class="tiny dim">'+(x.rank ? esc(p.pos)+x.rank : '')+(x.now ? '' : ' \u00b7 <span title="'+esc(x.why || 'He cannot be extended right now')+'">not now</span>')+'</div>';
+          })()}</td>
+          <td class="right" data-offtag="${p.id}">${(S.settings.tag||{}).on === false
+            ? '<span class="dim" title="This league has no franchise tag">\u2014</span>'
+            : '<span class="money">'+money(tagPriceFor(p))+'</span>'+(isTagged(p) ? '<div class="tiny">'+tagTag(p)+'</div>' : '')}</td>
           <td class="right"><button class="btn sm ghost" data-a="playerCard" data-id="${p.id}">Open</button></td>
-        </tr>`).join('') || '<tr><td colspan="7" class="dim center" style="padding:24px">Nobody matches that.</td></tr>'}
+        </tr>`).join('') || '<tr><td colspan="9" class="dim center" style="padding:24px">Nobody matches that.</td></tr>'}
         </tbody></table></div></div>`;
     })() : ''}
 
@@ -17793,6 +17822,19 @@ function extInfoPanel(p, noFloorNote){
   return '<div class="assetbox" style="margin-bottom:12px">'+head+live+work+games+open+'</div>';
 }
 ACT.goContracts = ()=>{ closeModal(); route = 'settings'; ui.sub = 'contracts'; go('settings'); ui.sub = 'contracts'; render(); };
+/* What extending him would cost a year today, for lists: the price he could
+   sign at now if he can be extended, otherwise the ladder's price for where he
+   ranks this season. Null when he has no rank to price off. */
+function extTodayFor(p){
+  if(!p) return null;
+  const q = ladderQuote(p);
+  if(q) return {price:q.price, now:true, rank:q.gate && q.gate.rank ? q.gate.rank.rank : null, why:''};
+  const y = S.league.season;
+  const rk = gamesIn(p.id, y) >= 1 ? positionRank(p, y) : null;
+  if(!rk) return null;
+  const g = canExtend(p);
+  return {price: extPriceFor(p, ladderPrice(p.pos, rk.rank)).price, now:false, rank:rk.rank, why: g && g.why ? String(g.why) : ''};
+}
 function ladderQuote(p){
   const g = canExtend(p);
   if(!g.ok || !g.rank) return null;
@@ -18307,6 +18349,140 @@ function irBackPanel(tid){
       'and would be <span class="num">'+money(space - back,{plus:true})+'</span> without it. '+
       'Only '+y+' changes \u2014 later years of these deals count in full.</div></div></div>';
 }
+/* ---- Dead cap, salary still paid and adjustments, line by line --------------
+   Each one on the ladder as its own row, so the space can be read off the page;
+   a tap on any of them shows what it is and where it came from. */
+function capExtras(tid){
+  const t = byId(S.teams, tid) || {};
+  const dead = {}, deadOrder = [];
+  (t.dead||[]).forEach((d, i)=>{
+    if(!d) return;
+    const key = d.playerId ? 'p:'+d.playerId : 'n:'+String(d.name||'Dead cap').replace(/ \(split\)$/, '');
+    if(!dead[key]){ dead[key] = {key, playerId:d.playerId||null, name:String(d.name||'Dead cap').replace(/ \(split\)$/, ''), rows:[]}; deadOrder.push(key); }
+    dead[key].rows.push(Object.assign({i}, d));
+  });
+  const ret = retainedList(tid).map(x=> ({key:'r:'+x.player.id, player:x.player, r:x.r}));
+  const adj = (t.adj||[]).map((d, i)=> ({key:'a:'+i, i, d})).filter(x=> x.d && +x.d.amount);
+  return {dead: deadOrder.map(k=> dead[k]), ret, adj};
+}
+function capExtraName(x){
+  const p = x.playerId ? byId(S.players, x.playerId) : null;
+  return p ? p.name : x.name;
+}
+function capExtraRowsHTML(tid, yrs, mx){
+  const ex = capExtras(tid);
+  const cell = (v, cls, label)=>{
+    if(!v) return '<div class="cell empty"></div>';
+    const pctH = clamp(Math.abs(v)/mx*100, 6, 100);
+    return '<div class="cell '+cls+(pctH<34?' small':'')+'" title="'+esc(label)+'"><div class="bar" style="height:'+pctH+'%"><span class="amt">'+money(v)+'</span></div></div>';
+  };
+  const head = (label, sub)=> '<div class="lsect"><div>'+label+(sub ? ' <span class="dim">'+sub+'</span>' : '')+'</div></div>';
+  let out = '';
+  if(ex.dead.length){
+    out += head('Dead cap', ex.dead.length+' player'+(ex.dead.length===1?'':'s'));
+    out += ex.dead.map(x=>{
+      const by = {}; x.rows.forEach(r=>{ by[r.year] = fixInc((by[r.year]||0) + (+r.amount||0)); });
+      const nm = capExtraName(x);
+      return '<div class="lrow xrow" data-a="capDetail" data-k="dead" data-id="'+esc(x.key)+'" data-tid="'+esc(tid)+'" role="button" tabindex="0">'+
+        '<div class="lname"><span class="pn bad">'+esc(nm)+'</span><span class="pm">dead cap \u203a</span></div>'+
+        yrs.map(y=> cell(by[y]||0, 'void', nm+' dead cap '+y)).join('')+'</div>';
+    }).join('');
+  }
+  if(ex.ret.length){
+    out += head('Still paying, traded away', ex.ret.length+' player'+(ex.ret.length===1?'':'s'));
+    out += ex.ret.map(x=> '<div class="lrow xrow" data-a="capDetail" data-k="ret" data-id="'+esc(x.key)+'" data-tid="'+esc(tid)+'" role="button" tabindex="0">'+
+        '<div class="lname"><span class="pn">'+esc(x.player.name)+'</span><span class="pm">kept \u00b7 now '+esc(teamAbbrOrName(x.player.contract && x.player.contract.teamId))+' \u203a</span></div>'+
+        yrs.map(y=> cell(+((x.r.amounts||{})[y])||0, 'void', x.player.name+' kept '+y)).join('')+'</div>').join('');
+  }
+  if(ex.adj.length){
+    out += head('Adjustments', ex.adj.length);
+    out += ex.adj.map(x=>{
+      const v = +x.d.amount || 0, y0 = +x.d.year || S.league.season;
+      return '<div class="lrow xrow" data-a="capDetail" data-k="adj" data-id="'+esc(x.key)+'" data-tid="'+esc(tid)+'" role="button" tabindex="0">'+
+        '<div class="lname"><span class="pn '+(v>0?'bad':'good')+'">'+esc(x.d.note || 'Adjustment')+'</span><span class="pm">'+(v>0?'charge':'credit')+' \u203a</span></div>'+
+        yrs.map(y=> y === y0
+          ? '<div class="cell adjcell '+(v>0?'pos':'neg')+'"><span class="amt">'+money(v,{plus:true})+'</span></div>'
+          : '<div class="cell empty"></div>').join('')+'</div>';
+    }).join('');
+  }
+  return out;
+}
+function teamAbbrOrName(id){ const t = byId(S.teams, id); return t ? (t.abbr || t.name) : 'a free agent'; }
+/* The log lines about a player and this team, newest first. */
+function capLogFor(tid, pid, max){
+  return (S.log||[]).filter(l=> l && Array.isArray(l.players) && l.players.indexOf(pid) >= 0 &&
+    (!Array.isArray(l.teams) || !l.teams.length || l.teams.indexOf(tid) >= 0)).slice(0, max || 8);
+}
+function capDetailHTML(kind, key, tid){
+  const ex = capExtras(tid);
+  const logList = (rows)=> rows.length
+    ? '<div class="flabel" style="margin-top:12px">From the league log</div><div class="log">'+rows.map(l=> '<div><span class="dim">'+esc(dstr(l.at))+'</span> '+esc(l.text)+'</div>').join('')+'</div>'
+    : '';
+  if(kind === 'dead'){
+    const x = ex.dead.find(z=> z.key === key); if(!x) return '<div class="hint">That charge has gone.</div>';
+    const p = x.playerId ? byId(S.players, x.playerId) : null;
+    const how = (r)=> r.cut === false
+      ? (/back-loading/.test(r.name||'') ? 'back-loading settled' : 'moved off his salary into dead cap')
+      : /back-loading/.test(r.name||'') ? 'cut \u2014 back-loading settled'
+      : /\(split\)/.test(r.name||'') ? 'cut \u2014 second half of a split'
+      : /extension only/.test(r.name||'') ? 'cut again \u2014 the extension only'
+      : 'cut'+(r.cutIn ? ' in '+r.cutIn : '');
+    const total = fixInc(sum(x.rows.map(r=> +r.amount||0)));
+    return '<div class="kv" style="margin-bottom:10px">'+
+        '<dt>Player</dt><dd>'+(p ? '<a href="#" data-a="playerCard" data-id="'+esc(p.id)+'">'+esc(p.name)+'</a> '+posTag(p.pos) : esc(x.name))+'</dd>'+
+        (p ? '<dt>Now</dt><dd>'+esc(p.contract && p.contract.teamId ? 'with '+teamName(p.contract.teamId) : 'a free agent')+'</dd>' : '')+
+        '<dt>Dead cap in all</dt><dd class="bad">'+money(total)+'</dd></div>'+
+      '<div class="scrollx"><table><thead><tr><th>Season</th><th class="right">Charge</th><th>How</th><th class="right">When</th></tr></thead><tbody>'+
+        x.rows.slice().sort((a,b)=> (+a.year||0)-(+b.year||0)).map(r=> '<tr><td class="num">'+esc(String(r.year))+'</td><td class="right num bad">'+money(r.amount)+'</td>'+
+          '<td class="tiny">'+esc(how(r))+'</td><td class="right tiny dim">'+(r.at ? esc(dstr(r.at)) : '\u2014')+'</td></tr>').join('')+
+      '</tbody></table></div>'+
+      '<div class="hint">Dead cap is what a team still owes after letting a man go: the money the shape of his deal saved, and the league\u2019s share of the years still to come. It counts against the cap in the season shown.</div>'+
+      (p ? logList(capLogFor(tid, p.id)) : '');
+  }
+  if(kind === 'ret'){
+    const x = ex.ret.find(z=> z.key === key); if(!x) return '<div class="hint">That has gone.</div>';
+    const p = x.player, r = x.r, am = r.amounts || {};
+    const yrs = Object.keys(am).map(Number).filter(y=> +am[y]).sort((a,b)=> a-b);
+    return '<div class="kv" style="margin-bottom:10px">'+
+        '<dt>Player</dt><dd><a href="#" data-a="playerCard" data-id="'+esc(p.id)+'">'+esc(p.name)+'</a> '+posTag(p.pos)+'</dd>'+
+        '<dt>Now with</dt><dd>'+esc(teamName(p.contract && p.contract.teamId))+'</dd>'+
+        '<dt>Kept</dt><dd>'+(r.mode === 'amt' ? 'set amounts' : esc(String(r.pct||0))+'% of his salary'+(r.through ? ' through '+esc(String(r.through)) : ''))+'</dd>'+
+        '<dt>In all</dt><dd class="bad">'+money(fixInc(sum(yrs.map(y=> +am[y]||0))))+'</dd></div>'+
+      '<div class="scrollx"><table><thead><tr><th>Season</th><th class="right">You pay</th><th class="right">His salary</th></tr></thead><tbody>'+
+        yrs.map(y=> '<tr><td class="num">'+y+'</td><td class="right num bad">'+money(am[y])+'</td><td class="right num dim">'+money(grossHit(p, y) + (+am[y]||0))+'</td></tr>').join('')+
+      '</tbody></table></div>'+
+      '<div class="hint">Salary this team agreed to keep paying when it traded him away. It counts against this team\u2019s cap, not his new team\u2019s.</div>'+
+      logList(capLogFor(tid, p.id));
+  }
+  if(kind === 'adj'){
+    const x = ex.adj.find(z=> z.key === key); if(!x) return '<div class="hint">That adjustment has gone.</div>';
+    const d = x.d, v = +d.amount || 0, note = String(d.note||'');
+    const why = /^Cap sent to /.test(note) ? 'Cap money sent in a trade to '+note.replace(/^Cap sent to /, '')+' \u2014 it comes off your room.'
+      : /^Cap from /.test(note) ? 'Cap money received in a trade from '+note.replace(/^Cap from /, '')+' \u2014 it adds to your room.'
+      : /^Rolled over from /.test(note) ? 'Space you did not use in '+note.replace(/^Rolled over from /, '')+', carried into this season.'
+      : 'Set by a commissioner.';
+    const rel = (S.log||[]).filter(l=> l && Array.isArray(l.teams) && l.teams.indexOf(tid) >= 0 &&
+      (note && String(l.text||'').indexOf(note.replace(/^(Cap sent to |Cap from |Rolled over from )/, '')) >= 0) &&
+      /cap|trade|roll/i.test(String(l.text||''))).slice(0, 6);
+    return '<div class="kv" style="margin-bottom:10px">'+
+        '<dt>What</dt><dd>'+esc(note || 'No note')+'</dd>'+
+        '<dt>Season</dt><dd>'+esc(String(d.year||S.league.season))+'</dd>'+
+        '<dt>Amount</dt><dd class="'+(v>0?'bad':'good')+'">'+money(v,{plus:true})+' \u2014 '+(v>0 ? 'counts against the cap' : 'adds room')+'</dd></div>'+
+      '<div class="hint">'+esc(why)+'</div>'+
+      logList(rel)+
+      (isCommish() ? '<div class="row" style="margin-top:10px"><button class="btn sm ghost" data-a="capDetailEdit" data-tid="'+esc(tid)+'">Change it on Dead cap &amp; adjustments</button></div>' : '');
+  }
+  return '';
+}
+ACT.capDetail = (d)=>{
+  const tid = d.tid || currentTeamId();
+  const ex = capExtras(tid);
+  const title = d.k === 'dead' ? (()=>{ const x = ex.dead.find(z=> z.key === d.id); return 'Dead cap \u2014 '+(x ? capExtraName(x) : ''); })()
+    : d.k === 'ret' ? (()=>{ const x = ex.ret.find(z=> z.key === d.id); return 'Still paying \u2014 '+(x ? x.player.name : ''); })()
+    : 'Cap adjustment';
+  modal(title, capDetailHTML(d.k, d.id, tid), '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
+ACT.capDetailEdit = (d)=>{ closeModal(true); ui.tmp.teamView = d.tid; go('teams'); ui.tmp.teamView = d.tid; ui.sub = 'dead'; render(); };
 function capLadderHTML(pend){
   const tid = currentTeamId(), yrs = projYears();
   const inc = (pend && pend.incoming) || {};
@@ -18338,10 +18514,9 @@ function capLadderHTML(pend){
         <span class="pm"><span class="pill" title="${esc(x.tr)}">Leaving · to ${esc(teamName(x.to))}</span></span></div>
       ${x.hits.map(h=> h ? '<div class="cell gone"><span class="amt">'+money(h)+'</span></div>' : '<div class="cell empty"></div>').join('')}
     </div>`).join('');
-  const deadRow = dead.length ? `<div class="lrow"><div class="lname"><span class="pn bad">Dead cap</span><span class="pm">${dead.length} charge${dead.length>1?'s':''}</span></div>
-    ${yrs.map(y=>{ const h=teamDead(tid,y); if(!h) return '<div class="cell empty"></div>';
-      const pctH=clamp(h/mx*100,6,100);
-      return '<div class="cell void'+(pctH<34?' small':'')+'"><div class="bar" style="height:'+pctH+'%"><span class="amt">'+money(h)+'</span></div></div>';}).join('')}</div>` : '';
+  /* Every dead cap charge, salary still paid on men traded away, and
+     adjustment, each on its own row and each a tap away from its story. */
+  const deadRow = capExtraRowsHTML(tid, yrs, mx);
 
   return `
   <div class="section">
