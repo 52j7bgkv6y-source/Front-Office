@@ -1583,7 +1583,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29e · a team\u2019s mock draft plan is seen only by that team, or a commissioner acting as it';
+const APP_BUILD = '2026-10-29f · squads: injury listing by every name; IR and taxi buttons only where allowed; the IR player locking a lineup is named';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2851,6 +2851,25 @@ function irHeldBefore(p){
   return (S.log||[]).some(l=> l && Array.isArray(l.players) && l.players.indexOf(p.id) >= 0 &&
     /( to ir$|season-ending IR)/i.test(String(l.text||'')) && now - (+l.at||0) > 6*86400000 && now - (+l.at||0) < 60*86400000);
 }
+/* May he be put on IR now? Only on a listing that allows it — or, on his
+   club's bye when no report is issued, a listing that allowed it just before,
+   or IR he was on before the bye. Returns {ok, why}. */
+function canPlaceIR(p){
+  if(!p) return {ok:false, why:'nobody there'};
+  const st = String(((p.injury||{}).status) || '').trim();
+  if(st){
+    if(irListingAllows(st)) return {ok:true};
+    return {ok:false, why:p.name+' is listed '+st+', which does not allow IR'};
+  }
+  if(onByeNow(p)){
+    const last = p.injLast;
+    if(last && irListingAllows(last.status) && Date.now() - (+last.at||0) < 21*86400000) return {ok:true};
+    if(irHeldBefore(p)) return {ok:true};
+  }
+  return {ok:false, why:p.name+' has no injury listing, so he cannot go on IR'};
+}
+/* Back from markup to plain words, for a toast that escapes its own text. */
+function unesc(t){ return String(t||'').replace(/&(amp|lt|gt|quot|#39);/g, (m, k)=> ({amp:'&', lt:'<', gt:'>', quot:'"', '#39':"'"})[k]); }
 /* What the banner and the roster say about a man on IR. */
 function irByeNote(p){
   if(!p || !onIR(p) || !onByeNow(p)) return '';
@@ -2905,6 +2924,12 @@ function lineupOverHTML(teamId, compact){
     ' to make lineup changes again.</div>');
   o.badIR.forEach(p=> lines.push('<div><b>Injured reserve:</b> '+esc(p.name)+' is on IR but is '+esc(irListing(p))+
     ', so he can no longer hold an IR spot. Take him off IR or cut him.</div>'));
+  /* Over on the active roster: anybody on it who could go on IR right now. */
+  if(o.activeOver){
+    const could = slotPlayers(teamId, 'active').filter(p=> canPlaceIR(p).ok);
+    if(could.length) lines.push('<div><b>Could go on IR:</b> '+could.map(p=> esc(p.name)+' ('+esc(String((p.injury||{}).status||'bye'))+')').join(', ')+
+      ' \u2014 moving '+(could.length===1?'him':'one of them')+' frees a spot.</div>');
+  }
   /* Taking them off IR puts them back on the active roster — say what that means. */
   if(o.badIR.length && o.active + o.badIR.length > o.limit){
     const need = o.active + o.badIR.length - o.limit;
@@ -10112,7 +10137,7 @@ VIEWS.teams = function(){
           name:p=>p.name, pos:p=>posSortVal(p), nfl:p=>p.nfl||'', yrs:p=>p.contract.years,
           hit:p=>capHit(p,S.league.season), gross:p=>grossHit(p,S.league.season)
         }, {key:'pos',dir:1}), 5, p=>`<tr>
-          <td>${esc(p.name)} ${waiverTag(p)} ${redshirtTag(p)}</td>
+          <td>${esc(p.name)} ${injuryTag(p)} ${waiverTag(p)} ${redshirtTag(p)}</td>
           <td>${posTag(p.pos)}</td>
           <td class="tiny muted hide-xs">${esc(p.nfl||'')} · ${p.contract.years}yr</td>
           <td class="right num">${money(capHit(p,S.league.season))}${offCap(p)?'<div class="tiny dim">'+money(grossHit(p,S.league.season))+' parked</div>':''}
@@ -10228,10 +10253,17 @@ VIEWS.teams = function(){
           <div class="pb tight scrollx"><table>
           <thead><tr>${sortTh('sqA','name','Player')}${sortTh('sqA','pos','Pos')}${sortTh('sqA','nfl','Deal','hide-xs')}
             ${sortTh('sqA','hit','Cap hit','right')}<th></th></tr></thead>
-          <tbody>${rows(slotPlayers(tid,'active'), p=> !mine ? '<span class="tiny dim">—</span>' :
-            '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="taxi">Taxi</button>'+
-            '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="ir">IR</button>'+
-            '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'">Season IR</button>', 'sqA')}
+          <tbody>${rows(slotPlayers(tid,'active'), p=>{
+            if(!mine) return '<span class="tiny dim">—</span>';
+            /* Only the moves he can actually make: the taxi squad while it is
+               open and he is young enough, IR on a listing that allows it. */
+            const taxiOk = !taxiLocked() && !taxiIneligible(p) && slotRoom(tid,'taxi') > 0;
+            const irOk = canPlaceIR(p).ok;
+            const btns = (taxiOk ? '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="taxi">Taxi</button>' : '')+
+              (irOk ? '<button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="ir">IR</button>'+
+                      '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'">Season IR</button>' : '');
+            return btns || '<span class="tiny dim">—</span>';
+          }, 'sqA')}
           </tbody></table></div></div>
 
         <div class="panel"><div class="ph"><h3>Taxi squad</h3><div class="spacer"></div>
@@ -10271,10 +10303,11 @@ VIEWS.teams = function(){
             ${sortTh('sqI','hit','Cap hit','right')}<th></th></tr></thead>
           <tbody>${rows(slotPlayers(tid,'ir'), p=>
             (irByeNote(p) ? '<span class="pill" title="No injury report is issued for a club on its bye, so he keeps his IR spot this week">bye \u2014 stays on IR</span> ' : '')+
+            (!irEligible(p) ? '<span class="pill live" data-badir="'+p.id+'" title="His listing no longer allows IR \u2014 this is what locks the lineup">can\u2019t stay on IR \u2014 '+esc(irListing(p))+'</span> ' : '')+
             (p.ir&&p.ir.seasonEnding
               ? '<span class="pill">out until '+(S.league.season+1)+'</span>'+(isCommish()?' <button class="btn sm ghost" data-a="setSlot" data-id="'+p.id+'" data-s="active">Override</button>':'')
               : (mine ? '<button class="btn sm pri" data-a="setSlot" data-id="'+p.id+'" data-s="active">Activate</button>'+
-                  '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'" title="he is done for the year: make it season-ending and take the cap back">Season IR</button>'
+                  (irEligible(p) ? '<button class="btn sm danger" data-a="seasonIR" data-id="'+p.id+'" title="he is done for the year: make it season-ending and take the cap back">Season IR</button>' : '')
                 : '<span class="tiny dim">—</span>')), 'sqI')}
           </tbody></table></div>
           <div class="pb"><div class="hint">${(S.settings.ir||{}).mode==='cutoff'
@@ -11893,6 +11926,14 @@ ACT.setSlot = (d)=>{
   const p = byId(S.players, d.id), slot = d.s;
   if(!p || !p.contract) return;
   const tid = p.contract.teamId;
+  /* IR only on a listing that allows it; the taxi squad only while it is open
+     and only for a man young enough for it. No one gets round either. */
+  if(slot==='ir' && !onIR(p)){ const g = canPlaceIR(p); if(!g.ok) return toast(g.why,'bad'); }
+  if(slot==='taxi' && playerSlot(p)!=='taxi'){
+    if(taxiLocked()) return toast('The taxi squad shut at week '+taxiLockWeek()+' \u2014 nobody new goes on it this season','bad');
+    const no = taxiIneligible(p);
+    if(no) return toast(unesc(no),'bad');
+  }
   if(slot!=='active' && slotRoom(tid, slot) <= 0)
     return toast('No '+SLOT_LABEL[slot].toLowerCase()+' room left','bad');
   /* Once the squad is shut, nobody new goes on it. A commissioner can still
@@ -11977,6 +12018,8 @@ ACT.seasonIR = (d)=>{
   { const o = ownerOf(d.id); if(o && !mustManage(o)) return; }
   const p = byId(S.players, d.id);
   if(!p || !p.contract) return;
+  if(onIR(p) ? !irEligible(p) : !canPlaceIR(p).ok)
+    return toast(p.name+' has no listing that allows IR, so he cannot go on season-ending IR','bad');
   const y = S.league.season, b = irBasis(p);
   modal('Season-ending injury — '+p.name, `
     ${b.mode==='cutoff'
@@ -12020,6 +12063,7 @@ ACT.seasonIR = (d)=>{
 };
 ACT.seasonIRGo = (d)=>{
   const p = byId(S.players,d.id), tid = p.contract.teamId, y = S.league.season;
+  if(onIR(p) ? !irEligible(p) : !canPlaceIR(p).ok){ closeModal(true); return toast(p.name+' has no listing that allows IR','bad'); }
   if(slotRoom(tid,'ir') <= 0 && !onIR(p)){ closeModal(); return toast('No IR spots left','bad'); }
   const b = irBasis(p);
   const wasIR = onIR(p);
