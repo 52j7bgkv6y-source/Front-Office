@@ -1148,6 +1148,7 @@ h1 .honors{font-size:.62em;vertical-align:.12em}
 .pktable td,.pktable th{white-space:nowrap}
 /* Nudges */
 .nudgelist{display:grid;gap:6px}
+.nr-name{color:inherit;display:inline-flex;align-items:center;gap:4px;min-height:32px;text-decoration:underline;text-decoration-color:var(--rule);text-underline-offset:3px}
 .nudgerow{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap;padding:4px 0;border-bottom:1px solid var(--rule-soft)}
 .nudgebtn{white-space:nowrap}
 .nr-who{min-width:0;flex:1 1 150px}
@@ -1572,7 +1573,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-26f · dues: tap Still owing to remind everyone who owes \u2014 edit, copy or send the message';
+const APP_BUILD = '2026-10-28a · schedule scores to two decimal places';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -4503,6 +4504,41 @@ function markRookie(p, year, at, round){
 /* Writing the rulebook, and editing the dues sheet. */
 function canEditRules(){ return isCommish() && powerOn('ruleEdit'); }
 function canEditDues(){ return isCommish() && powerOn('duesEdit'); }
+/* Why the commissioner's buttons are missing on this device, in plain words —
+   so a phone that is signed in with a manager's account says so instead of
+   simply leaving the buttons out. Empty when they are there. */
+function commishWhyNot(power, what){
+  if(viewAsTeam()) return 'You are previewing the site as '+esc(teamName(viewAsTeam()))+', so the commissioner\u2019s buttons are hidden. '+
+    '<button class="btn sm pri" data-a="viewAsOff">Back to my own view</button>';
+  if(isCommish()){
+    if(power && !powerOn(power)) return 'The commissioner power for '+esc(what||'this')+' is switched off for everyone, you included. '+
+      (isHeadCommish() ? 'Switch it back on under Settings \u203a League \u203a What commissioners may do.' : 'The head commissioner can switch it back on.');
+    return '';
+  }
+  if(typeof Supa === 'object' && Supa.ready()){
+    const email = (Supa.user||{}).email || 'an account';
+    const m = Supa.member;
+    if(!m) return 'This device is signed in as <b>'+esc(email)+'</b>, but its place in the league has not loaded yet. '+
+      '<button class="btn sm" data-a="commishRecheck">Check again</button>';
+    const pinned = m.team_id && m.team_id === headCommishId();
+    return 'Only a commissioner can '+esc(what||'do this')+'. This device is signed in as <b>'+esc(email)+'</b>, which the league has as '+
+      (m.team_id ? 'the manager of '+esc(teamName(m.team_id)) : 'a member with no team')+' \u2014 not a commissioner.'+
+      (pinned ? ' That is the commissioner\u2019s team, so this is most likely a second email: sign out here and sign in with the email you use on the computer, '+
+        'or from the computer make this email a commissioner under Settings \u203a Server (the members list).' : '')+
+      ' <button class="btn sm ghost" data-a="commishRecheck">Check again</button>'+
+      (pinned ? ' <button class="btn sm ghost" data-a="supaSignOut">Sign out</button>' : '');
+  }
+  /* Not on the league server at all: the team this device calls its own decides. */
+  const seat = mySeatId();
+  return 'Only a commissioner can '+esc(what||'do this')+'. '+
+    (typeof Supa === 'object' && Supa.configured && Supa.configured() ? 'This device is not signed in to the league right now, so it ' : 'This device ')+
+    'has <b>'+esc(teamName(seat) || 'no team')+'</b> as its team, and the league\u2019s commissioner is <b>'+esc(teamName(headCommishId()) || 'not set')+'</b>.';
+}
+ACT.commishRecheck = async ()=>{
+  try{ if(typeof Supa === 'object' && Supa.ready()) await Supa.loadMember(); }catch(e){}
+  render();
+  toast(isCommish() ? 'This device is a commissioner \u2014 the buttons are back' : 'Still not a commissioner on this device', isCommish() ? 'good' : 'warn');
+};
 /* Are you allowed to stand in for another manager? Off unless the league says
    so. Named apart from canActAs(teamId), which asks a different question. */
 function actAsAllowed(){ return isCommish() && powerOn('actAs'); }
@@ -14338,7 +14374,7 @@ function pickemTab(){
       <span class="tiny dim">${r && r.final ? 'final' : r && r.games ? r.games+' of '+r.total+' decided' : 'nothing decided yet'}</span></div>
       <div class="pb tight">${table}</div>
       ${missing.length && open && w===cur ? '<div class="pb"><div class="flabel">Still to pick</div><div class="nudgelist">'+
-        missing.map(t=> '<div class="nudgerow"><span>'+esc(t.name)+'</span>'+nudgeBtn(t.id, 'pickem')+'</div>').join('')+'</div></div>' : ''}
+        missing.map(t=> '<div class="nudgerow"><a href="#" class="nr-name" data-a="nudgeWhy" data-id="'+esc(t.id)+'">'+esc(t.name)+' <span class="tiny">\u203a</span></a>'+nudgeBtn(t.id, 'pickem')+'</div>').join('')+'</div></div>' : ''}
     </div>
     <div class="panel"><div class="ph"><h3>Season</h3></div><div class="pb tight">${(()=>{
       const s = pkSeason(season);
@@ -14979,6 +15015,59 @@ function nudgeReasons(tid){
     out.push({r:'pickem', n:pkWeekGames(w).length, t:"no pick'em picks"});
   return out;
 }
+/* The same reasons, spelled out: which spot in the lineup and what is wrong
+   with it, which offers have been left and for how long, when the pick'em
+   locks. What a nudge would be about, before anybody sends one. */
+function nudgeDetail(tid){
+  const w = +S.live.week || 1, me = actingTeam();
+  return nudgeReasons(tid).map(why=>{
+    const items = [];
+    if(why.r === 'lineup'){
+      const L = lineupFor(tid), card = realCard(w).length;
+      ((L && L.slots) || []).forEach(x=>{
+        if(!x.p){ items.push('Nobody in the <b>'+esc(x.slot||'starting')+'</b> spot'); return; }
+        if(gameStarted(x.p)) return;
+        if(isOut(x.p)) items.push('<b>'+esc(x.slot||x.p.pos)+'</b> \u2014 '+esc(x.p.name)+' is listed <b>'+esc(String((x.p.injury||{}).status||'out'))+'</b>'+
+          ((x.p.injury||{}).body ? ' ('+esc(x.p.injury.body)+')' : ''));
+        else if(card && !thisWeekOpponent(x.p.nfl, w)) items.push('<b>'+esc(x.slot||x.p.pos)+'</b> \u2014 '+esc(x.p.name)+' is on a bye'+(x.p.nfl ? ' ('+esc(x.p.nfl)+' has no game)' : ''));
+      });
+      if(L && !L.saved) items.push('<span class="dim">They have not set a lineup this week, so the app\u2019s best guess is playing for them.</span>');
+    }else if(why.r === 'trade'){
+      (S.trades||[]).filter(x=> tradeAwaits(x, tid) && Date.now() - (+x.createdAt||0) >= 12*3600000).forEach(tr=>{
+        const from = tr.type === 'multi' ? (tr.teams||[]).filter(id=> id !== tid).map(teamName).join(', ') : teamName((tr.a||{}).teamId);
+        const open = seesTrade(tr, me);
+        const yours = tr.type !== 'multi' && tr.a && tr.a.teamId === me;
+        items.push((yours ? '<b>Your offer</b>' : 'An offer from <b>'+esc(from)+'</b>')+', sent '+esc(agoWords(tr.createdAt))+
+          (open && tr.type !== 'multi' && tr.a && tr.b
+            ? '<div class="tiny" style="margin-top:4px">'+esc(teamName(tr.a.teamId))+' sends '+assetChips(tr.a)+'</div>'+
+              '<div class="tiny" style="margin-top:2px">'+esc(teamName(tr.b.teamId))+' sends '+assetChips(tr.b)+'</div>'
+            : ''));
+      });
+    }else if(why.r === 'pickem'){
+      const lock = pkLockAt(w);
+      items.push('No picks yet for week '+w+' \u2014 '+pkWeekGames(w).length+' games'+(lock ? ', locks '+esc(dstr(lock)) : ''));
+    }
+    return {r:why.r, t:why.t, items};
+  });
+}
+function nudgeWhyHTML(tid){
+  const det = nudgeDetail(tid), from = actingTeam();
+  const today = (eng().nudges||[]).filter(n=> n.t === tid && Date.now() - n.at < 24*3600000);
+  const mine = today.filter(n=> n.f === from);
+  if(!det.length) return '<div class="hint good">Nothing to nudge '+esc(teamName(tid))+' about right now.</div>';
+  return det.map(d=> '<div class="assetbox nudgewhy" data-nudgewhy="'+esc(d.r)+'" style="margin-bottom:10px">'+
+      '<div class="row" style="align-items:center;gap:8px;margin-bottom:6px"><b>'+esc(NUDGE_WORD[d.r] || 'Nudge')+'</b>'+
+        '<span class="tiny dim">'+esc(d.t)+'</span><div class="spacer"></div>'+nudgeBtn(tid, d.r, false)+'</div>'+
+      (d.items.length ? '<div class="stack" style="gap:6px">'+d.items.map(x=> '<div class="tiny">'+x+'</div>').join('')+'</div>' : '')+
+    '</div>').join('')+
+    '<div class="hint">'+(today.length ? esc(teamName(tid))+' has had '+today.length+' nudge'+(today.length===1?'':'s')+' today'+
+      (mine.length ? ', '+mine.length+' from you' : '')+'. ' : '')+'Three a day at most, and one each about the same thing every twelve hours.</div>';
+}
+ACT.nudgeWhy = (d)=>{
+  const t = byId(S.teams, d.id); if(!t) return;
+  ui.tmp.nudgeWhy = t.id;
+  modal('Why nudge '+t.name, nudgeWhyHTML(t.id), '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
 function nudgeBlocked(from, to, r){
   const E = eng(), now = Date.now();
   if(E.nudges.some(n=> n.f===from && n.t===to && n.r===r && now - n.at < 12*3600000)) return 'sent';
@@ -15017,6 +15106,8 @@ ACT.nudge = (d)=>{
   if(E.nudges.length > 60) E.nudges.splice(0, E.nudges.length - 60);
   notify('Nudge from '+teamName(from), line ? line.text : teamName(from)+' nudged you.', 'warn', [to]);
   save(); render();
+  /* Sent from the reasons window: show it as sent there too. */
+  if(ui.tmp.nudgeWhy === to && document.querySelector('#modalBox .nudgewhy')) $('#modalBox .mb').innerHTML = nudgeWhyHTML(to);
   toast('Nudged '+teamName(to),'good');
 };
 /* ---- Polls ----------------------------------------------------------------------------------
@@ -15540,11 +15631,11 @@ function clubWeekTab(){
     </div>
     <div class="stack">
       <div class="panel"><div class="ph"><h3>Nudge somebody</h3></div><div class="pb">
-        ${others.length ? '<div class="nudgelist">'+others.map(o=> '<div class="nudgerow"><div class="nr-who"><b>'+esc(o.t.name)+'</b>'+
+        ${others.length ? '<div class="nudgelist">'+others.map(o=> '<div class="nudgerow"><div class="nr-who"><a href="#" class="nr-name" data-a="nudgeWhy" data-id="'+esc(o.t.id)+'"><b>'+esc(o.t.name)+'</b> <span class="tiny">\u203a</span></a>'+
           '<div class="tiny dim">'+o.why.map(y=> esc(y.t)).join(' \u00b7 ')+'</div></div>'+
           '<div class="nr-btns">'+o.why.map(y=> nudgeBtn(o.t.id, y.r, true)).join('')+'</div></div>').join('')+'</div>'
           : '<div class="tiny dim">Nobody needs a nudge right now.</div>'}
-        <div class="hint">A nudge goes to their phone. Only for something real — a hole in the lineup, a trade offer
+        <div class="hint">Tap a name to see exactly what is wrong. A nudge goes to their phone. Only for something real — a hole in the lineup, a trade offer
           left waiting, an empty pick’em — and three a day at most.</div>
       </div></div>
       <div class="panel"><div class="ph"><h3>On the record</h3></div><div class="pb">
@@ -22211,7 +22302,8 @@ function weekReportHTML(w){
   const nm = (id)=> esc(teamName(id));
   const card = (label, body)=> '<div class="panel"><div class="pb">'+
     '<div class="eyebrow">'+label+'</div>'+body+'</div></div>';
-  const pts = (v)=> (Math.round((+v||0)*10)/10).toFixed(1);
+  /* Scores to two places, the way Sleeper shows them. */
+  const pts = (v)=> (Math.round((+v||0)*100)/100).toFixed(2);
   const roster = weekReportTeam();
   const wr = roster ? weekRoster(roster, w) : null;
   return `
@@ -22223,16 +22315,16 @@ function weekReportHTML(w){
       wr.eff==null?'—':wr.eff.toFixed(1)+'%'}</span></div>
     <div class="pb">
       <div class="row" style="gap:16px;align-items:baseline">
-        <div><div class="eyebrow">Scored</div><div class="big">${(wr.got||0).toFixed(1)}</div></div>
-        <div><div class="eyebrow">Best possible</div><div class="big dim">${(wr.best||0).toFixed(1)}</div></div>
+        <div><div class="eyebrow">Scored</div><div class="big">${(wr.got||0).toFixed(2)}</div></div>
+        <div><div class="eyebrow">Best possible</div><div class="big dim">${(wr.best||0).toFixed(2)}</div></div>
         <div><div class="eyebrow">Left on the bench</div><div class="big ${wr.left>0.05?'bad':'good'}">${
-          wr.left>0.05 ? wr.left.toFixed(1) : '0.0'}</div></div>
+          wr.left>0.005 ? wr.left.toFixed(2) : '0.00'}</div></div>
       </div>
       ${wr.left>0.05
         ? '<div class="hint bad">'+(wr.swaps||[]).map(sw=>
-            esc(sw.inMan.name)+' ('+sw.inPts.toFixed(1)+') '+
+            esc(sw.inMan.name)+' ('+sw.inPts.toFixed(2)+') '+
             (sw.flex ? 'should have been '+esc(sw.slot) : 'should have started at '+esc(sw.slot))+
-            (sw.outMan ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(1)+')' : '')
+            (sw.outMan ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(2)+')' : '')
           ).join('; ')+'</div>'
         : '<div class="hint good">Nothing was left on the bench — this is the best that could have been done.</div>'}
     </div>
@@ -22253,14 +22345,14 @@ function weekReportHTML(w){
               ? 'should have been '+esc(sw.slot)
               : 'should have started at '+esc(sw.slot);
             return where + (sw.outMan
-              ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(1)+')'
+              ? ' for '+esc(sw.outMan.name)+' ('+sw.outPts.toFixed(2)+')'
               : '');
           }
           if(r.wasted){
             const sw = r.swapOut;
             if(!sw) return 'someone better was sat down';
             return (sw.flex ? 'the '+esc(sw.slot)+' should have been ' : 'beaten at '+esc(sw.slot)+' by ')+
-              esc(sw.inMan.name)+' ('+sw.inPts.toFixed(1)+')';
+              esc(sw.inMan.name)+' ('+sw.inPts.toFixed(2)+')';
           }
           return '';
         })()}</td>
@@ -22360,7 +22452,7 @@ VIEWS.schedule = function(){
               '<td class="num">'+r.week+'</td>'+
               '<td class="dim tiny">'+(r.home?'vs':'at')+'</td>'+
               '<td>'+esc(teamName(r.opp))+'</td>'+
-              '<td class="right num">'+(r.done? r.mine.toFixed(1)+' – '+r.theirs.toFixed(1) : '<span class="dim">—</span>')+'</td>'+
+              '<td class="right num">'+(r.done? r.mine.toFixed(2)+' – '+r.theirs.toFixed(2) : '<span class="dim">—</span>')+'</td>'+
               '<td class="right">'+res+'</td></tr>';
           }).join('')}</tbody>
         </table></div>
@@ -29459,6 +29551,8 @@ VIEWS.dues = function(){
       ${!canEditDues() ? '' : `<button class="btn" data-a="markAllUnpaid">Reset the year</button>
       <button class="btn pri" data-a="remindAll" ${owing.length?'':'disabled'}>Send reminders (${owing.length})</button>`}</header>
 
+    ${canEditDues() ? '' : (()=>{ const why = commishWhyNot('duesEdit', 'mark dues paid and send reminders');
+      return why ? '<div class="hint warn" data-commishwhy style="margin-bottom:12px">'+why+'</div>' : ''; })()}
     <div class="grid g4 keep2" style="margin-bottom:16px">
       <div class="tile"><div class="k">Collected</div><div class="v good">${duesMoney(collected)}</div>
         ${meter(collected, expected)}<div class="s">of ${duesMoney(expected)}</div></div>
@@ -33574,12 +33668,18 @@ VIEWS.settings = function(){
         }).join('')}
         ${noTeam.map(m=>{
           const free = S.teams.filter(t=> !(Supa.roster||[]).some(x=> x.team_id===t.id));
+          /* Every team is taken more often than not — somebody back on a new
+             email, a phone that made a second account. A taken team can still
+             be picked: it moves over to this person, and whoever held it stays
+             in the league with no team until you remove them. */
+          const taken = S.teams.filter(t=> byTeam[t.id] && byTeam[t.id].user_id !== Supa.user.id);
           return `<tr><td class="dim tiny">waiting</td><td class="tiny">${esc(memberName(m))}</td>
           <td><span class="pill warn">no team yet</span></td>
           <td class="right nowrap">${Supa.boss()? `
-            <select id="seatSel_${m.user_id}" style="width:auto;display:inline-block">
+            <select id="seatSel_${m.user_id}" style="width:auto;display:inline-block;max-width:220px">
               <option value="">Put them in…</option>
-              ${free.map(t=>'<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')}
+              ${free.length ? '<optgroup label="Free">'+free.map(t=>'<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')+'</optgroup>' : ''}
+              ${taken.length ? '<optgroup label="Taken \u2014 moves it to them">'+taken.map(t=>'<option value="'+t.id+'">'+esc(t.name)+' (now '+esc(memberName(byTeam[t.id]))+')</option>').join('')+'</optgroup>' : ''}
             </select>
             <button class="btn sm pri" data-a="seatMember" data-user="${m.user_id}">Seat</button>` : ''}
             ${Supa.boss()&&m.user_id!==Supa.user.id
@@ -34827,6 +34927,20 @@ ACT.seatMember = async (d)=>{
   const team = sel && sel.value;
   if(!team) return toast('Pick a team first','bad');
   const who = (Supa.roster||[]).find(m=> m.user_id===d.user);
+  /* Somebody already holds it: say who, and move it only once that is agreed. */
+  const holder = (Supa.roster||[]).find(m=> m.team_id===team && m.user_id!==d.user);
+  if(holder){
+    if(holder.user_id === Supa.user.id) return toast('That is your own team','bad');
+    return modal('Move '+teamName(team)+' to '+memberName(who),
+      '<p class="muted" style="margin-top:0"><b>'+esc(teamName(team))+'</b> is held by <b>'+esc(memberName(holder))+'</b>'+
+        (holder.role==='commish' ? ', a commissioner' : '')+'.</p>'+
+      '<p class="muted">Give it to <b>'+esc(memberName(who))+'</b> instead? '+esc(memberName(who))+' gets the team and everything on it'+
+        (holder.role==='commish' ? ', and the commissioner\u2019s role with it' : '')+'. '+
+        esc(memberName(holder))+' stays in the league with no team \u2014 remove them afterwards if it is an old account.</p>'+
+      '<div class="hint">Use this when the same person is back on a new email, or a phone made a second account. Nothing on the team changes.</div>',
+      '<button class="btn ghost" data-a="closeModal">Cancel</button>'+
+      '<button class="btn pri" data-a="seatMove" data-user="'+esc(d.user)+'" data-team="'+esc(team)+'" data-from="'+esc(holder.user_id)+'">Move the team</button>');
+  }
   try{
     const {error} = await Supa.client.rpc('set_member', {
       p_league:Supa.cfg().leagueId, p_user:d.user, p_team:team, p_role:'owner' });
@@ -34835,6 +34949,35 @@ ACT.seatMember = async (d)=>{
     logIt(memberName(who)+' given '+teamName(team), {type:'admin', teams:[team]});
     render(); toast(memberName(who)+' is now '+teamName(team),'good');
   }catch(e){ toast(e.message,'bad'); }
+};
+/* Take a team off one account and give it to another. The old holder is
+   unseated first, so a server that allows one account per team accepts it;
+   if the new seat then fails, the old holder is put straight back. */
+ACT.seatMove = async (d)=>{
+  if(!Supa.boss()) return toast('Commissioners only','bad');
+  const lg = Supa.cfg().leagueId;
+  const who = (Supa.roster||[]).find(m=> m.user_id===d.user);
+  const holder = (Supa.roster||[]).find(m=> m.user_id===d.from);
+  if(!who || !holder || holder.team_id !== d.team) return toast('That changed while you were looking \u2014 press Refresh and try again','bad');
+  if(holder.user_id === Supa.user.id) return toast('That is your own team','bad');
+  const role = holder.role === 'commish' ? 'commish' : 'owner';
+  const keepRole = holder.role || 'owner';
+  try{
+    const r1 = await Supa.client.rpc('set_member', {p_league:lg, p_user:holder.user_id, p_team:null, p_role:holder.role==='commish' ? 'owner' : keepRole});
+    if(r1 && r1.error) throw r1.error;
+    const r2 = await Supa.client.rpc('set_member', {p_league:lg, p_user:who.user_id, p_team:d.team, p_role:role});
+    if(r2 && r2.error){
+      try{ await Supa.client.rpc('set_member', {p_league:lg, p_user:holder.user_id, p_team:d.team, p_role:keepRole}); }catch(e){}
+      throw r2.error;
+    }
+    await Supa.loadRoster(); await Supa.loadMember();
+    logIt(teamName(d.team)+' moved from '+memberName(holder)+' to '+memberName(who), {type:'admin', teams:[d.team]});
+    closeModal(true); render();
+    toast(memberName(who)+' is now '+teamName(d.team),'good');
+  }catch(e){
+    try{ await Supa.loadRoster(); }catch(e2){}
+    render(); toast('Could not move it \u2014 '+(e.message||e),'bad', 7000);
+  }
 };
 ACT.supaSetMember = async (d)=>{
   try{
