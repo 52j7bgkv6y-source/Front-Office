@@ -232,6 +232,10 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
 .fstable .fsname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fstable .fsheld{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
 .fstable td{white-space:nowrap}
+.fsgloss{display:grid;gap:8px}
+.fsgloss > div{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:baseline}
+.fsgloss b{font-size:13px}
+.fsgloss span{font-size:13px;color:var(--mute)}
 .fstable .fsrz{cursor:help;text-decoration:underline dotted;text-decoration-color:var(--rule);text-underline-offset:3px}
 .fstable .fsnum{width:1%;padding-left:6px;padding-right:6px;font-variant-numeric:tabular-nums}
 .posband td{background:var(--well);color:var(--bone);padding:7px 10px!important;border-top:2px solid var(--rule)}
@@ -1596,7 +1600,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29l · find a player: no longer stuck on \u201cGetting from Sleeper\u201d \u2014 it redraws as weeks arrive and gives up on a silent Sleeper';
+const APP_BUILD = '2026-10-29m · find a player: an RZ % column, and what every column means on hover or a tap';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -22767,6 +22771,65 @@ function fsStatCols(pos){
   /* A team's red-zone plays are not in the weekly feed, so the share is left out here. */
   return (PSTAT_COLS[pos] || everyone).filter(c=> !/share/i.test(c[0]));
 }
+/* What every heading in Find a player means — on hover with a mouse, and a
+   tap on the heading's name on a phone (the rest of the heading still sorts). */
+function fsColMeaning(label, f){
+  const per = f && f.mode === 'avg' ? ' A game, on average.' : f && f.mode === 'one' ? ' In that week.' : '';
+  const def = f && f.pos === 'DEF';
+  const M = {
+    '#':'His place in the list as it is sorted now.',
+    'Player':'Tap his name for his game-by-game and every season he has played.',
+    'Fantasy pts':'Fantasy points this season, scored with this league\u2019s own scoring, a game at a time.',
+    'Pts / game':'Fantasy points a game played, with this league\u2019s scoring.',
+    'Pts':'Fantasy points in that week, with this league\u2019s scoring.',
+    'Per game':'Fantasy points divided by the games he played.',
+    'Total':'Fantasy points over every week shown.',
+    'Avg':'Fantasy points a game played.',
+    'GP':'Games played \u2014 games he got on the field.',
+    'Team':'His NFL club.',
+    'Opp':'Who his club played that week.',
+    'Red zone':'His carries, targets and throws inside the opponent\u2019s twenty, of his club\u2019s red-zone plays (every carry and throw inside the twenty). Hover or tap a figure for the share.'+per,
+    'RZ %':'His share of his club\u2019s red-zone plays: his carries, targets and throws inside the twenty divided by all of the club\u2019s carries and throws there.',
+    'Snap %':(f && f.pos === 'K') ? 'The share of his club\u2019s special-teams plays he was on the field for.' : 'The share of his club\u2019s offensive plays he was on the field for. Sleeper has snap counts from about 2020 on.',
+    'Held by':'The team in this league that has him, what he costs this season and the last year of his deal \u2014 or free agent.',
+    'Cmp':'Passes completed.'+per, 'Att':'Passes thrown.'+per, 'Pass yd':'Passing yards.'+per, 'Pass TD':'Touchdown passes.'+per,
+    'Int': def ? 'Interceptions the defense made.'+per : 'Interceptions thrown.'+per,
+    'Rush':'Carries \u2014 rushing attempts.'+per, 'Rush yd':'Rushing yards.'+per, 'Y/A':'Yards a carry: rushing yards divided by carries.',
+    'Rush TD':'Rushing touchdowns.'+per, 'Tgt':'Targets \u2014 passes thrown his way.'+per, 'Rec':'Receptions \u2014 passes caught.'+per,
+    'Rec yd':'Receiving yards.'+per, 'Y/R':'Yards a catch: receiving yards divided by receptions.', 'Rec TD':'Receiving touchdowns.'+per,
+    'Fum lost':'Fumbles lost to the other side.'+per,
+    'RZ att':'Passes he threw inside the opponent\u2019s twenty.'+per, 'RZ rush':'Carries inside the opponent\u2019s twenty.'+per,
+    'RZ tgt':'Targets inside the opponent\u2019s twenty.'+per,
+    'FGM':'Field goals made.'+per, 'FGA':'Field goals tried.'+per, 'FG%':'Field goals made of those tried.',
+    '50+':'Field goals made from 50 yards or more.'+per, 'XPM':'Extra points made.'+per, 'XPA':'Extra points tried.'+per,
+    'Sacks':'Sacks.'+per, 'Fum rec':'Fumbles recovered.'+per, 'Def TD':'Touchdowns scored by the defense and special teams.'+per,
+    'Safety':'Safeties.'+per, 'Pts allowed':'Points the defense gave up.'+per, 'Yds allowed':'Yards the defense gave up.'+per
+  };
+  if(M[label]) return M[label];
+  const wk = /^W(\d+)$/.exec(label);
+  if(wk) return 'Fantasy points in week '+wk[1]+'. A dash means he did not play.';
+  return '';
+}
+ACT.fsColInfo = (d)=>{
+  /* With a mouse the name of a heading sorts like the rest of it; the meaning
+     is in the hover. On a phone it opens the meaning, with a way to sort. */
+  const touch = window.matchMedia && matchMedia('(hover: none)').matches;
+  if(!touch) return ACT.fsSort(d);
+  const f = fsState(), what = fsColMeaning(d.l, f);
+  const on = f.sort.key === d.k;
+  modal(d.l, '<p style="margin:0">'+esc(what || 'No note for this one.')+'</p>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>'+
+    (d.k ? '<button class="btn" data-a="fsColSort" data-k="'+esc(d.k)+'">'+(on ? 'Flip the sort' : 'Sort by it')+'</button>' : ''));
+};
+ACT.fsColSort = (d)=>{ closeModal(true); ACT.fsSort(d); };
+/* Every heading on screen, with what it means, in one place. */
+ACT.fsGlossary = ()=>{
+  const f = fsState(), {cols} = fsBuild(f);
+  const labels = ['#', 'Player'].concat(cols.map(c=> c.label)).filter((l, i, a)=> a.indexOf(l) === i && !/^W\d+$/.test(l));
+  if(cols.some(c=> /^W\d+$/.test(c.label))) labels.push('W1');
+  modal('What each column means', '<div class="fsgloss">'+labels.map(l=> '<div><b>'+esc(l === 'W1' ? 'W1, W2\u2026' : l)+'</b><span>'+esc(fsColMeaning(l, f))+'</span></div>').join('')+'</div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
 function fsHeld(p){
   if(!p || !p.contract || !p.contract.teamId) return {sort:'~', html:'<span class="good tiny">free agent</span>'};
   const c = p.contract;
@@ -22844,6 +22907,10 @@ function fsBuild(f){
             : 'His carries, targets and throws inside the twenty';
           return '<span class="fsrz'+(x.n ? '' : ' dim')+'" title="'+esc(tip)+'">'+nTxt+(x.of ? '<span class="dim"> of '+ofTxt+'</span>' : '')+'</span>';
         }});
+      /* The share on its own, to read and sort by. */
+      cols.push({k:'rzpct', label:'RZ %',
+        get:a=>{ const x = rzOf(a); return x && x.of ? x.n / x.of * 100 : null; },
+        fmt:v=> v == null ? '<span class="dim">\u2014</span>' : (v ? Math.round(v)+'%' : '<span class="dim">0%</span>')});
     }
     statCols.forEach((c, i)=> cols.push({k:'c'+i+':'+c[0], label:c[0],
       get:a=> a.none ? null : (()=>{ const v = c[1](src(a)); return v == null ? null : (c[2] == null ? per(a, v) : v); })(),
@@ -22878,7 +22945,9 @@ function fsTableHTML(){
   const shown = sorted.slice(0, f.show);
   const th = (k, label, cls)=>{
     const on = f.sort.key === k;
-    return '<th class="sortable'+(cls?' '+cls:'')+(on?' sorted':'')+'" data-a="fsSort" data-k="'+esc(k)+'">'+esc(label)+
+    const what = fsColMeaning(label, f);
+    return '<th class="sortable'+(cls?' '+cls:'')+(on?' sorted':'')+'" data-a="fsSort" data-k="'+esc(k)+'"'+(what ? ' title="'+esc(what)+'"' : '')+'>'+
+      (what ? '<span class="thinfo" data-a="fsColInfo" data-k="'+esc(k)+'" data-l="'+esc(label)+'">'+esc(label)+'</span>' : esc(label))+
       '<i class="sarr">'+(on ? (f.sort.dir > 0 ? '▲' : '▼') : '')+'</i></th>';
   };
   const opt = (list, v)=> list.map(([k, l])=> '<option value="'+esc(String(k))+'"'+(String(k)===String(v)?' selected':'')+'>'+esc(l)+'</option>').join('');
@@ -22918,7 +22987,7 @@ function fsTableHTML(){
       ${status}
     </div>
     ${shown.length ? `<div class="pb tight scrollx fstable freeze2"><table>
-      <thead><tr><th class="right fsnum">#</th>${th('name', 'Player')}${cols.map(c=> th(c.k, c.label, c.txt ? '' : 'right')).join('')}</tr></thead>
+      <thead><tr><th class="right fsnum" title="${esc(fsColMeaning('#'))}">#</th>${th('name', 'Player')}${cols.map(c=> th(c.k, c.label, c.txt ? '' : 'right')).join('')}</tr></thead>
       <tbody>${shown.map((a, ix)=>{
         const inLeague = a.p;
         const nm = inLeague
@@ -22935,7 +23004,8 @@ function fsTableHTML(){
           : q ? 'Nobody matches that in '+f.year+(f.mode==='one' ? ', week '+f.week : '')+'.'
           : n ? 'No games on record for '+f.year+(f.mode==='one' ? ', week '+f.week : '')+' yet.'
           : 'That season has not started.')+'</div></div>'}
-    <div class="pb"><div class="hint">Tap any heading to sort by it — tap again to turn it round. Tap a name for his
+    <div class="pb" style="padding-bottom:0"><button class="btn sm ghost" data-a="fsGlossary">What each column means</button></div>
+    <div class="pb"><div class="hint">Tap any heading to sort by it — tap again to turn it round. Hover over a heading for what it means; on a phone, tap the heading’s name. Tap a name for his
       game-by-game and every season he has played. <b>Per game</b> divides each count by the games he played;
       <b>Week by week</b> lays out his fantasy points a week at a time. <b>Red zone</b> is his carries, targets and throws inside the twenty, of his team’s red-zone plays — hover or tap it for the share. Snap % is his share of his team’s
       offensive plays${f.pos==='K' ? ' (a kicker’s are special-teams plays)' : ''}; Sleeper has snap counts from about 2020 on.</div></div>
