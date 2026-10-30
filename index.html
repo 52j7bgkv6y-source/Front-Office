@@ -232,6 +232,8 @@ h3{font-size:16px;line-height:1.2;text-transform:uppercase;letter-spacing:.07em;
 .fstable .fsname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fstable .fsheld{white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
 .fstable td{white-space:nowrap}
+.fstable .fsrz{cursor:help;text-decoration:underline dotted;text-decoration-color:var(--rule);text-underline-offset:3px}
+.fstable .fsnum{width:1%;padding-left:6px;padding-right:6px;font-variant-numeric:tabular-nums}
 .posband td{background:var(--well);color:var(--bone);padding:7px 10px!important;border-top:2px solid var(--rule)}
 .posband td .pos{margin-right:8px}
 .center{text-align:center}
@@ -1594,7 +1596,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29i · coming free: extension price today and franchise tag price for every player';
+const APP_BUILD = '2026-10-29k · find a player: red zone looks of his team\u2019s red-zone plays, the share on hover or tap, sortable';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -22500,6 +22502,19 @@ function lstatSeason(season){
   const idx = lstatLeagueIndex();
   if(L.agg && L.aggKey === key && L.aggIdx === idx && L.aggS === S) return L.agg;
   const by = {};
+  /* Each club's red-zone plays in a week — every carry and throw inside the
+     twenty, added up from its players' lines — the same count Live scoring
+     uses for "RZ 2 of 6". */
+  const rzWeek = {};
+  Object.keys(L.weeks).forEach(w=>{
+    const rows = L.weeks[w].rows || {}, t = {};
+    for(const id in rows){
+      const r = rows[id]; if(!r || r.pos === 'DEF' || !r.t) continue;
+      const n = (+(r.s||{}).pass_rz_att||0) + (+(r.s||{}).rush_rz_att||0);
+      if(n){ const c = clubCode(r.t); t[c] = (t[c]||0) + n; }
+    }
+    rzWeek[w] = t;
+  });
   Object.keys(L.weeks).map(Number).sort((a,b)=> a-b).forEach(w=>{
     const rows = L.weeks[w].rows || {};
     for(const id in rows){
@@ -22507,12 +22522,14 @@ function lstatSeason(season){
       const a = by[id] || (by[id] = {id, n:r.n, pos:r.pos, t:r.t, p: idx[id] || null, wk:{}});
       a.t = r.t || a.t; a.n = r.n || a.n;
       const who = a.p || {pos:r.pos};
-      a.wk[w] = {s:r.s, o:r.o, t:r.t, pts: scoreLine(r.s, who)};
+      a.wk[w] = {s:r.s, o:r.o, t:r.t, pts: scoreLine(r.s, who), rz: rzLooks(r.s), rzT: r.t ? +((rzWeek[w]||{})[clubCode(r.t)]) || 0 : 0};
     }
   });
   const list = Object.keys(by).map(id=>{
     const a = by[id], ws = Object.keys(a.wk);
     a.gp = ws.length;
+    a.rz = ws.reduce((t,w)=> t + (a.wk[w].rz||0), 0);
+    a.rzT = ws.reduce((t,w)=> t + (a.wk[w].rzT||0), 0);
     a.tot = sumStats(ws.map(w=> a.wk[w].s));
     a.pts = Math.round(ws.reduce((t,w)=> t + a.wk[w].pts, 0)*100)/100;
     a.ppg = a.gp ? a.pts / a.gp : 0;
@@ -22788,6 +22805,28 @@ function fsBuild(f){
     cols.push({k:'team', label: one ? 'Opp' : 'Team', txt:true,
       get:a=> one ? (a.wk[f.week]||{}).o || '' : a.t || '',
       fmt:v=> '<span class="dim">'+esc(v||'')+'</span>'});
+    /* Red zone, as Live scoring has it: his carries, targets and throws inside
+       the twenty, of his team's red-zone plays. The share is in the hover — or
+       a tap, on a phone. Sorted on how many, then the share. */
+    if(f.pos !== 'DEF' && f.pos !== 'K'){
+      const rzOf = (a)=>{
+        if(a.none || a.pos === 'DEF' || a.pos === 'K') return null;
+        if(one){ const wk = a.wk[f.week]; return wk ? {n:wk.rz||0, of:wk.rzT||0} : null; }
+        const g = avg ? (a.gp || 1) : 1;
+        return {n:(a.rz||0)/g, of:(a.rzT||0)/g};
+      };
+      cols.push({k:'rz', label:'Red zone',
+        get:a=>{ const x = rzOf(a); if(!x) return null; return x.n + (x.of ? (x.n/x.of)/1000 : 0); },
+        fmt:(v, a)=>{
+          const x = rzOf(a); if(!x) return '<span class="dim">\u2014</span>';
+          const dp = avg ? 1 : 0, nTxt = x.n.toFixed(dp), ofTxt = x.of.toFixed(dp);
+          const pct = x.of ? Math.round(x.n / x.of * 100) : null;
+          const tip = pct != null
+            ? pct+'% of '+(a.t||'his team')+'\u2019s red-zone plays'+(one ? ' in week '+f.week : avg ? ', a game' : ' this season')+' \u2014 his carries, targets and throws inside the twenty'
+            : 'His carries, targets and throws inside the twenty';
+          return '<span class="fsrz'+(x.n ? '' : ' dim')+'" title="'+esc(tip)+'">'+nTxt+(x.of ? '<span class="dim"> of '+ofTxt+'</span>' : '')+'</span>';
+        }});
+    }
     statCols.forEach((c, i)=> cols.push({k:'c'+i+':'+c[0], label:c[0],
       get:a=> a.none ? null : (()=>{ const v = c[1](src(a)); return v == null ? null : (c[2] == null ? per(a, v) : v); })(),
       fmt:v=> fsNum(v, c[2] != null ? c[2] : (avg ? 1 : null))}));
@@ -22860,14 +22899,15 @@ function fsTableHTML(){
           data-oninput="findType" placeholder="e.g. Amon-Ra, or DET, or WR" autocomplete="off"></label>
       ${status}
     </div>
-    ${shown.length ? `<div class="pb tight scrollx fstable"><table>
-      <thead><tr>${th('name', 'Player')}${cols.map(c=> th(c.k, c.label, c.txt ? '' : 'right')).join('')}</tr></thead>
-      <tbody>${shown.map(a=>{
+    ${shown.length ? `<div class="pb tight scrollx fstable freeze2"><table>
+      <thead><tr><th class="right fsnum">#</th>${th('name', 'Player')}${cols.map(c=> th(c.k, c.label, c.txt ? '' : 'right')).join('')}</tr></thead>
+      <tbody>${shown.map((a, ix)=>{
         const inLeague = a.p;
         const nm = inLeague
           ? '<a href="#" data-a="findStats" data-id="'+a.p.id+'" data-y="'+f.year+'" style="color:inherit">'+esc(a.n)+'</a>'
           : esc(a.n);
-        return '<tr'+(ui.tmp.findPid && a.p && a.p.id === ui.tmp.findPid ? ' class="rzrow"' : '')+'><td><div class="fsname">'+nm+'</div>'+
+        /* Where he stands in the order on screen, pinned beside his name. */
+        return '<tr'+(ui.tmp.findPid && a.p && a.p.id === ui.tmp.findPid ? ' class="rzrow"' : '')+'><td class="right num dim fsnum">'+(ix+1)+'</td><td><div class="fsname">'+nm+'</div>'+
           '<div class="tiny dim">'+posTag(a.pos==='DEF'?'DEF':a.pos)+' '+esc(a.t||'')+(a.none ? ' · no games in '+f.year : '')+'</div></td>'+
           cols.map(c=>{ const v = c.get(a); return '<td class="'+(c.txt ? '' : 'right num')+'">'+c.fmt(v, a)+'</td>'; }).join('')+'</tr>';
       }).join('')}</tbody></table></div>
@@ -22879,7 +22919,7 @@ function fsTableHTML(){
           : 'That season has not started.')+'</div></div>'}
     <div class="pb"><div class="hint">Tap any heading to sort by it — tap again to turn it round. Tap a name for his
       game-by-game and every season he has played. <b>Per game</b> divides each count by the games he played;
-      <b>Week by week</b> lays out his fantasy points a week at a time. Snap % is his share of his team’s
+      <b>Week by week</b> lays out his fantasy points a week at a time. <b>Red zone</b> is his carries, targets and throws inside the twenty, of his team’s red-zone plays — hover or tap it for the share. Snap % is his share of his team’s
       offensive plays${f.pos==='K' ? ' (a kicker’s are special-teams plays)' : ''}; Sleeper has snap counts from about 2020 on.</div></div>
   </div>`;
 }
