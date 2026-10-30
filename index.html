@@ -1596,7 +1596,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29k · find a player: red zone looks of his team\u2019s red-zone plays, the share on hover or tap, sortable';
+const APP_BUILD = '2026-10-29l · find a player: no longer stuck on \u201cGetting from Sleeper\u201d \u2014 it redraws as weeks arrive and gives up on a silent Sleeper';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -22366,7 +22366,15 @@ const LSTAT_POS = ['QB','RB','WR','TE','K','DEF'];
 const LSTAT_FIRST = 2012;
 const LSTAT = {};
 let lstatFetch = async (url)=>{
-  const r = await fetch(url);
+  /* Sleeper sometimes simply does not answer. Without a limit the page sat on
+     "0 of 8 weeks" for ever; now a week that takes over 25 seconds is given up
+     on and the page says so, with Try again. */
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const tm = ctl ? setTimeout(()=> ctl.abort(), 25000) : null;
+  let r;
+  try{ r = await fetch(url, ctl ? {signal:ctl.signal} : undefined); }
+  catch(e){ throw new Error(e && e.name === 'AbortError' ? 'Sleeper did not answer' : (e && e.message) || 'no answer'); }
+  finally{ if(tm) clearTimeout(tm); }
   if(!r.ok) throw new Error('Sleeper came back '+r.status);
   const t = await r.text();
   return t && t !== 'null' ? JSON.parse(t) : [];
@@ -22386,12 +22394,17 @@ const lstatDB = {
     return this._p;
   },
   async get(k){
-    const db = await this.open();
-    return await new Promise((res, rej)=>{
-      const rq = db.transaction('kv').objectStore('kv').get(k);
-      rq.onsuccess = ()=> res(rq.result == null ? null : rq.result);
-      rq.onerror = ()=> rej(rq.error);
-    });
+    /* The browser's store can hang — another tab holding it, a private window.
+       Whatever is not back in three seconds is simply fetched afresh. */
+    const read = (async ()=>{
+      const db = await this.open();
+      return await new Promise((res, rej)=>{
+        const rq = db.transaction('kv').objectStore('kv').get(k);
+        rq.onsuccess = ()=> res(rq.result == null ? null : rq.result);
+        rq.onerror = ()=> rej(rq.error);
+      });
+    })();
+    return await Promise.race([read, new Promise(res=> setTimeout(()=> res(null), 3000))]);
   },
   async set(k, v){
     const db = await this.open();
@@ -22439,7 +22452,10 @@ function lstatFresh(season, w, rec){
 let lstatDrawT = null;
 function lstatRedraw(){
   if(lstatDrawT) return;
-  lstatDrawT = setTimeout(()=>{ lstatDrawT = null; if(route === 'find') renderQuiet(); }, 250);
+  /* render() keeps the caret in the search box, so there is no need to wait
+     for hands off it — waiting left the page stuck on "0 of 8" for as long as
+     the box had the focus. */
+  lstatDrawT = setTimeout(()=>{ lstatDrawT = null; if(route === 'find'){ try{ render(); }catch(e){ console.error(e); } } }, 250);
 }
 function lstatLoad(season, force){
   season = +season;
@@ -22506,7 +22522,7 @@ function lstatSeason(season){
      twenty, added up from its players' lines — the same count Live scoring
      uses for "RZ 2 of 6". */
   const rzWeek = {};
-  Object.keys(L.weeks).forEach(w=>{
+  try{ Object.keys(L.weeks).forEach(w=>{
     const rows = L.weeks[w].rows || {}, t = {};
     for(const id in rows){
       const r = rows[id]; if(!r || r.pos === 'DEF' || !r.t) continue;
@@ -22514,7 +22530,7 @@ function lstatSeason(season){
       if(n){ const c = clubCode(r.t); t[c] = (t[c]||0) + n; }
     }
     rzWeek[w] = t;
-  });
+  }); }catch(e){ console.error(e); }
   Object.keys(L.weeks).map(Number).sort((a,b)=> a-b).forEach(w=>{
     const rows = L.weeks[w].rows || {};
     for(const id in rows){
@@ -22522,7 +22538,9 @@ function lstatSeason(season){
       const a = by[id] || (by[id] = {id, n:r.n, pos:r.pos, t:r.t, p: idx[id] || null, wk:{}});
       a.t = r.t || a.t; a.n = r.n || a.n;
       const who = a.p || {pos:r.pos};
-      a.wk[w] = {s:r.s, o:r.o, t:r.t, pts: scoreLine(r.s, who), rz: rzLooks(r.s), rzT: r.t ? +((rzWeek[w]||{})[clubCode(r.t)]) || 0 : 0};
+      let rz = 0, rzT = 0;
+      try{ rz = rzLooks(r.s); rzT = r.t ? +((rzWeek[w]||{})[clubCode(r.t)]) || 0 : 0; }catch(e){}
+      a.wk[w] = {s:r.s, o:r.o, t:r.t, pts: scoreLine(r.s, who), rz, rzT};
     }
   });
   const list = Object.keys(by).map(id=>{
