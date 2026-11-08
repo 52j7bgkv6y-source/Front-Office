@@ -1578,6 +1578,24 @@ div.head>select{width:auto;max-width:240px}
   [data-fs] .pb.stack>label.f{order:-1}
   .fsctl.ph-closed{display:none}
 }
+
+/* Start / sit advice */
+.ssman{border-bottom:1px solid var(--line);padding:7px 0}
+.ssman.off{opacity:.62}
+.ssslot{width:44px;flex:0 0 44px}
+.ssnm{display:flex;flex-wrap:wrap;gap:5px;align-items:center;min-width:0}
+.ssnm a{overflow:hidden;text-overflow:ellipsis}
+.ssp{font-weight:700;font-size:16px}
+.sswhy{margin:4px 0 0 52px;font-size:12.5px;color:var(--mute);line-height:1.5}
+.sspl{font-family:var(--mono);font-size:11.5px;margin-left:3px;white-space:nowrap}
+.sschg{font-size:10.5px;padding:1px 6px;border-radius:9px;border:1px solid var(--brass);color:var(--brass);white-space:nowrap}
+.ssgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.ssgrid .tile{padding:9px 10px}
+.ssgrid .tile .v{font-size:19px}
+.sstbl{font-size:13px}
+.sstbl th,.sstbl td{padding:6px 6px}
+@media (max-width:560px){ .sstbl{font-size:12px} .sstbl th,.sstbl td{padding:6px 4px} .sstbl th{letter-spacing:.03em} }
+@media (max-width:560px){ .sswhy{margin-left:0} .ssgrid .tile .v{font-size:16px} .ssslot{width:38px;flex-basis:38px} }
 </style>
 </head>
 <body>
@@ -1600,7 +1618,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-10-29m · find a player: an RZ % column, and what every column means on hover or a tap';
+const APP_BUILD = '2026-11-08a · start / sit advice with the reasons, a look back at what it got wrong, and what it learned from it';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -5497,7 +5515,7 @@ function modal(title, bodyHTML, footHTML, opts){
   const locked = !!(opts && opts.locked);
   ui.modalLocked = locked;
   $('#modalBox').innerHTML =
-    '<div class="mh">'+(ui.tmp && ui.tmp.modalReturn ? '<button class="btn ghost sm" data-a="modalBack" data-modalback="1">\u2190 Trade</button>' : '')+
+    '<div class="mh">'+(ui.tmp && ui.tmp.modalReturn ? '<button class="btn ghost sm" data-a="modalBack" data-modalback="1">\u2190 '+esc(ui.tmp.modalReturn.label || 'Trade')+'</button>' : '')+
     '<h2>'+esc(title)+'</h2><div class="spacer"></div>'+
     (locked ? '' : '<button class="btn ghost sm" data-a="closeModal">✕</button>')+'</div>'+
     '<div class="mb">'+bodyHTML+'</div>'+
@@ -5523,6 +5541,11 @@ function modalBack(){
      changed on the card side of things shows. */
   if(r.ctx === 'builder' && ui.tmp.tb && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeForm();
   else if(r.ctx === 'view' && r.id && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeTableView(r.id);
+  /* Back to the start/sit advice, or the lineup it was opened from, drawn
+     again so a change made meanwhile shows. */
+  else if(r.ctx === 'ss' && ui.tmp.ss && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = ssBody();
+  else if(r.ctx === 'lineup' && ui.tmp.lu && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = lineupForm(ui.tmp.lu.team, ui.tmp.lu.week);
+  if(r.prev) ui.tmp.modalReturn = r.prev;
   $('#modalBox').scrollTop = r.scroll || 0;
 }
 ACT.modalBack = ()=> modalBack();
@@ -9955,6 +9978,7 @@ VIEWS.teams = function(){
           : 'your lineup is left exactly as you set it')+
         '">Fill in for the ruled out: '+(autoFillOn(tid)?'on':'off')+'</button>' : ''}
       ${canSetLineup(tid, +S.live.week||1) ? '<button class="btn" data-a="editLineup" data-team="'+tid+'" data-w="'+(+S.live.week||1)+'">Set lineup</button>' : ''}
+      ${canSetLineup(tid, +S.live.week||1) ? '<button class="btn ghost" data-a="ssOpen" data-team="'+tid+'" data-w="'+(+S.live.week||1)+'" title="who to start this week, and why">Start / sit</button>' : ''}
       <select data-a="pickTeamView" data-k="teamsel" style="max-width:230px">${S.teams.map(x=>'<option value="'+x.id+'"'+(x.id===tid?' selected':'')+'>'+esc(x.name)+'</option>').join('')}</select>
     </header>
 
@@ -11730,6 +11754,930 @@ function onSomeRoster(p){
 function freeAgents(){
   return S.players.filter(p=> !onSomeRoster(p) && !isRetired(p) && !hideIDP(p));
 }
+/* ============================================================
+   START / SIT
+   Who to play this week, and why. It works from every NFL game played this
+   season (the same weeks Find a Player keeps on this device) and Sleeper's
+   projection for each of those weeks, all scored on this league's settings.
+
+   Every week is worked out from only the weeks before it, so what it would
+   have said can be held up against what then happened. The misses feed the
+   next week: how far it moves off Sleeper's number toward a man's recent
+   form, his season, the matchup and his workload is refitted every week on
+   every game played, the latest weeks counting most, and a man it keeps
+   getting wrong the same way is marked up or down for it.
+
+   Nothing is kept in the league. Every device works the same answer out for
+   itself from Sleeper, so it costs the league server nothing.
+   ============================================================ */
+const SS_PROJ = {};
+const SS_KEYS = ['rec','sea','mat','use','pos'];
+/* Where it starts before there is anything to learn from: a little toward
+   recent form and the season, a quarter of the matchup and workload effects,
+   no correction for the position. */
+const SS_PRIOR = [0.10, 0.10, 0.25, 0.25, 0];
+const SS_PRIOR_ROWS = 60, SS_POS_ROWS = 80, SS_DECAY = 0.9, SS_BIAS_K = 4, SS_BIAS_PRIOR = 0.5;
+const SS_MODEL_POS = ['QB','RB','WR','TE','K','DEF'];
+const SS_USED_KEY = 'frontoffice.startsit.v1';
+const SS_PLURAL = {QB:'QBs', RB:'RBs', WR:'WRs', TE:'TEs', K:'kickers', DEF:'defenses'};
+const SS_USE_WORD = {QB:'throws and carries', RB:'carries and targets', WR:'targets', TE:'targets'};
+
+/* ---- Sleeper's projections, week by week, kept on this device ---- */
+function ssProjSlim(j){
+  const rows = {};
+  const put = (id, st, extra)=>{
+    if(!id || !st || typeof st !== 'object') return;
+    const s = slimStats(st);
+    Object.keys(s).forEach(k=>{ if(/^(pts_|adp_|gms_active|fan_pts)/.test(k)) delete s[k]; });
+    if(!Object.keys(s).length) return;
+    rows[String(id)] = Object.assign({s}, extra || {});
+  };
+  if(Array.isArray(j)) j.forEach(x=>{
+    if(!x) return;
+    const pl = x.player || {};
+    const pos = String(pl.position || '').toUpperCase();
+    if(pos && LSTAT_POS.indexOf(pos) < 0) return;
+    put(x.player_id || pl.player_id, x.stats, {o: x.opponent || '', t: x.team || pl.team || ''});
+  });
+  else if(j && typeof j === 'object') Object.keys(j).forEach(k=> put(k, j[k] && j[k].stats ? j[k].stats : j[k]));
+  return rows;
+}
+/* A week that is over keeps its projection for good; the week in play is
+   asked again every few hours, since news moves it. */
+function ssProjFresh(season, w, rec){
+  if(!rec) return false;
+  const live = clamp(+S.live.week || 1, 1, 18);
+  if(season < +S.league.season || w < live) return !!rec.final;
+  return Date.now() - (+rec.at||0) < 3*3600000;
+}
+async function ssProjFetch(season, w){
+  const pos = LSTAT_POS.map(p=> 'position[]='+p).join('&');
+  const tries = [
+    ()=> lstatFetch('https://api.sleeper.com/projections/nfl/'+season+'/'+w+'?season_type=regular&'+pos),
+    ()=> getJSON(SLEEPER+'/projections/nfl/regular/'+season+'/'+w)
+  ];
+  let last = null;
+  for(const t of tries){
+    try{
+      const rows = ssProjSlim(await t());
+      if(Object.keys(rows).length) return rows;
+    }catch(e){ last = e; }
+  }
+  throw last || new Error('no projections came back for week '+w);
+}
+function ssLoad(season, force){
+  season = +season;
+  const P = SS_PROJ[season] = SS_PROJ[season] || {weeks:{}, busy:null, err:null, need:0, got:0};
+  if(P.busy) return P.busy;
+  P.busy = (async ()=>{
+    const n = lstatWeeks(season);
+    /* The games themselves — the same store Find a Player fills. */
+    const games = Promise.resolve().then(()=> lstatLoad(season, force)).catch(()=>{}).then(()=> ssRedraw());
+    if(!P.disk){
+      P.disk = true;
+      await Promise.all(Array.from({length:n}, (_,i)=> i+1).map(w=>
+        P.weeks[w] ? null : lstatDB.get('p'+season+'_'+w).then(v=>{ if(v && v.rows && !P.weeks[w]) P.weeks[w] = v; }).catch(()=>{})));
+    }
+    const need = [];
+    for(let w = 1; w <= n; w++) if(force || !ssProjFresh(season, w, P.weeks[w])) need.push(w);
+    P.need = need.length; P.got = 0; P.err = null;
+    if(need.length) ssRedraw();
+    /* Three at a time. These are big answers, and a phone on a poor signal
+       does better with a few than with ten at once. */
+    const queue = need.slice();
+    const worker = async ()=>{
+      while(queue.length){
+        const w = queue.shift();
+        try{
+          const rows = await ssProjFetch(season, w);
+          const live = clamp(+S.live.week || 1, 1, 18);
+          const rec = {at:Date.now(), final: season < +S.league.season || w < live, rows};
+          P.weeks[w] = rec; P.got++;
+          lstatDB.set('p'+season+'_'+w, rec).catch(()=>{});
+          ssRedraw();
+        }catch(e){ P.err = (e && e.message) || String(e); P.errAt = Date.now(); }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    await games;
+    P.at = Date.now();
+  })().finally(()=>{ P.busy = null; ssRedraw(); });
+  return P.busy;
+}
+/* Asked for while the advice is drawn: fetch only what is missing or stale,
+   and do not keep knocking on a door that has just refused. */
+function ssWant(season){
+  season = +season;
+  const P = SS_PROJ[season], L = LSTAT[season];
+  if(P && P.busy) return;
+  if(P && P.errAt && Date.now() - P.errAt < 60000) return;
+  let stale = !P || !P.disk || !L || !L.disk;
+  if(!stale){
+    const n = lstatWeeks(season);
+    for(let w = 1; w <= n; w++){
+      if(!ssProjFresh(season, w, P.weeks[w]) || !lstatFresh(season, w, L.weeks[w])){ stale = true; break; }
+    }
+  }
+  if(stale) ssLoad(season);
+}
+let ssDrawT = null;
+function ssRedraw(){
+  if(ssDrawT) return;
+  ssDrawT = setTimeout(()=>{ ssDrawT = null; ssRedrawNow(); }, 300);
+}
+function ssRedrawNow(){
+  try{
+    const box = document.getElementById('modalBox'), md = document.getElementById('modal');
+    if(!box || !md || !md.classList.contains('on')) return;
+    if(box.querySelector('[data-ssbody]') && ui.tmp.ss){
+      const top = box.scrollTop;
+      box.querySelector('.mb').innerHTML = ssBody();
+      box.scrollTop = top;
+      return;
+    }
+    const lu = box.querySelector('#luAdvice');
+    if(lu && ui.tmp.lu) lu.outerHTML = ssLineupNote(ui.tmp.lu.team, ui.tmp.lu.week);
+  }catch(e){ console.error(e); }
+}
+
+/* ---- The model ---- */
+function ssAvg(a){ return a.length ? a.reduce((t,x)=> t + (+x||0), 0) / a.length : 0; }
+function ssR1(v){ return Math.round((+v||0)*10)/10; }
+function ssR2(v){ return Math.round((+v||0)*100)/100; }
+/* The work that came his way in a game. */
+function ssOpp(pos, s){
+  if(!s) return 0;
+  if(pos === 'QB') return (+s.pass_att||0) + (+s.rush_att||0);
+  if(pos === 'RB') return (+s.rush_att||0) + (+s.rec_tgt||0);
+  if(pos === 'WR' || pos === 'TE') return +s.rec_tgt||0;
+  return 0;
+}
+/* Solve a small set of equations; null when they cannot be. */
+function ssSolve(A, b){
+  const n = b.length, M = A.map((r,i)=> r.slice().concat([b[i]]));
+  for(let c = 0; c < n; c++){
+    let p = c;
+    for(let r = c+1; r < n; r++) if(Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    if(Math.abs(M[p][c]) < 1e-12) return null;
+    const t = M[c]; M[c] = M[p]; M[p] = t;
+    for(let r = 0; r < n; r++){
+      if(r === c) continue;
+      const f = M[r][c] / M[c][c];
+      if(f) for(let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
+    }
+  }
+  return M.map((r,i)=> r[n] / r[i]);
+}
+const SS_CLAMP = [[-0.2,0.8],[-0.2,0.8],[-0.5,1.5],[-0.5,1.5],[-4,4]];
+function ssSig(season){
+  const L = LSTAT[season], P = SS_PROJ[season];
+  const part = (B)=> B ? Object.keys(B.weeks).map(w=> w+':'+(B.weeks[w].at||0)).join(',') : '';
+  return part(L)+'|'+part(P)+'|'+JSON.stringify(S.settings.scoring)+'|'+(+S.live.week||1)+'|'+S.players.length;
+}
+let ssCache = null;
+function ssModel(season){
+  season = +(season || S.league.season);
+  const sig = ssSig(season);
+  if(ssCache && ssCache.sig === sig && ssCache.S === S && ssCache.season === season) return ssCache.m;
+  let m;
+  try{ m = ssBuild(season); }
+  catch(e){ console.error(e); m = {season, live:clamp(+S.live.week||1,1,18), ready:false, hist:{}, fits:{}, allow:{}, res:{}, beta:{}, mae:{}, rows:[], P:{weeks:{}}, err:e.message}; }
+  ssCache = {sig, S, season, m};
+  return m;
+}
+/* What it knows about a man going into week w, from the weeks before it. */
+function ssFeat(m, sid, w, pj, opp){
+  const h = m.hist[sid]; if(!h) return null;
+  let k = 0; while(k < h.ws.length && h.ws[k] < w) k++;
+  if(!k) return null;
+  const pts = h.pts.slice(0, k), ops = h.op.slice(0, k);
+  const n = k, season = ssAvg(pts), last = pts.slice(-3), recent = ssAvg(last);
+  const hasProj = pj != null;
+  const proj = hasProj ? pj : season;
+  /* The defense he faces: what it has given up to his position a game,
+     against the league's average, trusted more the more games it has played. */
+  let mat = 0, mi = null;
+  const A = m.allow[Math.min(w, m.live)];
+  const c = clubCode(opp || '');
+  if(c && A && A.per[c] && A.per[c][h.pos]){
+    const x = A.per[c][h.pos], avg = A.avg[h.pos];
+    if(avg > 0 && x.g){
+      const r = clamp(1 + (x.v/avg - 1) * (x.g/(x.g + 3)), 0.6, 1.5);
+      mat = season * (r - 1);
+      mi = {opp:c, rank:A.rank[h.pos][c], of:A.of[h.pos], per:x.v, avg, g:x.g};
+    }
+  }
+  /* More work, or less, lately than on the season. */
+  let use = 0, ui2 = null;
+  if(n >= 4 && SS_USE_WORD[h.pos]){
+    const so = ssAvg(ops), ro = ssAvg(ops.slice(-3));
+    if(so > 0){
+      const r = clamp(ro/so, 0.5, 1.8);
+      use = season * (r - 1);
+      ui2 = {recent:ro, season:so, ratio:r};
+    }
+  }
+  return {n, season, recent, last:last.length, proj, projRaw:pj, hasProj, mat, mi, use, ui:ui2,
+          x:[recent - proj, season - proj, mat, use, 1]};
+}
+function ssBuild(season){
+  const live = clamp(+S.live.week||1, 1, 18);
+  const P = SS_PROJ[season] || {weeks:{}};
+  const m = {season, live, ready:false, hist:{}, fits:{}, allow:{}, res:{}, beta:{}, mae:{}, rows:[], P,
+             statWeeks:0, projWeeks:Object.keys(P.weeks).length};
+  const L = LSTAT[season];
+  const list = L ? (lstatSeason(season) || []) : [];
+  m.statWeeks = L ? Object.keys(L.weeks).filter(w=> +w < live && Object.keys((L.weeks[w]||{}).rows||{}).length).length : 0;
+  /* Every man's games in order, and what each defense gave up. */
+  const wkSum = {}, wkGames = {};
+  list.forEach(a=>{
+    if(SS_MODEL_POS.indexOf(a.pos) < 0) return;
+    const ws = Object.keys(a.wk).map(Number).sort((x,y)=> x-y);
+    const h = m.hist[a.id] = {pos:a.pos, who: a.p || {pos:a.pos}, ws:[], pts:[], op:[], o:[]};
+    ws.forEach(w=>{
+      const g = a.wk[w], o = clubCode(g.o || '');
+      h.ws.push(w); h.pts.push(+g.pts||0); h.op.push(ssOpp(a.pos, g.s)); h.o.push(o);
+      if(!o || w >= live) return;               /* the week in play is not over */
+      const t = (wkSum[w] = wkSum[w] || {});
+      (t[o] = t[o] || {})[a.pos] = (t[o][a.pos]||0) + (+g.pts||0);
+      (wkGames[w] = wkGames[w] || {})[o] = 1;
+    });
+  });
+  const tot = {}, gms = {};
+  for(let w = 1; w <= live; w++){
+    const per = {}, avg = {}, rank = {}, of = {};
+    SS_MODEL_POS.forEach(pos=>{
+      const vals = [];
+      Object.keys(gms).forEach(o=>{
+        const v = ((tot[o]||{})[pos]||0) / gms[o];
+        (per[o] = per[o] || {})[pos] = {v, g:gms[o]};
+        vals.push([o, v]);
+      });
+      avg[pos] = vals.length ? ssAvg(vals.map(x=> x[1])) : 0;
+      vals.sort((x,y)=> y[1]-x[1]);
+      rank[pos] = {}; vals.forEach((x,i)=> rank[pos][x[0]] = i+1);
+      of[pos] = vals.length;
+    });
+    m.allow[w] = {per, avg, rank, of};
+    Object.keys(wkGames[w]||{}).forEach(o=>{ gms[o] = (gms[o]||0) + 1; });
+    const ws = wkSum[w] || {};
+    Object.keys(ws).forEach(o=>{ tot[o] = tot[o] || {}; Object.keys(ws[o]).forEach(pos=> tot[o][pos] = (tot[o][pos]||0) + ws[o][pos]); });
+  }
+  const projPts = (w, sid, who)=>{ const r = ((P.weeks[w]||{}).rows||{})[sid]; return r ? scoreLine(r.s, who) : null; };
+  /* One row for every game a man played with a game behind him. The ones
+     that count toward the fitting are men who matter: projected for three or
+     more, or averaging four. */
+  Object.keys(m.hist).forEach(sid=>{
+    const h = m.hist[sid];
+    h.ws.forEach((w, k)=>{
+      if(w >= live || k === 0) return;
+      const f = ssFeat(m, sid, w, projPts(w, sid, h.who), h.o[k]);
+      if(!f) return;
+      const y = h.pts[k];
+      m.rows.push({sid, pos:h.pos, w, f, y, t: y - f.proj, train: (f.hasProj && f.proj >= 3) || f.season >= 4});
+    });
+  });
+  /* Added up week by week, so each week's fit is quick. */
+  const K = SS_KEYS.length;
+  const blank = ()=> ({A: Array.from({length:K}, ()=> new Array(K).fill(0)), b: new Array(K).fill(0), m2: new Array(K).fill(0), n:0});
+  const suff = {};
+  m.rows.forEach(r=>{
+    if(!r.train) return;
+    const s = ((suff[r.w] = suff[r.w] || {})[r.pos] = suff[r.w][r.pos] || blank());
+    const x = r.f.x;
+    for(let i = 0; i < K; i++){ s.b[i] += x[i]*r.t; s.m2[i] += x[i]*x[i]; for(let j = 0; j < K; j++) s.A[i][j] += x[i]*x[j]; }
+    s.n++;
+  });
+  const fitFrom = (w, posList, prior, strength)=>{
+    const A = Array.from({length:K}, ()=> new Array(K).fill(0)), b = new Array(K).fill(0), m2 = new Array(K).fill(0);
+    let n = 0, raw = 0;
+    for(let v = 1; v < w; v++){
+      const om = Math.pow(SS_DECAY, w - 1 - v);
+      posList.forEach(pos=>{
+        const s = (suff[v]||{})[pos]; if(!s) return;
+        for(let i = 0; i < K; i++){ b[i] += om*s.b[i]; m2[i] += om*s.m2[i]; for(let j = 0; j < K; j++) A[i][j] += om*s.A[i][j]; }
+        n += om*s.n; raw += s.n;
+      });
+    }
+    /* Pulled toward where it started, as firmly as so many games' worth of
+       evidence, so a thin week cannot throw it about. */
+    for(let i = 0; i < K; i++){
+      const lam = strength * (n > 0 ? Math.max(m2[i]/n, 1e-4) : 1);
+      A[i][i] += lam; b[i] += lam*prior[i];
+    }
+    const sol = ssSolve(A, b) || prior.slice();
+    return {w: sol.map((v,i)=> isFinite(v) ? clamp(v, SS_CLAMP[i][0], SS_CLAMP[i][1]) : prior[i]), n: raw};
+  };
+  for(let w = 1; w <= live; w++){
+    const g = fitFrom(w, SS_MODEL_POS, SS_PRIOR, SS_PRIOR_ROWS);
+    const pos = {}, posN = {};
+    SS_MODEL_POS.forEach(p=>{ const f = fitFrom(w, [p], g.w, SS_POS_ROWS); pos[p] = f.w; posN[p] = f.n; });
+    m.fits[w] = {global:g.w, n:g.n, pos, posN};
+  }
+  /* What it would have said each week, from the weeks before — and how far
+     out it was. */
+  const dot = (a, b)=> a.reduce((t,x,i)=> t + x*b[i], 0);
+  m.rows.sort((a,b)=> a.w - b.w);
+  m.rows.forEach(r=>{ r.base = r.f.proj + dot(r.f.x, ssW(m, r.pos, r.w)); r.e = r.y - r.base; });
+  m.rows.forEach(r=>{ if(r.train) (m.res[r.sid] = m.res[r.sid] || []).push({w:r.w, e:r.e}); });
+  const bs = {};
+  m.rows.forEach(r=>{
+    r.B = ssBias(m, r.sid, r.w);
+    if(!r.train || !r.B) return;
+    const s = bs[r.w] = bs[r.w] || {be:0, bb:0, n:0};
+    s.be += r.B*r.e; s.bb += r.B*r.B; s.n++;
+  });
+  /* How much of a man's own run of misses to take on. */
+  for(let w = 1; w <= live; w++){
+    let be = 0, bb = 0, n = 0;
+    for(let v = 1; v < w; v++){
+      const s = bs[v]; if(!s) continue;
+      const om = Math.pow(SS_DECAY, w - 1 - v);
+      be += om*s.be; bb += om*s.bb; n += om*s.n;
+    }
+    const lam = SS_PRIOR_ROWS * (n ? Math.max(bb/n, 1e-4) : 1);
+    m.beta[w] = clamp((be + lam*SS_BIAS_PRIOR) / (bb + lam), 0, 1);
+  }
+  m.rows.forEach(r=>{
+    r.pred = Math.max(0, r.base + m.beta[r.w]*r.B);
+    if(!r.train || !r.f.hasProj) return;
+    const a = m.mae[r.w] = m.mae[r.w] || {mod:0, slp:0, n:0};
+    a.mod += Math.abs(r.y - r.pred); a.slp += Math.abs(r.y - r.f.projRaw); a.n++;
+  });
+  m.ready = m.rows.length > 0;
+  return m;
+}
+function ssW(m, pos, w){
+  const f = m.fits[Math.min(w, m.live)] || m.fits[m.live];
+  if(!f) return SS_PRIOR.slice();
+  return (f.pos && f.pos[pos]) || f.global;
+}
+/* His own run of misses before week w, recent ones counting most, and
+   shrunk toward nothing until there are enough of them to mean something. */
+function ssBias(m, sid, w){
+  const list = (m.res[sid]||[]).filter(x=> x.w < w);
+  if(!list.length) return 0;
+  let s = 0, n = 0;
+  list.forEach(x=>{ const om = Math.pow(SS_DECAY, w - 1 - x.w); s += om*x.e; n += om; });
+  return clamp(s / (n + SS_BIAS_K), -4, 4);
+}
+/* What a man scored for this league in a week that is over. */
+function ssActual(p, w, h){
+  const rec = ((((S.season||{}).byPlayer||{})[p.id]||{}).weeks||{})[w];
+  if(rec && rec.fpts != null) return +rec.fpts || 0;
+  if(h){ const k = h.ws.indexOf(w); if(k >= 0) return h.pts[k]; }
+  return 0;
+}
+/* One man, one week: what it expects, and everything that went into it. */
+function ssMan(m, p, w){
+  const sid = pstatId(p);
+  const h = sid ? m.hist[sid] : null;
+  const P = m.P || {weeks:{}};
+  const prow = sid ? ((P.weeks[w]||{}).rows||{})[sid] : null;
+  let pj = prow ? scoreLine(prow.s, p) : null;
+  const nowWeek = +S.live.week || 1;
+  if(pj == null && w === nowWeek){
+    const st = projStore();
+    if(st.week === w && st.byPlayer && st.byPlayer[p.id] != null) pj = +st.byPlayer[p.id];
+  }
+  const past = w < m.live;
+  const x = {p, sid, w, pj, past, status:'ok', can:true, fixed:false, opp:null, atHome:null, bye:false};
+  if(past){
+    const k = h ? h.ws.indexOf(w) : -1;
+    if(k >= 0) x.opp = h.o[k];
+    x.actual = ssActual(p, w, h);
+    const rec = ((((S.season||{}).byPlayer||{})[p.id]||{}).weeks||{})[w];
+    x.played = k >= 0 || !!(rec && +rec.fpts);
+    if(!x.played){ x.can = false; x.status = 'dnp'; }
+  } else {
+    const o = p.nfl ? thisWeekOpponent(p.nfl, w) : null;
+    if(o){ x.opp = clubCode(o.code); x.atHome = !!o.atHome; }
+    else {
+      const wo = p.nfl ? weekOpponent(p.nfl, w) : null;
+      if(wo && wo.bye) x.bye = true;
+      else if(wo && wo.code){ x.opp = clubCode(wo.code); x.atHome = !!wo.atHome; }
+      else if(prow && prow.o) x.opp = clubCode(prow.o);
+    }
+    if(!x.opp && !x.bye && w === nowWeek && onByeNow(p)) x.bye = true;
+  }
+  const f = h ? ssFeat(m, sid, w, pj, x.opp) : null;
+  x.f = f;
+  if(f){
+    const wt = ssW(m, h.pos, w);
+    const B = ssBias(m, sid, w), beta = m.beta[Math.min(w, m.live)] != null ? m.beta[Math.min(w, m.live)] : SS_BIAS_PRIOR;
+    x.comps = {rec: wt[0]*f.x[0], sea: wt[1]*f.x[1], mat: wt[2]*f.x[2], use: wt[3]*f.x[3], pos: wt[4], bias: beta*B};
+    x.B = B;
+    x.pred = Math.max(0, f.proj + x.comps.rec + x.comps.sea + x.comps.mat + x.comps.use + x.comps.pos + x.comps.bias);
+    x.basis = 'model';
+  } else if(pj != null){ x.pred = pj; x.basis = 'sleeper'; }
+  else { const v = past ? null : projFor(p, w); x.pred = v == null ? 0 : +v; x.basis = 'fallback'; }
+  if(!past){
+    if(x.bye){ x.can = false; x.status = 'bye'; x.pred = 0; }
+    else {
+      const st = injStatus(p);
+      if(st === 'out'){ x.can = false; x.status = 'out'; x.pred = 0; }
+      else if(st === 'doubtful'){ x.status = 'doubtful'; x.pred *= 0.25; }
+      else if(st === 'questionable'){ x.status = 'questionable'; x.pred *= 0.95; }
+    }
+    /* Sleeper projects everybody who is going to play. A regular with no
+       projection at all this week is most likely on a bye nobody has told us
+       about, or not expected to play, so he is not trusted to start. */
+    const wk = P.weeks[w];
+    if(wk && wk.rows && wk._n == null) wk._n = Object.keys(wk.rows).length;
+    if(x.can && pj == null && h && wk && wk._n > 100){ x.noProj = true; x.pred *= 0.5; }
+    if(w === nowWeek && gameStarted(p)){ x.fixed = true; x.actual = fpts(p.id); }
+  }
+  x.pred = ssR1(x.pred);
+  return x;
+}
+function ssSpots(){
+  const spots = [];
+  ((S.settings.roster||{}).slots||[]).forEach(sl=>{ for(let n = 0; n < sl.count; n++) spots.push(sl); });
+  return spots;
+}
+/* Fill the lineup by what it expects: the places only one position can play
+   first, the flexible ones after, so a FLEX is not spent on a man the WR spot
+   needed. Anybody held in place (his game has started) stays where he is. */
+function ssFill(men, spots, fixedAt, key){
+  const assign = spots.map((_,i)=> (fixedAt && fixedAt[i]) || null);
+  const used = {}; assign.forEach(id=>{ if(id) used[id] = 1; });
+  const order = spots.map((_,i)=> i).filter(i=> !assign[i])
+    .sort((a,b)=> (((spots[a].eligible||[]).length) - ((spots[b].eligible||[]).length)) || a - b);
+  const avail = men.filter(x=> x.can && !x.fixed && !used[x.p.id]).sort((a,b)=> (+b[key]||0) - (+a[key]||0));
+  order.forEach(i=>{
+    const c = avail.find(x=> !used[x.p.id] && (spots[i].eligible||[]).indexOf(x.p.pos) >= 0);
+    if(c){ assign[i] = c.p.id; used[c.p.id] = 1; }
+  });
+  return assign;
+}
+/* The advice for a team's week. */
+function ssAdvice(teamId, week){
+  const w = +week || +S.live.week || 1;
+  const m = ssModel(S.league.season);
+  const spots = ssSpots();
+  const men = teamPlayers(teamId).filter(p=> playerSlot(p) === 'active').map(p=> ssMan(m, p, w));
+  const by = {}; men.forEach(x=> by[x.p.id] = x);
+  const cur = lineupFor(teamId, w);
+  const curIds = spots.map((_,i)=> (cur.slots[i] && cur.slots[i].p) ? cur.slots[i].p.id : null);
+  const fixedAt = curIds.map(id=> id && by[id] && by[id].fixed ? id : null);
+  const assign = ssFill(men, spots, fixedAt, 'pred');
+  const starters = spots.map((sl,i)=> ({i, slot:sl.label, eligible:sl.eligible||[], x: assign[i] ? by[assign[i]] : null, curId: curIds[i]}));
+  const inIds = {}; assign.forEach(id=>{ if(id) inIds[id] = 1; });
+  const curSet = {}; curIds.forEach(id=>{ if(id) curSet[id] = 1; });
+  const bench = men.filter(x=> !inIds[x.p.id]).sort((a,b)=> (b.can - a.can) || (b.pred - a.pred));
+  bench.forEach(b=>{
+    if(!b.can || b.fixed) return;
+    let best = null;
+    starters.forEach(s=>{
+      if(!s.x || s.eligible.indexOf(b.p.pos) < 0) return;
+      if(!best || s.x.pred < best.x.pred) best = s;
+    });
+    if(best){ b.behind = best; b.gap = ssR1(best.x.pred - b.pred); }
+  });
+  const total = ssR1(sum(starters.map(s=> s.x ? s.x.pred : 0)));
+  const curTotal = ssR1(sum(curIds.map(id=> id && by[id] ? by[id].pred : 0)));
+  /* What would change, paired off: who comes in for whom. */
+  const ins = starters.filter(s=> s.x && !curSet[s.x.p.id]).map(s=> s.x);
+  const outs = curIds.filter(id=> id && !inIds[id]).map(id=> by[id] || {p: byId(S.players, id) || {id, name:'?', pos:''}, pred:0, can:false, status:'gone'});
+  const pairs = [], left = outs.slice();
+  ins.forEach(x=>{
+    let k = left.findIndex(o=> o.p && o.p.pos === x.p.pos);
+    if(k < 0) k = left.findIndex(o=>{ const i = curIds.indexOf(o.p && o.p.id); return i >= 0 && (spots[i].eligible||[]).indexOf(x.p.pos) >= 0; });
+    if(k < 0 && left.length) k = 0;
+    const o = k >= 0 ? left.splice(k, 1)[0] : null;
+    pairs.push({inn:x, out:o, gain: ssR1(x.pred - (o ? (+o.pred||0) : 0))});
+  });
+  left.forEach(o=> pairs.push({inn:null, out:o, gain: ssR1(-(+o.pred||0))}));
+  const close = bench.filter(b=> b.can && !b.fixed && b.behind && b.gap < 1.5);
+  return {w, m, spots, men, by, starters, bench, total, curTotal, pairs, close, saved:cur.saved, assign, curIds};
+}
+/* In plain words, what lifts him or holds him back. */
+function ssPull(v){
+  const r = ssR1(v);
+  if(!r) return '';
+  return '<span class="sspl '+(r > 0 ? 'good' : 'bad')+'">'+(r > 0 ? '+' : '−')+Math.abs(r).toFixed(1)+'</span>';
+}
+function ssFaceWord(m){
+  if(!m) return '';
+  const pos = m.pos;
+  const most = m.rank <= Math.ceil(m.of/2);
+  const n = most ? m.rank : (m.of - m.rank + 1);
+  const which = (n === 1 ? '' : ordinal(n)+' ') + (most ? 'most' : 'fewest');
+  if(pos === 'DEF') return 'defenses score the '+which+' against '+m.opp;
+  if(pos === 'K') return 'kickers score the '+which+' against '+m.opp;
+  return m.opp+' gives up the '+which+' to '+(SS_PLURAL[pos]||pos+'s');
+}
+function ssWhy(x){
+  const out = [], f = x.f, c = x.comps || {}, pos = x.p.pos;
+  if(x.status === 'bye') return [{txt:'On a bye this week'}];
+  if(x.status === 'out') return [{txt:'Ruled out — '+esc(((x.p.injury||{}).status)||'out')}];
+  if(x.status === 'dnp') return [{txt:'Did not play that week'}];
+  if(f){
+    out.push({txt: f.hasProj ? 'Sleeper projects '+f.projRaw.toFixed(1)
+                             : 'No projection from Sleeper — starting from his season average of '+f.season.toFixed(1)});
+    const more = [];
+    if(f.n >= 2 && Math.abs(c.rec) >= 0.15)
+      more.push({txt:'Last '+f.last+': '+f.recent.toFixed(1)+' a game'+(f.n > f.last ? ' (season '+f.season.toFixed(1)+')' : ''), pull:c.rec});
+    if(f.n >= 2 && Math.abs(c.sea) >= 0.15)
+      more.push({txt:'Season: '+f.season.toFixed(1)+' a game over '+f.n+' game'+(f.n===1?'':'s'), pull:c.sea});
+    if(f.mi){
+      const mi = Object.assign({pos}, f.mi);
+      const notable = Math.abs(c.mat) >= 0.15 || f.mi.rank <= 6 || f.mi.rank > f.mi.of - 6;
+      if(notable) more.push({txt:(x.atHome === false ? '@ ' : 'vs ')+f.mi.opp+': '+ssFaceWord(mi)+' ('+f.mi.per.toFixed(1)+' a game, average '+f.mi.avg.toFixed(1)+')', pull:c.mat});
+    }
+    if(f.ui && Math.abs(f.ui.ratio - 1) >= 0.12)
+      more.push({txt:(f.ui.ratio > 1 ? 'Busier' : 'Quieter')+' lately: '+f.ui.recent.toFixed(1)+' '+SS_USE_WORD[pos]+' a game the last 3, '+f.ui.season.toFixed(1)+' on the season', pull:c.use});
+    if(Math.abs(c.bias) >= 0.15)
+      more.push({txt: c.bias > 0 ? 'It has had him too low in recent weeks, so it marks him up' : 'It has had him too high in recent weeks, so it marks him down', pull:c.bias});
+    if(Math.abs(c.pos) >= 0.3)
+      more.push({txt:(SS_PLURAL[pos]||pos)+' have been coming in '+(c.pos > 0 ? 'over' : 'under')+' their numbers', pull:c.pos});
+    more.sort((a,b)=> Math.abs(b.pull) - Math.abs(a.pull));
+    out.push.apply(out, more.slice(0, 4));
+  } else if(x.basis === 'sleeper') out.push({txt:'No games yet this season — going on Sleeper’s '+(+x.pj).toFixed(1)});
+  else out.push({txt: x.past ? 'Nothing from Sleeper for him that week' : 'Nothing from Sleeper for him — going on '+esc(projSource(x.p, x.w) || 'what he has done')});
+  if(x.status === 'questionable') out.push({txt:'Questionable — check before kickoff', warn:true});
+  if(x.status === 'doubtful') out.push({txt:'Doubtful — unlikely to play, so it counts him at a quarter', warn:true});
+  if(x.noProj) out.push({txt:'Sleeper has no projection for him this week — a bye, or not expected to play — so it counts him at half', warn:true});
+  if(x.fixed) out.push({txt:'His game has started — '+(+x.actual||0).toFixed(1)+' so far, so he stays where he is', lock:true});
+  return out;
+}
+/* Why A gets the place over B, in a few words. */
+function ssEdge(a, b){
+  if(!a || !b) return '';
+  if(!a.f || !b.f) return a.pred > b.pred ? 'the higher projection' : '';
+  const ca = a.comps || {}, cb = b.comps || {};
+  const d = [
+    ['proj', (a.f.proj - b.f.proj), 'Sleeper has him higher'],
+    ['rec', (ca.rec - cb.rec), 'the better recent form'],
+    ['sea', (ca.sea - cb.sea), 'the better season'],
+    ['mat', (ca.mat - cb.mat), 'the easier matchup'],
+    ['use', (ca.use - cb.use), 'more work coming his way'],
+    ['bias', (ca.bias - cb.bias), 'it has been under-rating him'],
+    ['pos', (ca.pos - cb.pos), 'how his position has been scoring']
+  ].sort((x,y)=> y[1] - x[1]);
+  return d[0][1] > 0.05 ? d[0][2] : 'next to nothing between them';
+}
+function ssMirrored(){
+  const cfg = S.settings.live || {};
+  try{ return cfg.mode === 'sleeper' && !!cfg.pullLineups && !!sleeperLeague(); }catch(e){ return false; }
+}
+function ssName(x){
+  if(!x || !x.p) return '—';
+  return '<a href="#" data-a="ssCard" data-id="'+esc(x.p.id)+'" style="color:inherit;font-weight:600">'+esc(x.p.name)+'</a>';
+}
+function ssManRow(x, o){
+  o = o || {};
+  if(!x) return '<div class="ssman"><div class="row" style="gap:8px;align-items:center"><span class="tiny dim ssslot">'+esc(o.slot||'')+
+    '</span><span class="dim">Nobody fit to play here — worth a look at the free agents</span></div></div>';
+  const p = x.p;
+  const face = x.opp ? (x.atHome === false ? '@ ' : 'vs ')+esc(x.opp) : x.bye ? 'bye' : '';
+  const when = !x.past && p.nfl && gameWhen(p.nfl) ? ' · '+esc(gameWhen(p.nfl)) : '';
+  const tag = o.tag ? '<span class="sschg">'+esc(o.tag)+'</span>' : '';
+  const num = x.past
+    ? '<span class="num ssp">'+(+x.actual||0).toFixed(1)+'</span><span class="tiny dim" style="display:block;text-align:right">thought '+x.pred.toFixed(1)+'</span>'
+    : '<span class="num ssp">'+(x.can ? x.pred.toFixed(1) : '—')+'</span>';
+  const why = (o.why === false) ? [] : ssWhy(x);
+  return '<div class="ssman'+(x.can ? '' : ' off')+'">'+
+    '<div class="row" style="gap:8px;align-items:center;flex-wrap:nowrap">'+
+      (o.slot != null ? '<span class="tiny dim ssslot">'+esc(o.slot)+'</span>' : '')+
+      playerFace(p, 26)+
+      '<div style="min-width:0;flex:1"><div class="ssnm">'+ssName(x)+' '+posTag(p.pos)+' '+injMark(p)+tag+'</div>'+
+        '<div class="tiny dim">'+esc(p.nfl||'')+(face ? ' '+face : '')+when+'</div></div>'+
+      '<div style="text-align:right">'+num+'</div>'+
+    '</div>'+
+    (why.length ? '<div class="sswhy">'+why.map(r=> '<div class="'+(r.warn ? 'warn' : r.lock ? 'dim' : '')+'">'+r.txt+(r.pull != null ? ' '+ssPull(r.pull) : '')+'</div>').join('')+'</div>' : '')+
+    (o.foot ? '<div class="sswhy">'+o.foot+'</div>' : '')+
+  '</div>';
+}
+function ssStatus(){
+  const season = +S.league.season, L = LSTAT[season], P = SS_PROJ[season];
+  const bits = [];
+  if(L && L.busy && L.need) bits.push('games: '+(L.got||0)+' of '+L.need+' weeks');
+  if(P && P.busy && P.need) bits.push('projections: '+(P.got||0)+' of '+P.need+' weeks');
+  if(bits.length) return '<div class="hint">Getting the season from Sleeper… '+bits.join(' · ')+'. The advice fills in as it comes.</div>';
+  if((L && L.busy) || (P && P.busy)) return '<div class="hint">Reading the season…</div>';
+  const err = (P && P.err) || (L && L.err);
+  if(err) return '<div class="hint warn">Some weeks did not come through from Sleeper ('+esc(err)+'). The advice uses what did. '+
+    '<button class="btn sm ghost" data-a="ssReload">Try again</button></div>';
+  return '';
+}
+function ssNowHTML(tid, w){
+  const a = ssAdvice(tid, w), m = a.m;
+  const can = canSetLineup(tid, w) && !lineupLocked(tid);
+  let head = '';
+  if(!a.pairs.length){
+    head = '<div class="hint good" style="margin-top:0"><b>Your lineup is the one it would start.</b> '+
+      (a.saved ? '' : 'Nothing is saved for this week, so the app fields its own best lineup. ')+'</div>';
+  } else {
+    head = '<div class="assetbox"><div class="flabel">What it would change</div>'+
+      a.pairs.map(pr=> '<div class="row ssswap" style="gap:6px;align-items:baseline;padding:3px 0">'+
+        (pr.inn ? '<span>Start '+ssName(pr.inn)+' <span class="tiny dim">'+pr.inn.pred.toFixed(1)+'</span></span>' : '')+
+        (pr.out ? '<span>'+(pr.inn ? 'instead of ' : 'Take out ')+ssName(pr.out)+' <span class="tiny dim">'+
+          (pr.out.can === false ? (pr.out.status==='bye' ? 'on a bye' : pr.out.status==='out' ? 'ruled out' : 'can’t play') : (+pr.out.pred||0).toFixed(1))+'</span></span>' : '<span class="dim">into the empty place</span>')+
+        '<div class="spacer"></div>'+(pr.gain ? '<span class="num '+(pr.gain > 0 ? 'good' : 'bad')+'">'+(pr.gain > 0 ? '+' : '−')+Math.abs(pr.gain).toFixed(1)+'</span>' : '')+
+      '</div>').join('')+
+      '<div class="row tiny dim" style="margin-top:4px">Expected: '+a.total.toFixed(1)+' with these, '+a.curTotal.toFixed(1)+' '+(a.saved ? 'with yours' : 'as it stands')+'</div>'+
+      (ssMirrored()
+        ? '<div class="hint">Lineups in this league come over from Sleeper, so make the change in the Sleeper app — it shows here within a few minutes.</div>'
+        : can ? '<div class="row" style="margin-top:8px"><button class="btn pri sm" data-a="ssUse" data-team="'+esc(tid)+'" data-w="'+w+'">Use this lineup</button>'+
+                '<span class="tiny dim" style="margin-left:8px">anybody whose game has started stays where he is</span></div>' : '')+
+    '</div>';
+  }
+  const startRows = a.starters.map(s=>{
+    const tag = s.x && s.curId !== s.x.p.id && !(a.curIds.indexOf(s.x.p.id) >= 0) ? 'in' : '';
+    return ssManRow(s.x, {slot:s.slot, tag});
+  }).join('');
+  const benchRows = a.bench.map(b=>{
+    let foot = '';
+    if(b.can && !b.fixed && b.behind){
+      foot = b.gap < 1.5
+        ? '<span class="warn">Close call</span> with '+ssName(b.behind.x)+' at '+esc(b.behind.slot)+' ('+b.behind.x.pred.toFixed(1)+') — '+
+          esc(b.behind.x.p.name.split(' ').pop())+' gets it for '+esc(ssEdge(b.behind.x, b))
+        : 'Sits behind '+ssName(b.behind.x)+' at '+esc(b.behind.slot)+', who is '+b.gap.toFixed(1)+' better';
+    } else if(b.can && !b.fixed) foot = 'No place in the lineup he can play';
+    const tag = a.curIds.indexOf(b.p.id) >= 0 ? 'take out' : '';
+    return ssManRow(b, {foot, tag});
+  }).join('');
+  const learnt = m.ready
+    ? 'Learned from '+((m.fits[m.live]||{}).n||0).toLocaleString()+' games this season, through week '+(m.live-1)+'.'
+    : 'Nothing learned yet this season — these are Sleeper’s numbers until the games come in.';
+  return head +
+    '<div class="flabel" style="display:flex;align-items:baseline;justify-content:space-between;margin-top:12px"><span>Start</span><span>expected</span></div><div class="stack">'+startRows+'</div>'+
+    '<div class="flabel" style="display:flex;align-items:baseline;justify-content:space-between;margin-top:14px"><span>Sit</span><span>expected</span></div><div class="stack">'+(benchRows || '<div class="dim tiny">Nobody on the bench.</div>')+'</div>'+
+    '<div class="hint" style="margin-top:10px">'+learnt+' The coloured figures are how far each thing moves him off Sleeper’s projection, in points. '+
+      '<a href="#" data-a="ssTab" data-t="how">How it decides</a> · <a href="#" data-a="ssTab" data-t="look">What it got wrong</a></div>';
+}
+/* ---- Looking back ---- */
+function ssLookWeeks(m){
+  const L = LSTAT[m.season]; if(!L) return [];
+  const out = [];
+  for(let v = 1; v < m.live; v++){ const r = L.weeks[v]; if(r && r.rows && Object.keys(r.rows).length) out.push(v); }
+  return out;
+}
+/* A week that is over: what it would have started (worked out from only the
+   weeks before), what you started, what the best was, and where it went wrong.
+   The roster is today's — nobody keeps a record of who was on it that week —
+   with the men you did start that week put back if they have gone since. */
+function ssLook(teamId, v){
+  const m = ssModel(S.league.season);
+  const spots = ssSpots();
+  const ids = {};
+  teamPlayers(teamId).filter(p=> playerSlot(p) !== 'taxi').forEach(p=> ids[p.id] = 1);
+  const saved = ((S.lineups||{})[v]||{})[teamId] || null;
+  (saved||[]).forEach(id=>{ if(id && byId(S.players, id)) ids[id] = 1; });
+  const men = Object.keys(ids).map(id=> ssMan(m, byId(S.players, id), v));
+  const by = {}; men.forEach(x=> by[x.p.id] = x);
+  const adv = ssFill(men, spots, null, 'pred');
+  const best = ssFill(men, spots, null, 'actual');
+  const advSet = {}, bestSet = {}; adv.forEach(id=>{ if(id) advSet[id] = 1; }); best.forEach(id=>{ if(id) bestSet[id] = 1; });
+  const pts = (arr)=> ssR2(sum(arr.map(id=> id && by[id] ? by[id].actual : 0)));
+  const advPts = pts(adv), bestPts = pts(best);
+  const ws = weekScored(teamId, v);
+  const youPts = ws != null ? ssR2(ws) : (saved ? ssR2(sum(saved.map(id=>{ const p = id && byId(S.players, id); return p ? ssActual(p, v, m.hist[pstatId(p)]) : 0; }))) : null);
+  /* Each man the best lineup had and it did not, matched to the weakest man
+     it started where he could have played. */
+  const missed = men.filter(x=> bestSet[x.p.id] && !advSet[x.p.id]).sort((a,b)=> b.actual - a.actual);
+  const taken = {}, wrong = [];
+  missed.forEach(mm=>{
+    let pick = -1;
+    adv.forEach((id,i)=>{
+      if(!id || taken[i] || bestSet[id]) return;
+      if((spots[i].eligible||[]).indexOf(mm.p.pos) < 0) return;
+      if(by[id].actual >= mm.actual) return;
+      if(pick < 0 || by[id].actual < by[adv[pick]].actual) pick = i;
+    });
+    if(pick >= 0){
+      taken[pick] = 1;
+      wrong.push({slot: spots[pick].label, sat: mm, started: by[adv[pick]], cost: ssR2(mm.actual - by[adv[pick]].actual)});
+    }
+  });
+  /* Where you and it disagreed, and which of you had it right. */
+  const diffs = [];
+  if(saved){
+    const youSet = {}; saved.forEach(id=>{ if(id) youSet[id] = 1; });
+    const youOnly = saved.map((id,i)=> ({id, i})).filter(o=> o.id && !advSet[o.id] && by[o.id]);
+    const itOnly = adv.map((id,i)=> ({id, i})).filter(o=> o.id && !youSet[o.id]);
+    const used = {};
+    itOnly.forEach(o=>{
+      const x = by[o.id];
+      let k = youOnly.findIndex(y=> !used[y.id] && by[y.id].p.pos === x.p.pos);
+      if(k < 0) k = youOnly.findIndex(y=> !used[y.id] && (spots[y.i]||{eligible:[]}).eligible.indexOf(x.p.pos) >= 0);
+      if(k < 0) return;
+      const y = by[youOnly[k].id]; used[y.p.id] = 1;
+      diffs.push({it:x, you:y, right: x.actual > y.actual ? 'it' : x.actual < y.actual ? 'you' : 'even'});
+    });
+  }
+  return {v, m, men, by, adv, best, advPts, bestPts, youPts, wrong, diffs, saved:!!saved};
+}
+/* How the thinking moved between two weeks, in a few lines. */
+function ssWeightLines(a, b, pos){
+  if(!a || !b) return [];
+  const names = ['toward his last three games','toward his season average','how much the matchup counts','how much a change in workload counts'];
+  const out = [];
+  for(let i = 0; i < 4; i++){
+    const d = b[i] - a[i];
+    if(Math.abs(d) >= 0.01) out.push({d: Math.abs(d)*10, txt: (SS_PLURAL[pos]||pos)+': '+names[i]+' '+Math.round(a[i]*100)+'% → '+Math.round(b[i]*100)+'%'});
+  }
+  const d4 = b[4] - a[4];
+  if(Math.abs(d4) >= 0.1) out.push({d: Math.abs(d4), txt: (SS_PLURAL[pos]||pos)+': correction for the position '+ssSigned(a[4])+' → '+ssSigned(b[4])+' a game'});
+  return out;
+}
+function ssSigned(v){ const r = ssR1(v); return (r > 0 ? '+' : r < 0 ? '−' : '') + Math.abs(r).toFixed(1); }
+function ssLookHTML(tid, want){
+  const m = ssModel(S.league.season);
+  const weeks = ssLookWeeks(m);
+  if(!weeks.length) return '<div class="empty-state"><p>Nothing to look back on yet. Once a week has been played, this shows what the advice would have started, what it got wrong, and what it changed because of it.</p></div>';
+  const v = weeks.indexOf(+want) >= 0 ? +want : weeks[weeks.length-1];
+  const L = ssLook(tid, v);
+  const sel = '<select data-oninput="ssLookWeek" style="max-width:150px">'+weeks.slice().reverse().map(w=> '<option value="'+w+'"'+(w===v?' selected':'')+'>Week '+w+'</option>').join('')+'</select>';
+  const tile = (k, val, s)=> '<div class="tile"><div class="k">'+k+'</div><div class="v">'+(val == null ? '—' : val.toFixed(2))+'</div>'+(s ? '<div class="s">'+s+'</div>' : '')+'</div>';
+  let html = '<div class="row" style="gap:8px;align-items:center;margin-bottom:8px">'+sel+'<span class="tiny dim">worked out from weeks 1–'+Math.max(1, v-1)+' only'+(v === 1 ? ' (Sleeper’s numbers — nothing to learn from yet)' : '')+'</span></div>'+
+    '<div class="ssgrid">'+
+      tile('Its lineup', L.advPts)+tile('Yours', L.youPts, L.saved ? '' : 'nothing saved that week')+tile('Best possible', L.bestPts)+
+    '</div>';
+  html += '<div class="flabel">Where it went wrong</div>';
+  if(!L.wrong.length) html += '<div class="hint good" style="margin-top:0">Nothing — it would have started the best lineup there was.</div>';
+  else html += '<div class="stack">'+L.wrong.map(x=>{
+    const sMiss = ssR1(x.started.actual - x.started.pred), bMiss = ssR1(x.sat.actual - x.sat.pred);
+    const nb = m.beta[Math.min(v+1, m.live)] || 0, ob = m.beta[v] || 0;
+    const nowS = ssR1(nb*ssBias(m, x.started.sid, v+1) - ob*ssBias(m, x.started.sid, v));
+    const nowB = ssR1(nb*ssBias(m, x.sat.sid, v+1) - ob*ssBias(m, x.sat.sid, v));
+    const fix = [];
+    if(Math.abs(nowS) >= 0.1) fix.push(esc(x.started.p.name.split(' ').pop())+' '+(nowS < 0 ? 'down' : 'up')+' '+Math.abs(nowS).toFixed(1));
+    if(Math.abs(nowB) >= 0.1) fix.push(esc(x.sat.p.name.split(' ').pop())+' '+(nowB < 0 ? 'down' : 'up')+' '+Math.abs(nowB).toFixed(1));
+    return '<div class="ssman"><div><span class="tiny dim">'+esc(x.slot)+'</span> Started '+ssName(x.started)+' <span class="tiny dim">thought '+x.started.pred.toFixed(1)+
+      ', got</span> <b>'+x.started.actual.toFixed(2)+'</b> — '+ssName(x.sat)+' sat <span class="tiny dim">thought '+x.sat.pred.toFixed(1)+', got</span> <b>'+x.sat.actual.toFixed(2)+
+      '</b> <span class="bad num">−'+x.cost.toFixed(2)+'</span></div>'+
+      '<div class="sswhy">'+(Math.abs(sMiss) >= Math.abs(bMiss)
+        ? esc(x.started.p.name)+' came in '+Math.abs(sMiss).toFixed(1)+' '+(sMiss < 0 ? 'under' : 'over')+' what it expected'
+        : esc(x.sat.p.name)+' came in '+Math.abs(bMiss).toFixed(1)+' '+(bMiss < 0 ? 'under' : 'over')+' what it expected')+
+      (fix.length ? '. Since then it has marked '+fix.join(' and ')+'.' : '.')+'</div></div>';
+  }).join('')+'</div>';
+  if(L.diffs.length){
+    const it = L.diffs.filter(d=> d.right==='it').length, you = L.diffs.filter(d=> d.right==='you').length;
+    html += '<div class="flabel" style="margin-top:12px">Where you and it differed</div>'+
+      '<div class="hint" style="margin-top:0">It was right '+it+' time'+(it===1?'':'s')+', you '+you+'.</div><div class="stack">'+
+      L.diffs.map(d=> '<div class="ssman tiny">It: '+ssName(d.it)+' <b>'+d.it.actual.toFixed(2)+'</b> · you: '+ssName(d.you)+' <b>'+d.you.actual.toFixed(2)+'</b> '+
+        (d.right==='it' ? '<span class="bad">it had it</span>' : d.right==='you' ? '<span class="good">you had it</span>' : '<span class="dim">level</span>')+'</div>').join('')+'</div>';
+  }
+  /* What that week changed. */
+  const a = m.fits[v], b = m.fits[Math.min(v+1, m.live)];
+  if(a && b && v+1 <= m.live){
+    const posOn = {}; L.men.forEach(x=>{ if(SS_MODEL_POS.indexOf(x.p.pos) >= 0) posOn[x.p.pos] = 1; });
+    let lines = [];
+    Object.keys(posOn).forEach(pos=>{ lines = lines.concat(ssWeightLines(a.pos[pos]||a.global, b.pos[pos]||b.global, pos)); });
+    lines.sort((x,y)=> y.d - x.d);
+    html += '<div class="flabel" style="margin-top:12px">What it changed after week '+v+'</div>'+
+      '<div class="hint" style="margin-top:0">Refitted on '+(b.n||0).toLocaleString()+' player games ('+((b.n||0)-(a.n||0)).toLocaleString()+' new). '+
+      (lines.length ? '' : 'Nothing moved enough to mention for the positions on this roster.')+'</div>'+
+      (lines.length ? '<div class="sswhy" style="margin-left:0">'+lines.slice(0, 6).map(l=> '<div>'+esc(l.txt)+'</div>').join('')+'</div>' : '');
+  }
+  /* The season so far. */
+  const rows = weeks.map(w=>{ const x = w === v ? L : ssLook(tid, w); return {w, a:x.advPts, y:x.youPts, b:x.bestPts, n:x.wrong.length}; });
+  const tA = ssR2(sum(rows.map(r=> r.a))), tB = ssR2(sum(rows.map(r=> r.b)));
+  const withYou = rows.filter(r=> r.y != null), tY = ssR2(sum(withYou.map(r=> r.y)));
+  const beat = withYou.filter(r=> r.a > r.y + 0.005).length;
+  html += '<div class="flabel" style="margin-top:14px">The season so far</div>'+
+    '<div class="scrollx"><table class="sstbl"><thead><tr><th>Week</th><th class="right">Advice</th><th class="right">You</th><th class="right">Best</th><th class="right">Misses</th></tr></thead><tbody>'+
+    rows.map(r=> '<tr'+(r.w===v?' class="on"':'')+'><td>'+r.w+'</td><td class="right num">'+r.a.toFixed(2)+'</td><td class="right num">'+(r.y==null?'—':r.y.toFixed(2))+
+      '</td><td class="right num">'+r.b.toFixed(2)+'</td><td class="right num">'+r.n+'</td></tr>').join('')+
+    '<tr><td><b>All</b></td><td class="right num"><b>'+tA.toFixed(2)+'</b></td><td class="right num"><b>'+(withYou.length ? tY.toFixed(2) : '—')+'</b></td><td class="right num"><b>'+tB.toFixed(2)+'</b></td><td class="right num"><b>'+sum(rows.map(r=> r.n))+'</b></td></tr>'+
+    '</tbody></table></div>'+
+    (withYou.length ? '<div class="hint">Its lineup outscored yours in '+beat+' of '+withYou.length+' week'+(withYou.length===1?'':'s')+'.</div>' : '')+
+    '<div class="hint">Worked out on today’s roster, since there is no record of who was on it each week, with the men you started that week put back. Anybody who did not play that week is left out of every side, as it would have known he was out.</div>';
+  return html;
+}
+function ssHowHTML(){
+  const m = ssModel(S.league.season);
+  const f = m.fits[m.live], g = m.fits[Math.max(1, m.live-1)];
+  const pct = (v)=> Math.round(v*100)+'%';
+  let html = '<div class="hint" style="margin-top:0">It starts from Sleeper’s projection for the week, scored on this league’s settings, and moves it: '+
+    'toward the man’s last three games and his season average; for the defense he faces, by what it has given up to his position against the league average; '+
+    'and for a change in his workload — targets and carries lately against his season. A man ruled out or on a bye is never started; a doubtful one counts at a quarter.</div>'+
+    '<div class="hint">How far it moves each way is not a guess. Every week it is fitted again on every NFL game played this season, the latest weeks counting most, '+
+    'and a man it keeps getting wrong the same way is marked up or down for it. Each week is worked out from only the weeks before it, which is how Look back can show what it really would have said.</div>';
+  if(f){
+    html += '<div class="flabel" style="margin-top:12px">What it leans on now</div><div class="scrollx"><table class="sstbl"><thead><tr><th></th>'+
+      '<th class="right">Last 3</th><th class="right">Season</th><th class="right">Match</th><th class="right">Work</th><th class="right">Fix</th></tr></thead><tbody>'+
+      SS_MODEL_POS.map(pos=>{
+        const w = f.pos[pos] || f.global, o = (g && (g.pos[pos] || g.global)) || w;
+        const cell = (i, txt)=> '<td class="right num">'+txt+'</td>';
+        /* A kicker and a defense have no targets or carries to count. */
+        const noWork = !SS_USE_WORD[pos];
+        return '<tr><td>'+posTag(pos)+'<span class="tiny dim" style="display:block">'+((f.posN||{})[pos]||0).toLocaleString()+' games</span></td>'+
+          cell(0, pct(w[0]))+cell(1, pct(w[1]))+cell(2, pct(w[2]))+
+          (noWork ? '<td class="right dim">—</td>' : cell(3, pct(w[3])))+cell(4, ssSigned(w[4]))+'</tr>';
+      }).join('')+'</tbody></table></div>'+
+      (()=>{
+        /* What the last week moved. */
+        if(!g || g === f) return '';
+        let lines = [];
+        SS_MODEL_POS.forEach(pos=>{ lines = lines.concat(ssWeightLines(g.pos[pos] || g.global, f.pos[pos] || f.global, pos)); });
+        lines.sort((x,y)=> y.d - x.d);
+        return '<div class="flabel" style="margin-top:10px">Since a week ago</div>'+
+          (lines.length ? '<div class="sswhy" style="margin-left:0">'+lines.slice(0, 6).map(l=> '<div>'+esc(l.txt)+'</div>').join('')+'</div>'
+                        : '<div class="hint" style="margin-top:0">Nothing moved enough to mention.</div>');
+      })()+
+      '<div class="hint">Last 3 and Season: how far it moves off Sleeper’s number toward them. Match and Work: how much of the matchup and of a change in workload it takes on. '+
+      'Fix: points added to or taken off everybody at the position, where they have been beating or missing their numbers. Under each position is how many games it has learned from. '+
+      'Of a man’s own run of misses it takes on '+pct(m.beta[m.live] != null ? m.beta[m.live] : SS_BIAS_PRIOR)+'.</div>';
+  }
+  const wk = Object.keys(m.mae).map(Number).sort((a,b)=> a-b).filter(w=> m.mae[w].n);
+  if(wk.length){
+    const T = wk.reduce((t,w)=>{ t.mod += m.mae[w].mod; t.slp += m.mae[w].slp; t.n += m.mae[w].n; return t; }, {mod:0, slp:0, n:0});
+    const better = T.mod <= T.slp;
+    html += '<div class="flabel" style="margin-top:12px">How close it has been</div>'+
+      '<div class="hint" style="margin-top:0">Over '+T.n.toLocaleString()+' games, its numbers were out by <b>'+(T.mod/T.n).toFixed(2)+'</b> a man on average; Sleeper’s own by <b>'+(T.slp/T.n).toFixed(2)+'</b>. '+
+      (better ? '' : 'Sleeper’s have been closer, so it is leaning harder on them as it learns.')+'</div>'+
+      '<div class="scrollx"><table class="sstbl"><thead><tr><th>Week</th><th class="right">Its miss</th><th class="right">Sleeper’s</th><th class="right">Games</th></tr></thead><tbody>'+
+      wk.map(w=> '<tr><td>'+w+'</td><td class="right num">'+(m.mae[w].mod/m.mae[w].n).toFixed(2)+'</td><td class="right num">'+(m.mae[w].slp/m.mae[w].n).toFixed(2)+'</td><td class="right num">'+m.mae[w].n+'</td></tr>').join('')+
+      '</tbody></table></div>';
+  }
+  const L = LSTAT[m.season], P = SS_PROJ[m.season];
+  html += '<div class="hint" style="margin-top:12px">On this device: '+(L ? Object.keys(L.weeks).length : 0)+' week'+((L && Object.keys(L.weeks).length===1)?'':'s')+' of games and '+
+    (P ? Object.keys(P.weeks).length : 0)+' of projections, straight from Sleeper — nothing goes through the league server. '+
+    '<button class="btn sm ghost" data-a="ssReload">Get it all again</button></div>';
+  return html;
+}
+function ssBody(){
+  const st = ui.tmp.ss || {};
+  try{ ssWant(S.league.season); }catch(e){ console.error(e); }
+  const tab = st.tab || 'now';
+  const seg = '<div class="seg" style="margin-bottom:10px">'+[['now','This week'],['look','Look back'],['how','How it decides']].map(t=>
+    '<button data-a="ssTab" data-t="'+t[0]+'" class="'+(tab===t[0]?'on':'')+'">'+t[1]+'</button>').join('')+'</div>';
+  let inner = '';
+  try{ inner = tab === 'look' ? ssLookHTML(st.team, st.look) : tab === 'how' ? ssHowHTML() : ssNowHTML(st.team, st.week); }
+  catch(e){ console.error(e); inner = '<div class="hint bad">Something went wrong working this out: '+esc(e.message||String(e))+'</div>'; }
+  return '<div data-ssbody="1"><div class="tiny dim" style="margin:-4px 0 8px">'+esc(teamName(st.team))+'</div>'+seg+ssStatus()+inner+'</div>';
+}
+/* The line at the top of the lineup screen. */
+function ssLineupNote(tid, w){
+  let inner = 'who it would start, and why';
+  let used = false; try{ used = localStorage.getItem(SS_USED_KEY) === '1'; }catch(e){}
+  try{
+    if(used) ssWant(S.league.season);
+    const m = ssModel(S.league.season);
+    if(used && (m.ready || (S.proj && S.proj.week === w))){
+      const a = ssAdvice(tid, w), n = a.pairs.length;
+      inner = n ? '<b>'+n+' change'+(n===1?'':'s')+'</b> suggested'+(a.total > a.curTotal ? ' · +'+(a.total - a.curTotal).toFixed(1)+' expected' : '')
+                : 'your lineup is the one it would start';
+    }
+  }catch(e){ console.error(e); }
+  return '<div id="luAdvice" class="row" style="gap:8px;align-items:center;margin:4px 0 0">'+
+    '<button class="btn sm" data-a="ssOpen" data-team="'+esc(tid)+'" data-w="'+w+'" data-from="lineup">Start / sit advice</button>'+
+    '<span class="tiny dim">'+inner+'</span></div>';
+}
+ACT.ssOpen = (d)=>{
+  const tid = d.team || actingTeam() || currentTeamId(), w = +d.w || (+S.live.week||1);
+  if(!byId(S.teams, tid)) return toast('Pick a team first','bad');
+  try{ localStorage.setItem(SS_USED_KEY, '1'); }catch(e){}
+  const box = $('#modalBox');
+  if(d.from === 'lineup' && box && $('#modal').classList.contains('on'))
+    ui.tmp.modalReturn = {html: box.innerHTML, scroll: box.scrollTop, ctx:'lineup', label:'Lineup'};
+  else ui.tmp.modalReturn = null;
+  const was = ui.tmp.ss;
+  ui.tmp.ss = {team: tid, week: w, tab: 'now', look: was && was.team === tid ? was.look : null};
+  modal('Start / sit — week '+w, ssBody(), '<button class="btn pri" data-a="closeModal">Done</button>');
+};
+ACT.ssTab = (d)=>{
+  if(!ui.tmp.ss) return;
+  ui.tmp.ss.tab = d.t === 'look' || d.t === 'how' ? d.t : 'now';
+  const box = $('#modalBox');
+  if(box && box.querySelector('.mb')){ box.querySelector('.mb').innerHTML = ssBody(); box.scrollTop = 0; }
+};
+ACT.ssLookWeek = (d, el)=>{
+  if(!ui.tmp.ss) return;
+  ui.tmp.ss.look = +(el && el.value) || null;
+  ssRedrawNow();
+};
+ACT.ssReload = ()=>{
+  const season = +S.league.season;
+  const P = SS_PROJ[season]; if(P){ P.errAt = 0; P.err = null; }
+  const L = LSTAT[season]; if(L){ L.errAt = 0; L.err = null; }
+  ssLoad(season, true);
+  ssRedraw();
+};
+ACT.ssCard = (d)=>{
+  const box = $('#modalBox');
+  ui.tmp.modalReturn = {html: box.innerHTML, scroll: box.scrollTop, ctx:'ss', label:'Advice', prev: ui.tmp.modalReturn || null};
+  ACT.playerCard({id:d.id});
+};
+ACT.ssUse = (d)=>{
+  const tid = d.team, w = +d.w || (+S.live.week||1);
+  if(!canSetLineup(tid, w)) return toast('Not your lineup to set','bad');
+  if(!mustLineupOk(tid)) return;
+  const a = ssAdvice(tid, w);
+  /* The men already playing were held where they were, so nothing here moves
+     a game that has started. */
+  S.lineups = S.lineups || {};
+  S.lineups[w] = S.lineups[w] || {};
+  S.lineups[w][tid] = a.assign.map(id=> id || '');
+  save();
+  toast('Lineup set to the advice','good');
+  if(ui.tmp.modalReturn && ui.tmp.modalReturn.ctx === 'lineup') return modalBack();
+  ssRedrawNow();
+};
+
 /* The lineup editor. Slot by slot, only players who can actually play there,
    and nobody in two places at once. */
 function lineupForm(teamId, week){
@@ -11741,6 +12689,7 @@ function lineupForm(teamId, week){
     ${boss!==teamId?`<div class="hint warn">You are setting this because you hold ${esc(teamName(teamId))}'s
       ${S.league.season+1} first-round pick, and the ${esc(loserName())} decides who takes the first pick.</div>`:''}
     ${(()=>{ const n = lineupLockNote(); return n? '<div class="hint warn">'+esc(n)+'</div>':''; })()}
+    ${ssLineupNote(teamId, week)}
     <div class="stack" style="margin:10px 0">
       ${L.slots.map((x,i)=>{
         const elig = x.eligible || [];
@@ -22487,7 +23436,10 @@ function lstatLoad(season, force){
       }).catch(e=>{ L.err = e.message || String(e); L.errAt = Date.now(); })));
     L.at = Date.now();
     L.fetched = need.length;
-  })().finally(()=>{ L.busy = null; if(L.fetched || L.err) lstatRedraw(); });
+  /* Always drawn again at the end. When every week was already on this
+     device and fresh, nothing was fetched, and the page was left showing
+     "Getting … from Sleeper" until you went away and came back. */
+  })().finally(()=>{ L.busy = null; lstatRedraw(); });
   return L.busy;
 }
 /* Called from the page: load only what is missing or stale, and do not keep
