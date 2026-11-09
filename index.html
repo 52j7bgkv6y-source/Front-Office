@@ -1618,7 +1618,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-08a · start / sit advice with the reasons, a look back at what it got wrong, and what it learned from it';
+const APP_BUILD = '2026-11-09a · week 14 on the schedule goes by the standings, 1 v 2, 3 v 4 and on down';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -6277,6 +6277,23 @@ function fixturesFor(week){
   return (S.fixtures||[]).filter(g=> +g.week===+week && byId(S.teams,g.home) && byId(S.teams,g.away))
     .map(g=> ({home:g.home, away:g.away}));
 }
+/* The week played on the table, if the league plays one. */
+function seededWeek(){
+  return ((S.settings.playoffs||{}).seedLastWeek !== false) ? lastRegularWeek() : 0;
+}
+/* Who plays whom in a week. The week played on the table goes by the table
+   until it is played: Sleeper's own schedule has a placeholder there until
+   that week comes round, so ahead of time it is worked out from the current
+   standings and moves with them. Once it is the week in play, the matchups in
+   play are the truth; once it is played, the results are. */
+function weekFixtures(week){
+  week = +week;
+  if(week && week === seededWeek() && !(S.schedule||[]).some(g=> +g.week === week && g.hp != null)){
+    if(week === (+S.live.week||1) && (S.live.matchups||[]).length) return S.live.matchups.map(g=> ({home:g.home, away:g.away}));
+    if(week > (+S.live.week||1)){ const m = seededWeekMatchups(); if(m.length) return m; }
+  }
+  return fixturesFor(week);
+}
 /* Every week this league has fixtures for. */
 function fixtureWeeks(){
   const w = {};
@@ -6294,8 +6311,7 @@ function buildWeek(week){
   for(let i=0;i<n/2;i++){ const a=ordered[i], b=ordered[n-1-i]; if(a&&b) m.push({home:a, away:b}); }
   /* The table decides the last week before the playoffs; otherwise a schedule
      the league set beats the generated rotation. */
-  const seeded = ((S.settings.playoffs||{}).seedLastWeek !== false) && +week === lastRegularWeek()
-    ? seededWeekMatchups() : [];
+  const seeded = +week === seededWeek() ? seededWeekMatchups() : [];
   const set = fixturesFor(week);
   S.live.matchups = seeded.length ? seeded : (set.length ? set : m);
 
@@ -23136,9 +23152,11 @@ function scheduleRows(teamId){
 }
 function scheduleRow(teamId, w){
   {
-    const set = fixturesFor(w);
-    const g = set.find(x=> x.home===teamId || x.away===teamId);
     const played = (S.schedule||[]).find(x=> +x.week===+w && (x.home===teamId || x.away===teamId));
+    const set = weekFixtures(w);
+    /* A game that has been played is who they actually played, whatever the
+       fixture list said beforehand. */
+    const g = (played && played.hp != null) ? null : set.find(x=> x.home===teamId || x.away===teamId);
     if(!g && !played) return {week:w, opp:null};
     const home = g ? g.home===teamId : played.home===teamId;
     const opp  = g ? (home? g.away : g.home) : (home? played.away : played.home);
@@ -23149,7 +23167,14 @@ function scheduleRow(teamId, w){
     }
     /* A fixture whose result has been cleared is not "played" — it is back to
        being a game still to come. */
-    return {week:w, opp, home, mine, theirs, done: !!played && mine != null && theirs != null};
+    const row = {week:w, opp, home, mine, theirs, done: !!played && mine != null && theirs != null};
+    /* The week on the table, not yet played: say so, with where each side stands. */
+    if(!row.done && g && +w === seededWeek()){
+      const order = standings().map(x=> (x && x.t && x.t.id) || (x && x.id) || x);
+      const a = order.indexOf(teamId), b = order.indexOf(opp);
+      if(a >= 0 && b >= 0) row.seeded = {seed:a+1, oppSeed:b+1, ahead: +w > (+S.live.week||1)};
+    }
+    return row;
   }
 }
 /* ---- The playoffs, if the season ended today --------------------------------
@@ -24152,7 +24177,8 @@ VIEWS.schedule = function(){
             return '<tr'+(!r.done && next && r.week===next.week?' style="background:rgba(197,160,90,.08)"':'')+'>'+
               '<td class="num">'+r.week+'</td>'+
               '<td class="dim tiny">'+(r.home?'vs':'at')+'</td>'+
-              '<td>'+esc(teamName(r.opp))+'</td>'+
+              '<td>'+esc(teamName(r.opp))+(r.seeded ? '<div class="tiny dim">'+ordinal(r.seeded.seed)+' v '+ordinal(r.seeded.oppSeed)+
+                (r.seeded.ahead ? ' on the table \u00b7 if the season ended today' : ' on the table')+'</div>' : '')+'</td>'+
               '<td class="right num">'+(r.done? r.mine.toFixed(2)+' – '+r.theirs.toFixed(2) : '<span class="dim">—</span>')+'</td>'+
               '<td class="right">'+res+'</td></tr>';
           }).join('')}</tbody>
