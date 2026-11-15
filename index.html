@@ -387,7 +387,9 @@ th{
   text-align:left;padding:9px 10px;border-bottom:1px solid var(--rule);white-space:nowrap;background:var(--ink-2);
 }
 td{padding:8px 10px;border-bottom:1px solid var(--rule-soft);font-size:13.5px;vertical-align:middle}
-tbody tr:hover{background:var(--hover)}
+/* Only where there is something to hover with: on a phone a row that had been
+   tapped stayed lit, as though it had been chosen. */
+@media (hover:hover){ tbody tr:hover{background:var(--hover)} }
 tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .scrollx{-webkit-overflow-scrolling:touch}
 .pos{
@@ -603,13 +605,19 @@ th.sortable .sarr{font-style:normal;font-size:11px;margin-left:4px;opacity:.85}
      never is: the page is exactly the height of the screen, and everything
      scrolls inside it, under a bar that has nothing to come loose from. */
   html,body{height:100%;overflow:hidden}
-  body{padding-bottom:0}
-  #app{height:100%;min-height:0}
-  #main{height:100%;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+  /* The bar along the bottom is part of the page now, not pinned over it: the
+     page is a column, the app takes what room there is and the bar sits under
+     it. A pinned bar is placed by the phone, and coming back from another app
+     an iPhone can place it as if the keyboard were still up — half way up the
+     screen with the page carrying on beneath. A bar that is simply the last
+     thing in the column cannot be anywhere but under the page. */
+  body{padding-bottom:0;display:flex;flex-direction:column}
+  #app{flex:1 1 0;height:auto;min-height:0}
+  #main{height:auto;min-height:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
   /* A column of fixed height squeezes what is in it to fit; the top bar and the
      page keep their own heights and the column scrolls instead. */
   #main > *{flex-shrink:0}
-  #view{padding:14px calc(13px + var(--sa-r)) calc(var(--tabbar-h, 56px) + 44px) calc(13px + var(--sa-l))}
+  #view{padding:14px calc(13px + var(--sa-r)) 44px calc(13px + var(--sa-l))}
   #topbar{
     padding:calc(9px + var(--sa-t)) calc(13px + var(--sa-r)) 9px calc(13px + var(--sa-l));
     gap:10px}
@@ -619,9 +627,8 @@ th.sortable .sarr{font-style:normal;font-size:11px;margin-left:4px;opacity:.85}
   .ladder .lhead,.ladder .lrow,.capline{grid-template-columns:128px repeat(var(--yc),minmax(60px,1fr))}
   .ladder .lname .pn{font-size:12px}
   #tabbar{
-    display:grid;grid-template-columns:repeat(7,1fr);position:fixed;left:0;right:0;bottom:0;z-index:50;
-    background:var(--tab-bg);backdrop-filter:blur(12px);border-top:1px solid var(--rule);
-    -webkit-transform:translate3d(0,0,0);will-change:transform;
+    display:grid;grid-template-columns:repeat(7,1fr);position:relative;flex:0 0 auto;z-index:50;
+    background:var(--tab-bg);border-top:1px solid var(--rule);
     padding-bottom:var(--sa-b);
     padding-left:var(--sa-l);
     padding-right:var(--sa-r);
@@ -1030,7 +1037,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 var(--rz)}
   left:0;z-index:4;
   box-shadow:inset -1px 0 0 var(--rule), inset 0 -1px 0 var(--rule)}
 /* A highlighted row keeps its colour under the pinned first column. */
-.scrollx > table > tbody > tr:hover > td:first-child{background:var(--ink-3)}
+@media (hover:hover){ .scrollx > table > tbody > tr:hover > td:first-child{background:var(--ink-3)} }
 .scrollx > table > tbody > tr.rzrow > td:first-child{background:var(--rz-bg)}
 .scrollx > table > tbody > tr.tot > td:first-child,
 .scrollx > table > tfoot > tr.tot > td:first-child{background:var(--ink-3)}
@@ -1061,7 +1068,7 @@ tr.rzrow td:first-child{box-shadow:inset 2px 0 0 var(--rz)}
 .scrollx.freeze2 > table > thead > tr > th:first-child{box-shadow:inset 0 -1px 0 var(--rule)}
 /* And the highlighted rows keep their colour under it, exactly as the first
    column already does. */
-.scrollx.freeze2 > table > tbody > tr:hover > td:nth-child(2){background:var(--ink-3)}
+@media (hover:hover){ .scrollx.freeze2 > table > tbody > tr:hover > td:nth-child(2){background:var(--ink-3)} }
 .scrollx.freeze2 > table > tbody > tr.rzrow > td:nth-child(2){background:var(--rz-bg)}
 .scrollx.freeze2 > table > tbody > tr.tot > td:nth-child(2),
 .scrollx.freeze2 > table > tfoot > tr.tot > td:nth-child(2){background:var(--ink-3)}
@@ -1596,6 +1603,89 @@ div.head>select{width:auto;max-width:240px}
 .sstbl th,.sstbl td{padding:6px 6px}
 @media (max-width:560px){ .sstbl{font-size:12px} .sstbl th,.sstbl td{padding:6px 4px} .sstbl th{letter-spacing:.03em} }
 @media (max-width:560px){ .sswhy{margin-left:0} .ssgrid .tile .v{font-size:16px} .ssslot{width:38px;flex-basis:38px} }
+.lbrk,.listbar{display:none}
+/* ── a phone in the hand ──────────────────────────────────────────────────────
+   The app is used on phones more than anywhere, so the small things are made
+   to suit one: what answers a tap is big enough to hit, a table gives up no
+   more of the screen than it needs, and anything wider than the screen shows
+   that there is more to the side. Nothing is taken off the page. */
+@media (max-width:860px){
+  /* A name or a score in a table is only as tall as its letters, and a tick box
+     only as tall as its line. The part that answers a tap is made bigger,
+     without moving anything. */
+  td a[data-a]:not(.btn), .lmx-row a[data-a], .ssman a[data-a], .scorelink, .thinfo, summary, .check{position:relative}
+  .ssnm a{overflow:visible}
+  td a[data-a]:not(.btn)::after, .lmx-row a[data-a]::after, .ssman a[data-a]::after, .scorelink::after{content:"";position:absolute;left:-4px;right:-4px;top:-9px;bottom:-9px}
+  .thinfo::after{content:"";position:absolute;left:-6px;right:-6px;top:-9px;bottom:-9px}
+  summary::after{content:"";position:absolute;left:0;right:0;top:-8px;bottom:-8px}
+  .check{z-index:0}
+  .check::before{content:"";position:absolute;left:-4px;right:-4px;top:-9px;bottom:-9px;z-index:-1}
+  /* a heading you sort by is a button, and gets a button's height */
+  th{height:40px}
+  .reactmore{min-height:32px;padding:3px 10px}
+  input[type=file]{min-height:40px;padding:8px 0;max-width:100%}
+  input[type=range]{min-height:36px}
+  /* more tabs to the side: the row fades at its edge while there are, and
+     stops fading at the end */
+  .tabs.more-r{
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 26px),transparent);
+    mask-image:linear-gradient(to right,#000 calc(100% - 26px),transparent)}
+}
+@media (max-width:560px){
+  /* tables: less air between the columns, and a heading over a column of
+     figures may take two lines rather than hold the column wide */
+  th{letter-spacing:.03em;padding:7px 6px}
+  td{padding:7px 6px}
+  th.right{white-space:normal;line-height:1.2}
+  th:first-child,td:first-child{padding-left:10px}
+  th:last-child,td:last-child{padding-right:10px}
+  /* A table inside a padded box runs to the edges of the panel, so it has the
+     whole width of the screen to fit in. */
+  .panel>.pb>.scrollx:has(> table){margin-left:-14px;margin-right:-14px}
+  /* One that only just misses fitting is drawn a little tighter (see fitTables). */
+  table.fit1 th,table.fit1 td{padding-left:4px;padding-right:4px}
+  table.fit1 th:first-child,table.fit1 td:first-child{padding-left:8px}
+  table.fit1 th:last-child,table.fit1 td:last-child{padding-right:8px}
+  table.fit2 td{font-size:12.5px}
+  table.fit2 th{font-size:11.5px;letter-spacing:0}
+  /* ── a wide table read as a list (see listLay) ── */
+  .listbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-bottom:1px solid var(--rule-soft)}
+  .panel>.pb>.listbar{margin:0 -14px;padding-top:0}
+  .listbar .seg button{min-height:34px;padding:6px 13px;font-size:13px}
+  .listsort{display:flex;align-items:center;gap:6px;margin-left:auto;min-width:0}
+  .listsort span{font:600 11px/1 var(--disp);letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+  .listsort select{width:auto;max-width:42vw;min-height:34px;padding-top:4px;padding-bottom:4px}
+  .listflip{min-width:38px}
+  .scrollx.aslist{max-height:none !important;overflow:visible}
+  .scrollx.aslist::after{display:none}
+  .scrollx.aslist > table{display:block;width:auto;min-width:0}
+  .scrollx.aslist > table > thead{display:none}
+  .scrollx.aslist > table > tbody,.scrollx.aslist > table > tfoot{display:block}
+  .scrollx.aslist > table > * > tr{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:14px;row-gap:4px;
+    padding:9px 12px 10px;border-bottom:1px solid var(--rule-soft)}
+  .scrollx.aslist > table > * > tr > td{display:inline-flex;align-items:baseline;flex-wrap:wrap;gap:3px 5px;padding:0;border:0;
+    position:static !important;background:none !important;box-shadow:none !important;max-width:100% !important;min-width:0;
+    width:auto;height:auto;text-align:left;white-space:normal;overflow-wrap:anywhere;font-size:13.5px}
+  .scrollx.aslist td[data-l]::before{content:attr(data-l);flex:0 0 auto;font:600 10.5px/1.25 var(--disp);
+    letter-spacing:.06em;text-transform:uppercase;color:var(--mute);white-space:nowrap}
+  .scrollx.aslist td.nolab::before{display:none}
+  .scrollx.aslist > table > * > tr > td.lt{display:block;flex:1 1 0;font-size:14.5px}
+  .scrollx.aslist > table > * > tr > td.lrank{flex:0 0 auto;color:var(--mute)}
+  .scrollx.aslist > table > * > tr > td.lbrk{display:block;flex:0 0 100%;height:0}
+  .scrollx.aslist > table > * > tr > td.nil{display:none}
+  .scrollx.aslist > table > * > tr > td.yr{flex:0 0 calc(25% - 10.5px);flex-direction:column;flex-wrap:nowrap;gap:1px;align-items:flex-start}
+  .scrollx.aslist td .spark{flex:0 0 auto;width:40px;height:16px;align-self:center}
+  .scrollx.aslist > table > * > tr > td.lact{margin-left:auto;align-self:center}
+  .scrollx.aslist > table > * > tr > td[colspan]:only-child{display:block;flex:1 0 100%}
+  .scrollx.aslist > table > * > tr.posband{padding:7px 12px}
+  .scrollx.aslist > table > tfoot > tr > td.lt{font:600 12px/1.2 var(--disp);letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+  /* the four years of cap room in one row, so the roster starts sooner */
+  .grid.keep2.yearstrip{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+  .yearstrip .tile{padding:7px 7px 8px}
+  .yearstrip .tile .k{font-size:11.5px}
+  .yearstrip .tile .v{font-size:clamp(11.5px,3.5vw,14px);margin-top:4px;letter-spacing:-.03em}
+  .yearstrip .tile .s{font-size:11px;line-height:1.3;margin-top:5px}
+}
 </style>
 </head>
 <body>
@@ -1618,7 +1708,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-09a · week 14 on the schedule goes by the standings, 1 v 2, 3 v 4 and on down';
+const APP_BUILD = '2026-11-14b · made for a phone: easier to tap, number pads, tables that fit, and any wide table as a list';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -4092,6 +4182,16 @@ VIEWS.look = function(){
           '<button type="button" class="'+(tx===z.k?'on':'')+'" data-a="setTextSize" data-k="'+z.k+'" aria-pressed="'+(tx===z.k)+'">'+z.name+'</button>').join('')}</div>
         <p class="muted" style="margin:0">Makes every page bigger to read. The menus along the top and bottom stay the same size so they still fit.</p>
       </div></div>
+    <div class="panel" style="margin-top:14px"><div class="ph"><h3>Wide tables on a phone</h3></div>
+      <div class="pb stack">
+        <div class="seg" role="group" aria-label="Wide tables on a phone">
+          <button type="button" class="${listOn() ? '' : 'on'}" data-a="listAll" data-m="table" aria-pressed="${!listOn()}">Tables</button>
+          <button type="button" class="${listOn() ? 'on' : ''}" data-a="listAll" data-m="list" aria-pressed="${listOn()}">Lists</button></div>
+        <p class="muted" style="margin:0">Some tables are wider than any phone — a roster with ten years of salary, the standings.
+          As a table you slide it sideways to see the rest. As a list each row is a block with its figures labelled under the name,
+          and there is nothing to slide. Every figure is in both. Any one table can also be switched on its own, with the
+          Table and List buttons above it. On a computer or a tablet they are always tables.</p>
+      </div></div>
   </div>`;
 };
 
@@ -5048,6 +5148,10 @@ function render(){
   }
   freezeCols();
   measureBars();
+  /* A phone's own tidying — and the list, where this phone reads a wide table
+     as one — before the page is put back where it was being read, so that it
+     goes back to the right place. */
+  phoneTidy();
   putTabScroll(tabsWere);
   /* Every table and list back where it was being read, and the page with it. */
   putBoxScroll(boxesWere);
@@ -10114,7 +10218,7 @@ VIEWS.teams = function(){
       <div class="pb tight scrollx"><table class="rostbl">
       <thead><tr>${sortTh('ros','name','Player')}${sortTh('ros','pos','Pos')}${sortTh('ros','age','Age','hide-xs')}
         ${sortTh('ros','struct','Structure')}${sortTh('ros','left','Yrs left','right')}
-        ${yrs.map(yy=>sortTh('ros','y'+yy, String(yy), 'right')).join('')}${sortTh('ros','total','Total','right')}<th></th></tr></thead>
+        ${yrs.map(yy=>sortTh('ros','y'+yy, String(yy), 'right')).join('')}${sortTh('ros','total','Total','right')}<th class="${mine?'hide-ph':''}"></th></tr></thead>
       <tbody>
       ${posBanded('ros', sortRows('ros', roster, Object.assign({
           name:p=>p.name, pos:p=>posSortVal(p,y), age:p=>+p.age||0,
@@ -10145,7 +10249,7 @@ VIEWS.teams = function(){
             return '<td class="right num dim'+ph+'" title="under contract in '+yy+' at '+money(owed)+'">'+money(owed)+'</td>';
           }).join('')}
           <td class="right money">${money(c.total)}</td>
-          <td class="right nowrap">
+          <td class="right nowrap${mine?' hide-ph':''}">
             ${!mine ? (isTagged(p)?'<span class="pill warn">tagged</span>':'<span class="tiny dim">—</span>') : `
             ${(waiverBarsExtension(p) || yearsLeft(p.contract) > 2 || rookieExtBarred(p)) ? '' :
               '<button class="btn sm ghost'+(canExtend(p).ok?'':' danger')+'" data-a="extend" data-id="'+p.id+'" title="'+
@@ -10165,7 +10269,7 @@ VIEWS.teams = function(){
       }) || '<tr><td colspan="12" class="dim center" style="padding:24px">No players under contract.</td></tr>'}
       </tbody>
       <tfoot><tr class="tot">${rosFootLead('Committed')}
-        ${yrs.map(yy=>'<td class="right money">'+money(teamCommitted(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
+        ${yrs.map(yy=>'<td class="right money">'+money(teamCommitted(tid,yy))+'</td>').join('')}<td></td><td class="hide-ph"></td></tr>
       ${(()=>{
         /* Manual adjustments stand on their own rather than hiding inside the
            committed figure, so it is clear what is contracts and what is not. */
@@ -10174,18 +10278,18 @@ VIEWS.teams = function(){
         return '<tr>'+rosFootLead('Cap adjustments', 'dim')+
           yrs.map(yy=>{ const v = teamAdj(tid,yy);
             return '<td class="right num '+(v>0?'bad':v<0?'good':'dim')+'">'+(v? money(v,{plus:true}) : '—')+'</td>'; }).join('')+
-          '<td></td><td></td></tr>';
+          '<td></td><td class="hide-ph"></td></tr>';
       })()}
-      <tr>${rosFootLead('Cap', 'dim')}${yrs.map(yy=>'<td class="right num dim">'+money(teamCapForYear(tid,yy))+'</td>').join('')}<td></td><td></td></tr>
+      <tr>${rosFootLead('Cap', 'dim')}${yrs.map(yy=>'<td class="right num dim">'+money(teamCapForYear(tid,yy))+'</td>').join('')}<td></td><td class="hide-ph"></td></tr>
       <tr class="tot">${rosFootLead('Space')}
         ${yrs.map(yy=>{ const sp=capSpace(tid,yy);
-          return '<td class="right money '+(sp<0?'bad':'good')+'">'+money(sp,{plus:true})+'</td>'; }).join('')}<td></td><td></td></tr>
+          return '<td class="right money '+(sp<0?'bad':'good')+'">'+money(sp,{plus:true})+'</td>'; }).join('')}<td></td><td class="hide-ph"></td></tr>
       ${(()=>{
         /* What can be carried out of each year, so a manager knows how much is worth keeping back. */
         if(!rolloverOn()) return '';
         const rc = rolloverCells(tid, yrs);
-        return '<tr data-romax="1">'+rosFootLead('Max rollover', 'dim')+rc.max.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td></td></tr>'+
-               '<tr data-ronow="1">'+rosFootLead('Rolls over as it stands', 'dim')+rc.now.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td></td></tr>';
+        return '<tr data-romax="1">'+rosFootLead('Max rollover', 'dim')+rc.max.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td class="hide-ph"></td></tr>'+
+               '<tr data-ronow="1">'+rosFootLead('Rolls over as it stands', 'dim')+rc.now.map(c=> '<td class="right">'+c+'</td>').join('')+'<td></td><td class="hide-ph"></td></tr>';
       })()}
       </tfoot></table></div>
       ${rolloverOn() ? '<div class="pb"><div class="hint" data-rosays="1">'+esc(rolloverSays(tid))+'</div></div>' : ''}</div>` : ''}
@@ -11770,6 +11874,248 @@ function onSomeRoster(p){
 function freeAgents(){
   return S.players.filter(p=> !onSomeRoster(p) && !isRetired(p) && !hideIDP(p));
 }
+/* ---- A phone's own manners ---------------------------------------------------
+   Small things that make the app sit better in a hand. None of them changes
+   what is on the page. */
+/* A box for a number brings up the number pad rather than the letters — but
+   only where a minus sign can never be wanted. The pad on an iPhone has no
+   minus on it, so a box that may go below nothing keeps the full keyboard. */
+function numPad(el){
+  if(!el || el.tagName !== 'INPUT' || el.type !== 'number' || el.hasAttribute('inputmode')) return;
+  const min = el.getAttribute('min');
+  if(min === null || min === '' || !(parseFloat(min) >= 0)) return;
+  el.setAttribute('inputmode', 'decimal');
+}
+function numPads(root){
+  (root || document).querySelectorAll('input[type=number]:not([inputmode])').forEach(numPad);
+}
+/* A row of tabs wider than the screen fades at its right edge while there are
+   more that way, and stops fading at the end. */
+function edgeHint(box){
+  const more = box.scrollWidth - box.clientWidth - box.scrollLeft > 6;
+  if(more !== box.classList.contains('more-r')) box.classList.toggle('more-r', more);
+}
+function edgeHints(){ document.querySelectorAll('.tabs').forEach(edgeHint); }
+/* A table a few pixels wider than the phone is the worst kind: it slides about
+   for the sake of a sliver. One that only just misses is drawn a little tighter
+   so that it fits; one that is far too wide is left alone to scroll. */
+function fitTables(again){
+  if(window.innerWidth > 560){
+    if(again) document.querySelectorAll('table.fit1, table.fit2').forEach(t=>{ t.classList.remove('fit1','fit2'); delete t.dataset.fit; });
+    return;
+  }
+  document.querySelectorAll('.scrollx > table').forEach(t=>{
+    if(again){ t.classList.remove('fit1','fit2'); delete t.dataset.fit; }
+    if(t.dataset.fit) return;
+    const box = t.parentElement;
+    if(box.classList.contains('aslist')) return;       /* read as a list: nothing to fit */
+    t.dataset.fit = '0';
+    const cols = ((t.tHead && t.tHead.rows[0]) || t.rows[0] || {cells:[]}).cells.length;
+    let over = box.scrollWidth - box.clientWidth;
+    if(over <= 1 || over > 4*cols + 8) return;
+    t.classList.add('fit1'); t.dataset.fit = '1';
+    over = box.scrollWidth - box.clientWidth;
+    if(over <= 1) return;
+    if(over <= 3*cols + 6){
+      t.classList.add('fit2'); t.dataset.fit = '2';
+      if(box.scrollWidth - box.clientWidth <= 1) return;
+    }
+    /* Still too wide: no use squeezing a table that has to scroll anyway. */
+    t.classList.remove('fit1','fit2'); t.dataset.fit = '0';
+  });
+}
+/* ---- A wide table as a list --------------------------------------------------
+   Some tables are wider than any phone: ten years of salary, a dozen columns of
+   standings. On a phone each can be read as a list instead — every row a block
+   with its figures labelled under the name, and nothing to slide sideways.
+   The choice is the reader's, made once on any table and remembered on that
+   phone; a table is what you get until you ask for the list. The table itself
+   is never rebuilt: the same cells are laid out differently, so everything
+   that could be tapped still can be, and nothing is left out but the dashes. */
+var listPrefs = null;
+function listPrefsGet(){
+  if(!listPrefs){
+    let p = null;
+    try{ p = JSON.parse(localStorage.getItem('frontoffice.phone.list.v1') || 'null'); }catch(e){}
+    listPrefs = (p && typeof p === 'object') ? p : {};
+    if(!listPrefs.t || typeof listPrefs.t !== 'object') listPrefs.t = {};
+  }
+  return listPrefs;
+}
+/* One table can be set on its own; anything not set goes by the switch for
+   all of them on the Colours & text page. */
+function listOn(key){
+  const p = listPrefsGet();
+  return (key != null && p.t[key] != null) ? !!p.t[key] : !!p.all;
+}
+function setListOn(on, key){
+  const p = listPrefsGet();
+  if(key == null){ p.all = !!on; p.t = {}; }      /* all of them, and whatever was set on single tables goes with it */
+  else p.t[key] = !!on;
+  try{ localStorage.setItem('frontoffice.phone.list.v1', JSON.stringify(p)); }catch(e){}
+}
+/* Which table this is, so its own choice can be remembered: by what it sorts
+   on where it can be sorted, otherwise by the page it is on and where on it. */
+function listKey(t, i){
+  const th = t.tHead && t.tHead.querySelector('th.sortable[data-t]');
+  return th ? 's:'+th.dataset.t : 'p:'+route+'|'+(ui.sub||'')+'|'+i;
+}
+function listHeadText(th){
+  const c = th.cloneNode(true);
+  c.querySelectorAll('.sarr').forEach(x=> x.remove());
+  return (c.textContent || '').replace(/\s+/g, ' ').trim();
+}
+/* The strip above a table that is wider than the phone: Table or List, and in
+   a list — where there are no headings to tap — what to sort by. */
+function listBarHTML(t, on, key){
+  const ths = Array.from(t.tHead.querySelectorAll('th.sortable[data-t][data-k]'));
+  let sort = '';
+  if(on && ths.length){
+    const cur = ths.find(th=> th.classList.contains('sorted'));
+    const arrow = cur ? ((cur.querySelector('.sarr') || {}).textContent || '') : '';
+    sort = '<label class="listsort"><span>Sort</span><select data-a="listSort">'+
+      (cur ? '' : '<option value="" selected>as it comes</option>')+
+      ths.map(th=> '<option value="'+esc(th.dataset.t)+'|'+esc(th.dataset.k)+'"'+(th === cur ? ' selected' : '')+'>'+
+        esc(listHeadText(th) || th.dataset.k)+'</option>').join('')+
+      '</select></label>'+
+      (cur ? '<button class="btn sm ghost listflip" data-a="sortBy" data-t="'+esc(cur.dataset.t)+'" data-k="'+esc(cur.dataset.k)+
+        '" title="turn the order round" aria-label="turn the order round">'+(arrow || '⇅')+'</button>' : '');
+  }
+  return '<div class="listbar"><div class="seg" role="group" aria-label="how this is laid out">'+
+    '<button data-a="listMode" data-m="table" data-key="'+esc(key)+'" class="'+(on ? '' : 'on')+'">Table</button>'+
+    '<button data-a="listMode" data-m="list" data-key="'+esc(key)+'" class="'+(on ? 'on' : '')+'">List</button></div>'+sort+'</div>';
+}
+/* Lay one table out as a list. Each cell is told the heading it sat under; a
+   cell with nothing in it is left out; the years of a deal sit four across,
+   in line from one row to the next, so a season can still be read down. */
+function listLay(t, box){
+  box.classList.add('aslist');
+  const heads = Array.from(t.tHead.rows[0].cells).map(listHeadText);
+  const two = box.classList.contains('freeze2');
+  const EMPTY = /^[—–-]?$/, NUM = /^[\d\s.,$%#+−-]*$/, YEAR = /^\d{4}$/;
+  const rows = [];
+  Array.from(t.tBodies).forEach(b=> rows.push.apply(rows, Array.from(b.rows)));
+  if(t.tFoot) rows.push.apply(rows, Array.from(t.tFoot.rows));
+  rows.forEach(tr=>{
+    const cells = Array.from(tr.cells);
+    if(cells.length < 2) return;                 /* a band or a note across the whole table */
+    let col = 0, title = null, ranked = false, tail = false;
+    const years = [];
+    cells.forEach(td=>{
+      const at = col, label = heads[at] || '';
+      col += td.colSpan || 1;
+      const txt = (td.textContent || '').replace(/\s+/g, ' ').trim();
+      const numeric = NUM.test(txt);
+      const empty = EMPTY.test(txt) && !td.querySelector('button, a, img, svg, .meter, .spark, .pos');
+      /* A place number in front of the name stays in front of it. */
+      if(at === 0 && numeric && (two || !label)){ td.classList.add('lrank'); ranked = true; return; }
+      if((at === 0 && !numeric) || (at === 1 && (two || ranked))){ td.classList.add('lt'); title = td; return; }
+      if(YEAR.test(label)){ years.push({td, label, empty}); return; }
+      if(empty){ td.classList.add('nil'); return; }
+      if(label) td.dataset.l = label;
+      /* a figure after the years — the total — sits in line with them */
+      if(years.length && numeric && label){ td.classList.add('yr'); td.style.order = 5; tail = true; return; }
+      /* a position's coloured tag, or the little chart of a deal's shape,
+         says what it is without a heading over it */
+      const only = td.children.length === 1 ? td.firstElementChild : null;
+      if((only && only.classList.contains('pos') && txt === (only.textContent || '').trim()) || td.querySelector('.spark')) td.classList.add('nolab');
+      /* The short facts first and a long one after them, so that it does not
+         split them across two lines. A single button goes up beside the name;
+         a row of them goes last, on a line of its own. */
+      if(!label){
+        td.classList.add('lact');
+        td.style.order = (title && td.querySelectorAll('button, a.btn').length === 1) ? 0 : 6;
+      } else td.style.order = (td.querySelector('.spark') || txt.length > 22) ? 3 : 2;
+    });
+    /* The years: from the first one that has anything in it to the last. One
+       left empty in between keeps its place, so the columns stay in line. */
+    let first = -1, last = -1;
+    years.forEach((y, i)=>{ if(!y.empty){ if(first < 0) first = i; last = i; } });
+    years.forEach((y, i)=>{
+      if(first < 0 || i > last){ y.td.classList.add('nil'); return; }
+      y.td.classList.add('yr'); y.td.dataset.l = y.label; y.td.style.order = 5;
+    });
+    /* A new line after the name, and another before the years. */
+    const brk = (order)=>{
+      const b = document.createElement('td');
+      b.className = 'lbrk'; b.setAttribute('aria-hidden', 'true'); b.style.order = order;
+      tr.appendChild(b);
+    };
+    if(title) brk(1);
+    if(first >= 0 || tail) brk(4);
+  });
+}
+/* Offer the list wherever a table is still wider than the phone, and lay it
+   out that way if that is what this phone has asked for.
+   Whether a table is too wide can only be found by drawing it as a table and
+   measuring. That is remembered, so a table already known to be too wide — and
+   wanted as a list — is laid out as a list straight away the next time the
+   page is drawn, instead of being drawn twice. `first` is that quick pass,
+   made before anything is measured. */
+var listWide = {};
+function phoneLists(first){
+  if(window.innerWidth > 560) return;
+  const view = document.getElementById('view');
+  if(!view) return;
+  view.querySelectorAll('.scrollx > table').forEach((t, i)=>{
+    if(t.dataset.lm) return;
+    const box = t.parentElement;
+    const head = t.tHead && t.tHead.rows[0];
+    const key = listKey(t, i), wideKey = key+'@'+window.innerWidth;
+    if(first){
+      if(!head || !listWide[wideKey] || !listOn(key)) return;
+      t.dataset.lm = '1';
+      box.insertAdjacentHTML('beforebegin', listBarHTML(t, true, key));
+      listLay(t, box);
+      return;
+    }
+    if(!box.clientWidth) return;                 /* folded away: looked at when it is opened */
+    t.dataset.lm = '0';
+    if(!head || head.cells.length < 4) return;
+    if(box.hasAttribute('data-nolist')) return;                                 /* a table made for comparing down its columns */
+    if(t.querySelector('tbody input, tbody select, tbody textarea')) return;    /* a form stays a form */
+    if(box.scrollWidth - box.clientWidth <= 8){ delete listWide[wideKey]; return; }   /* it fits: nothing to offer */
+    listWide[wideKey] = true;
+    t.dataset.lm = '1';
+    const on = listOn(key);
+    box.insertAdjacentHTML('beforebegin', listBarHTML(t, on, key));
+    if(on) listLay(t, box);
+  });
+}
+ACT.listMode = (d)=>{ setListOn(d.m === 'list', d.key || null); render(); };
+/* The switch for all of them, on the Colours & text page. */
+ACT.listAll = (d)=>{ setListOn(d.m === 'list'); render(); };
+ACT.listSort = (d, el)=>{
+  const v = (el && el.value) || '';
+  const i = v.indexOf('|');
+  if(i < 0) return;
+  ACT.sortBy({t: v.slice(0, i), k: v.slice(i + 1)});
+};
+var phoneTidyQ = false;
+function phoneTidy(again){ try{ numPads(); phoneLists(true); fitTables(again); phoneLists(); edgeHints(); }catch(e){ console.error(e); } }
+function phoneTidySoon(){
+  if(phoneTidyQ) return;
+  phoneTidyQ = true;
+  requestAnimationFrame(()=>{ phoneTidyQ = false; phoneTidy(); });
+}
+/* Before the box takes the cursor, so the right keyboard comes up first time. */
+document.addEventListener('pointerdown', (e)=> numPad(e.target), true);
+document.addEventListener('focusin', (e)=> numPad(e.target), true);
+/* Whatever is drawn, wherever it is drawn: the page, a pop-up, the sheet. */
+try{
+  const tidyWatch = new MutationObserver(phoneTidySoon);
+  ['view','modalBox','sheet'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) tidyWatch.observe(el, {childList:true, subtree:true});
+  });
+}catch(e){}
+window.addEventListener('resize', ()=> requestAnimationFrame(()=> phoneTidy(true)));
+document.addEventListener('toggle', phoneTidySoon, true);
+document.addEventListener('scroll', (e)=>{
+  const t = e.target;
+  if(t && t.nodeType === 1 && t.classList.contains('tabs')) edgeHint(t);
+}, {capture:true, passive:true});
+
 /* ============================================================
    START / SIT
    Who to play this week, and why. It works from every NFL game played this
@@ -23963,7 +24309,7 @@ function fsTableHTML(){
           data-oninput="findType" placeholder="e.g. Amon-Ra, or DET, or WR" autocomplete="off"></label>
       ${status}
     </div>
-    ${shown.length ? `<div class="pb tight scrollx fstable freeze2"><table>
+    ${shown.length ? `<div class="pb tight scrollx fstable freeze2" data-nolist="1"><table>
       <thead><tr><th class="right fsnum" title="${esc(fsColMeaning('#'))}">#</th>${th('name', 'Player')}${cols.map(c=> th(c.k, c.label, c.txt ? '' : 'right')).join('')}</tr></thead>
       <tbody>${shown.map((a, ix)=>{
         const inLeague = a.p;
@@ -32737,7 +33083,7 @@ Jaxson Dart,R 25">${esc((rk&&rk.text)||'')}</textarea></label>
         <label class="f"><span>League id, or just paste the address</span>
           <input type="text" id="slId" data-k="slId" placeholder="1234567890123456789" value="${esc(ui.tmp.slIdVal||'')}"></label>
         <div class="hint">Open your league on sleeper.com and look at the address bar —
-          <span class="num">sleeper.com/leagues/<b>1234567890123456789</b>/team</span>. That long number is it.
+          <span class="num" style="overflow-wrap:anywhere">sleeper.com/leagues/<b>1234567890123456789</b>/team</span>. That long number is it.
           In the phone app it is under League → Settings → General.</div>
         <div class="flabel" style="margin-top:6px">Bring across</div>
         <label class="check"><input type="checkbox" ${o.teams?'checked':''} data-a="slOpt" data-k="teams">
@@ -38884,36 +39230,31 @@ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState 
    is: the bottom bar floating in the middle with the page carrying on beneath
    it, the top bar gone and the page running up under the clock. The same can
    happen coming back to the app after it has been in the background.
-   So whenever the visible part of the page moves or changes size, the bottom
-   bar is held to the bottom of what can actually be seen, and a page left
-   shifted with nothing being typed is put back where it belongs. While the
-   keyboard is up, or the page has been pinched in or out, nothing is moved. */
+   So whenever the visible part of the page moves or changes size, a page left
+   shifted with nothing being typed is put back where it belongs. The bar
+   itself is never moved: on a phone it is the last thing in the page's
+   column, not pinned over it. While the keyboard is up, or the page has been
+   pinched in or out, nothing is touched. */
 function vvTyping(){
   const a = document.activeElement;
   return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable);
 }
 function vvFix(){
   const vv = window.visualViewport, bar = document.getElementById('tabbar');
-  if(!vv || !bar) return;
-  const typing = vvTyping();
-  if(Math.abs((+vv.scale || 1) - 1) > 0.01 || (typing && vv.height < window.innerHeight - 100)){
-    if(bar.style.transform) bar.style.transform = '';
-    return;
-  }
-  /* Pulled past the top or the bottom of the page — the bounce. The visible
-     part of the page slides about while it springs back, and following it with
-     the bar is what threw the bar up the screen whenever somebody scrolled to
-     the bottom and back. Nothing is wrong there, so nothing is moved. */
-  const se = document.scrollingElement || document.documentElement;
-  const y = window.scrollY, maxY = Math.max(0, se.scrollHeight - window.innerHeight);
-  if(y < 0 || y > maxY + 1){ if(bar.style.transform) bar.style.transform = ''; return; }
-  const off = Math.round(vv.offsetTop + vv.height - window.innerHeight);
-  /* Only a real gap is put right — a few pixels is the screen settling. */
-  const want = Math.abs(off) > 24 ? 'translate3d(0,'+off+'px,0)' : '';
-  if(bar.style.transform !== want) bar.style.transform = want;
-  /* Left shifted with nothing being typed: put the page back under the screen. */
-  if(!typing && vv.offsetTop > 24){
-    try{ window.scrollTo(window.scrollX, window.scrollY); }catch(e){}
+  if(!bar) return;
+  /* The bar is never moved. It used to be slid to the bottom of what the phone
+     said could be seen — and coming back from another app the phone can say
+     the keyboard is still up when it is not, which left the bar half way up
+     the screen. It is part of the page now and stays where the page puts it. */
+  if(bar.style.transform) bar.style.transform = '';
+  if(getComputedStyle(bar).display === 'none') return;      /* a wide screen: the page scrolls as normal */
+  if(vv && Math.abs((+vv.scale || 1) - 1) > 0.01) return;    /* pinched in or out */
+  if(vvTyping()) return;                                     /* the keyboard is up */
+  /* On a phone the page itself never scrolls. If the phone has left it pushed
+     up — after the keyboard, or coming back to the app — put it back. */
+  const y = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+  if(y > 0 || (vv && vv.offsetTop > 24)){
+    try{ window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }catch(e){}
   }
 }
 let vvQueued = false;
@@ -38924,8 +39265,6 @@ function vvSoon(){ if(vvQueued) return; vvQueued = true; requestAnimationFrame((
    bar jump about. */
 let vvRestT = 0;
 function vvScrolling(){
-  const bar = document.getElementById('tabbar');
-  if(bar && bar.style.transform && !vvTyping()) bar.style.transform = '';
   clearTimeout(vvRestT);
   vvRestT = setTimeout(vvFix, 350);
 }
@@ -38937,7 +39276,8 @@ window.addEventListener('scroll', vvScrolling, {passive:true});
 window.addEventListener('resize', vvSoon);
 window.addEventListener('orientationchange', ()=> setTimeout(vvFix, 300));
 window.addEventListener('pageshow', ()=> setTimeout(vvFix, 50));
-document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible'){ setTimeout(vvFix, 50); setTimeout(vvFix, 400); } });
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible'){ setTimeout(vvFix, 50); setTimeout(vvFix, 400); setTimeout(vvFix, 1200); } });
+window.addEventListener('focus', ()=> setTimeout(vvFix, 100));
 /* The keyboard going away is the usual moment: look again once it has gone. */
 document.addEventListener('focusout', ()=>{ setTimeout(vvFix, 60); setTimeout(vvFix, 350); });
 window.addEventListener('pagehide', flushSaves);
