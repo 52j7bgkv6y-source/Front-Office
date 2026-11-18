@@ -1716,7 +1716,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18a · the commissioner can change or cancel a taxi claim';
+const APP_BUILD = '2026-11-18b · injury listings follow Sleeper through the day, on any phone';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -3073,7 +3073,7 @@ function lineupOverHTML(teamId, compact){
       ' in all to make lineup changes again.</div>');
   }
   if(o.badIR.length){
-    const at = +((S.meta||{}).injAt) || 0;
+    const at = injLastCheck();
     lines.push('<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><span class="dim">Injury listings come from Sleeper'+
       (at ? ', last checked '+esc(dstr(at)) : '')+'. If Sleeper has him on IR, check again.</span>'+
       '<button class="btn sm" data-a="injRefresh"'+(ui.tmp.faRefBusy ? ' disabled' : '')+'>'+(ui.tmp.faRefBusy ? 'Checking\u2026' : 'Check Sleeper now')+'</button></div>');
@@ -10779,7 +10779,7 @@ VIEWS.teams = function(){
 
         <div class="panel"><div class="ph"><h3>Injured reserve</h3><div class="spacer"></div>
           <button class="btn sm ghost" data-a="injRefresh"${ui.tmp.faRefBusy ? ' disabled' : ''} title="Read every player\u2019s injury listing from Sleeper now">${ui.tmp.faRefBusy ? 'Checking\u2026' : 'Check Sleeper'}</button></div>
-          <div class="pb" style="padding-bottom:0"><div class="tiny dim" data-injat>Injury listings come from Sleeper${(S.meta||{}).injAt ? ', last checked '+esc(dstr(S.meta.injAt)) : ''}. The commissioner\u2019s phone checks once a day; Check Sleeper looks now.</div></div>
+          <div class="pb" style="padding-bottom:0"><div class="tiny dim" data-injat>Injury listings come from Sleeper${injLastCheck() ? ', last checked '+esc(dstr(injLastCheck())) : ''}. They follow Sleeper\u2019s through the day \u2014 every hour on game days, every three hours otherwise; Check Sleeper looks now.</div></div>
           <div class="pb tight scrollx"><table>
           <thead><tr>${sortTh('sqI','name','Player')}${sortTh('sqI','pos','Pos')}${sortTh('sqI','nfl','Deal','hide-xs')}
             ${sortTh('sqI','hit','Cap hit','right')}<th></th></tr></thead>
@@ -32981,8 +32981,8 @@ function faRefreshLast(){
 function faRefreshSays(){
   const at = faRefreshLast();
   return at ? 'Checked against Sleeper '+dstr(at)+(+((S.league||{}).faPoolAdded) && (S.league||{}).faPoolAt === at ? ' \u2014 '+S.league.faPoolAdded+' new' : '')+
-      '. The commissioner\u2019s phone checks once a day \u2014 new free agents, and every player\u2019s injury listing; Check Sleeper looks now.'
-    : 'Not checked against Sleeper yet. The commissioner\u2019s phone checks once a day \u2014 new free agents, and every player\u2019s injury listing; Check Sleeper looks now.';
+      '. New free agents are looked for once a day; injury listings follow Sleeper\u2019s through the day. Check Sleeper looks now.'
+    : 'Not checked against Sleeper yet. New free agents are looked for once a day; injury listings follow Sleeper\u2019s through the day. Check Sleeper looks now.';
 }
 async function faRefresh(opts){
   opts = opts || {};
@@ -33080,6 +33080,50 @@ ACT.injRefresh = async ()=>{
       ? 'Injury listings updated from Sleeper: '+hurt.slice(0, 6).map(p=> p.name+' '+((p.injury||{}).status || 'healthy')).join(', ')+(hurt.length > 6 ? ' and '+(hurt.length-6)+' more' : '')
       : 'Listings already match Sleeper', hurt.length ? 'good' : 'warn', 7000);
 };
+/* ---- Injury listings, kept with Sleeper's through the day ---------------------
+   The listings came over once a day, and only when the commissioner's phone was
+   opened — so a man Sleeper had cleared stayed Out here, and one moved to
+   Questionable stayed whatever he was the day before. Now any phone that is
+   open and up to date looks again once they are an hour old on a game day
+   (Thursday, Sunday, Monday) and three hours old otherwise, and brings every
+   player's listing — on a roster or not — into line with Sleeper's. Only what
+   changed is saved, and nothing is saved when nothing changed, so a phone
+   finding everything already right costs the league nothing. */
+const INJ_KEY = 'frontoffice.injcheck.v1';
+function injDueMs(){
+  const d = new Date(new Date().toLocaleString('en-US', {timeZone:'America/Chicago'})).getDay();
+  return (d === 0 || d === 1 || d === 4) ? 3600000 : 3*3600000;
+}
+function injLastCheck(){
+  let local = 0; try{ local = +localStorage.getItem(INJ_KEY) || 0; }catch(e){}
+  return Math.max(local, +((S.meta||{}).injAt) || 0);
+}
+async function injSync(){
+  const players = await getJSON(SLEEPER+'/players/nfl');
+  SLEEPER_PLAYERS = players;
+  const changed = [];
+  (S.players||[]).forEach(p=>{
+    if(!p.sleeperId) return;
+    const pl = players[String(p.sleeperId)];
+    if(pl && applySleeperInjury(p, pl)) changed.push(p);
+  });
+  const now = Date.now();
+  try{ localStorage.setItem(INJ_KEY, String(now)); }catch(e){}
+  if(changed.length){
+    S.meta = S.meta || {}; S.meta.injAt = now;
+    clearCapCache(); save();
+  }
+  return changed;
+}
+function injAutoRun(){
+  if(!S || (S.meta && S.meta.demo) || !sleeperLeague() || ui.tmp.injBusy || ui.tmp.faRefBusy) return false;
+  if(document.visibilityState && document.visibilityState !== 'visible') return false;
+  if(Date.now() - injLastCheck() < injDueMs()) return false;
+  if(Date.now() - (ui.tmp.injTried||0) < 15*60000) return false;      /* a failure waits a quarter of an hour */
+  ui.tmp.injTried = Date.now(); ui.tmp.injBusy = true;
+  scoped(injSync)().then(ch=>{ ui.tmp.injBusy = false; if(ch && ch.length) renderQuiet(); }, ()=>{ ui.tmp.injBusy = false; });
+  return true;
+}
 /* Once a day, on the commissioner's phone. */
 function faRefreshRun(){
   if(!isCommish() || (S.meta && S.meta.demo) || ui.tmp.faRefBusy || !sleeperLeague()) return;
@@ -40370,6 +40414,8 @@ function tickBody(){
   /* Once: the earlier years of every deal, then every structure, from the salary sheets. */
   try{ if(sheetYearsRun()) needsRender = true; }catch(e){}
   try{ if(sheetShapesRun()) needsRender = true; }catch(e){}
+  /* Injury listings, through the day, on whichever phone is open. */
+  try{ injAutoRun(); }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
   try{ if(engTick()) needsRender = true; }catch(e){}
   /* Look for revisions a few times a day. The NFL takes days over them, so
