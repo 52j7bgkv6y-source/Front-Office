@@ -1716,7 +1716,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18c · the commissioner can set who made a taxi claim and how it ended';
+const APP_BUILD = '2026-11-18d · every cut keeps the deal until the free agency draft';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -3567,6 +3567,65 @@ function cutLoose(p, fromTeam){
   p.contract.freedBy = fromTeam || null;
   p.contract.freedAt = Date.now();
   p.contract.freedYear = S.league.season;
+}
+/* ---- Every cut keeps the deal until the free agency draft ---------------------
+   Retired, an NFL free agent, off a practice squad, let go for nothing on IR:
+   whoever cut him, the contract stays on him for the rest of the season. Picked
+   up before the next free agency draft, it goes with him as it stands; still
+   unsigned when that draft is over, it is gone (orphanSweep) and he is a
+   free agent at the league minimum — a new $1 deal for whoever takes him.
+   What a back loaded deal handed back when he was cut is taken off any
+   back-loading bill that deal runs up later, so it is never paid twice. */
+function keepDealOnCut(p, from, settled){
+  if(!p || !p.contract) return;
+  if(settled > 0) p.contract.blAdj = fixInc((+p.contract.blAdj || 0) - settled);
+  cutLoose(p, from);
+}
+/* Deals torn up by those cuts before this build, put back. The deals as they
+   stood on 17 Nov 2026, 19:26 (US Central); only a man cut that way since, with
+   no deal on him and on nobody's roster, gets his back.
+   [id, first season, salaries, base, structure, set year by year, earlier years] */
+const DEAL_SNAP_AT = 1794959386913;
+const DEAL_SNAP = [["p_grijntk",2026,[0.82,0.55],9.1,"ev",1,0],["p_l3gkbtj",2026,[31.0],null,"ev",1,0],["p_jogjab8",2026,[1.0],null,"ev",1,0],["p_z03z23y",2026,[24.8,49.6],31,"st_s4d4uvs",1,[[2024,24.8],[2025,24.8]]],["p_zi2iwqc",2026,[1.0],null,"ev",1,0],["p_lq5jd5x",2026,[5.0,5.0],null,"ev",1,0],["p_y1tlyne",2026,[1.0,1.0,1.0],1,"ev",1,0],["p_tgl3qxq",2026,[1.0],1,"ev",1,0],["p_neccoli",2026,[1.0],null,"ev",1,0],["p_9414y7j",2026,[0.0,0.0,0.0],39,"ev",1,0],["p_kre47ks",2026,[1.0,2.0],1,"ev",0,0],["p_ln60z70",2026,[1.0],null,"ev",1,0],["p_n67qrxg",2026,[1.0,18.0],1,"ev",1,0],["p_8rqycn0",2026,[1.0],null,"ev",0,0],["p_opyuufx",2026,[17.0,17.0],null,"ev",1,0],["p_06l4bu9",2026,[0.0,17.0],17,"ev",1,0],["p_k2ir595",2026,[1.0],null,"ev",1,0],["p_2504392",2026,[175.5,9.75,3.9,3.9,1.95],null,"st_dz2ocwo",1,0],["p_istwhd3",2026,[18.0],null,"ev",1,0],["p_50u8k98",2026,[1.0],null,"ev",1,0],["p_bonaeea",2026,[17.0],null,"ev",1,0],["p_adtcw8b",2026,[1.0,2.0],1,"ev",0,0],["p_sgtvkcf",2026,[4.0,4.0],null,"ev",1,0],["p_3980nmb",2026,[0.53,76.35,4.25,1.7,1.7,1.0],8.9,"ev",1,0],["p_mvmjvv9",2026,[1.0],null,"ev",1,0],["p_7k1mbiv",2026,[1.0],null,"ev",1,0],["p_wsx9x0t",2026,[1.0],null,"ev",1,0],["p_0tp4yjq",2026,[1.5,0.6,0.6,0.3],6,"ev",1,0],["p_gk7o1m2",2026,[1.8,1.2],20,"ev",1,0],["p_ob8hz9a",2026,[69.0],null,"ev",1,0],["p_iwxgoa5",2026,[1.0],null,"ev",0,0],["p_m66659g",2026,[24.0],null,"ev",1,0],["p_twy488v",2026,[37.0,23.0],37,"ev",1,0],["p_rse5q79",2026,[1.46,0.97],16.2,"ev",1,0],["p_kh9qezr",2026,[2.0,2.0],null,"ev",1,0],["p_x3nm3nx",2026,[6.0,6.0],null,"ev",1,0],["p_d4t7dg4",2026,[1.0,1.0,1.0],null,"ev",1,0],["p_2gbhyyd",2026,[1.0],null,"ev",1,0],["p_ye94zab",2026,[1.0],null,"ev",1,0],["p_gqn4b01",2026,[14.0],null,"ev",1,0],["p_k93sayz",2026,[23.0,24.0],23,"ev",1,0],["p_2db9jv4",2026,[22.0,22.0],null,"ev",1,0],["p_qq2j4yc",2026,[23.0],null,"ev",1,0],["p_x8ylqx1",2026,[19.0],null,"ev",1,0],["p_w01dpfj",2026,[5.2],null,"ev",1,0],["p_aj7x83z",2026,[1.0],null,"ev",1,0],["p_1k7a1ol",2026,[6.0],null,"ev",1,0],["p_uyc6te8",2026,[18.0],null,"ev",0,0],["p_ajpex81",2026,[3.3,3.3],null,"ev",1,0],["p_45tfohl",2026,[12.0,36.0],15,"ev",1,0],["p_y4rozm2",2026,[17.0,8.5,8.5,8.5],17,"ev",1,0],["p_up7yhu5",2026,[2.0],null,"ev",0,0],["p_5mkh952",2026,[1.0],null,"ev",1,0],["p_skjng8u",2026,[8.34,29.19],13.9,"ev",1,0],["p_ehhdf0z",2026,[34.0,85.0],34,"ev",1,0],["p_mj85cex",2026,[1.0],null,"ev",1,0],["p_ps162lr",2026,[1.0],null,"ev",1,0],["p_ewbtz6c",2026,[2.0],null,"ev",1,0],["p_g1hvwao",2026,[18.0,18.0],null,"ev",1,0],["p_dor28ch",2026,[18.0,43.2],19,"ev",1,0],["p_ftz5muu",2026,[46.0],null,"ev",1,0],["p_anydxcg",2026,[7.0],null,"ev",1,0],["p_4921atg",2026,[1.0],null,"ev",1,0],["p_95py6ga",2026,[7.0],null,"ev",1,0],["p_r54hfsf",2026,[6.0],null,"ev",1,0],["p_gcbiijw",2026,[9.12,31.92],15.2,"ev",1,0],["p_zpej3gi",2026,[1.8,1.8,0.9],18,"ev",1,0],["p_ss4a6e3",2026,[17.0,17.0,17.0,17.0,17.0],null,"ev",1,0],["p_vnq283i",2026,[2.0],null,"ev",0,0],["p_bd5aeqw",2026,[1.0],null,"ev",1,0],["p_ruvfow9",2026,[4.3,4.3],null,"ev",1,0],["p_65a45jy",2026,[1.0],null,"ev",1,0],["p_7g1bw8o",2026,[20.0,20.0],null,"ev",1,0],["p_izt918v",2026,[19.0],null,"ev",1,0],["p_s4gkk2d",2026,[1.0,1.0],null,"ev",1,0],["p_p2o135q",2026,[14.0,14.0],null,"ev",1,0],["p_7lllg2y",2026,[37.38],17.8,"ev",1,0],["p_4kq5cdj",2026,[1.0],null,"ev",0,0],["p_wpry0a8",2026,[1.0],null,"ev",1,0],["p_eeh6l07",2026,[68.0],null,"ev",1,0],["p_c5ukz21",2026,[3.2],null,"ev",1,0],["p_w59r3g2",2026,[10.0,10.0],null,"ev",1,0],["p_dg52g13",2026,[20.0,20.0,20.0],null,"ev",1,0],["p_r8s2rey",2026,[1.0],null,"ev",0,0],["p_klnls30",2026,[31.08],14.8,"ev",1,0],["p_wr5i7ma",2026,[1.0],null,"ev",0,0],["p_yhebqmj",2026,[13.0],null,"ev",0,0],["p_kfn0kun",2026,[1.0],null,"ev",0,0],["p_ud200z9",2026,[15.0],null,"ev",1,0],["p_wg8ncct",2026,[1.26,33.0,33.0,33.0,33.0,33.0],21,"ev",1,0],["p_fj2otmn",2026,[13.6],null,"ev",1,0],["p_25rzhtd",2026,[2.3],null,"ev",1,0],["p_p4c1hgf",2026,[7.6],null,"ev",1,0],["p_6wbt7f0",2026,[1.4,0.7],14,"ev",1,0],["p_loy390b",2026,[4.74,1.0,1.0,1.0,1.0,1.0],15.8,"ev",1,0],["p_qx83aop",2026,[1.0],null,"ev",0,0],["p_jzffic7",2026,[1.85,1.23],20.5,"ev",1,0],["p_ilx033g",2026,[9.3,18.6,65.1],null,"ev",1,0],["p_ilslzf4",2026,[1.0],null,"ev",0,0],["p_r34fiwn",2026,[1.0,1.0],null,"ev",1,0],["p_j9n4lz9",2026,[21.0,73.5],12,"ev",1,0],["p_44v1ygf",2026,[1.0],null,"ev",0,0],["p_7bba118",2026,[1.0],null,"ev",1,0],["p_lb8yn57",2026,[1.0],null,"ev",0,0],["p_qkl6tol",2026,[24.0,41.6,10.4],24,"ev",1,0],["p_ztk2x1m",2026,[8.4],null,"ev",1,0],["p_hwokm24",2026,[10.6],null,"ev",1,0],["p_ty2yiyp",2026,[14.4,50.4],24,"st_823p6dh",1,0],["p_0m5kdp9",2026,[1.0],null,"ev",0,0],["p_hxgnai9",2026,[15.2,15.2],null,"ev",1,0],["p_iqoo8db",2026,[13.9,13.9],null,"ev",1,0],["p_bhkws50",2026,[24.0,24.0,24.0,24.0,24.0],null,"ev",1,0],["p_qgbgfid",2026,[13.2,13.2,13.2],null,"ev",1,0],["p_pvwyza3",2026,[24.0,24.0,24.0,24.0],null,"ev",1,0],["p_zh82gg3",2026,[17.0,17.0],null,"ev",1,0],["p_xvri39z",2026,[1.0],null,"ev",0,0],["p_6jty6ws",2026,[1.0,1.0],null,"ev",1,0],["p_3jrvct5",2026,[17.0],null,"ev",1,0],["p_45cdabe",2026,[38.0,17.0],38,"ev",1,0],["p_v5i7xuz",2026,[1.0],null,"ev",1,0],["p_stdxu9y",2026,[12.0],null,"ev",0,0],["p_x4a26fw",2026,[1.0],null,"ev",1,0],["p_fiv9m7v",2026,[17.0,8.0],17,"ev",1,0],["p_imdezz2",2026,[6.8,6.8,6.8],null,"ev",0,0],["p_h6thryo",2026,[15.6,15.6,15.6],null,"ev",1,0],["p_g2th0y0",2026,[1.0],null,"ev",1,0],["p_vh7vepz",2026,[6.0],null,"ev",1,0],["p_oazz29p",2026,[1.0,1.0],1,"ev",1,0],["p_ca4edns",2026,[27.0],null,"ev",1,0],["p_mjogbog",2026,[28.0,17.0],28,"ev",1,0],["p_8c3gv8b",2026,[20.0,20.0,20.0],null,"ev",1,0],["p_9l34x4y",2026,[1.0,1.0],1,"ev",1,0],["p_ysfxin4",2026,[17.0,42.5],17,"ev",1,0],["p_6n6j11u",2026,[14.0,16.0,16.0],14,"ev",1,0],["p_sld0jng",2026,[18.0],null,"ev",1,0],["p_e18bc71",2026,[17.8,11.0,11.0],17.8,"ev",1,0],["p_wmkryqg",2026,[17.0,17.0],null,"ev",1,0],["p_ujglg96",2026,[16.2,16.2],null,"ev",1,0],["p_ytwyy64",2026,[27.0],null,"ev",1,0],["p_syb9ypp",2026,[28.0,17.0],28,"ev",1,0],["p_hr3e2ud",2026,[19.0,19.0,19.0,19.0,19.0],null,"ev",1,0],["p_35c5fxc",2026,[1.0],null,"ev",0,0],["p_4xeuf4k",2026,[15.0,2.0],15,"ev",1,0],["p_ftr69g7",2026,[1.0,1.0],null,"ev",1,0],["p_ma5zi7r",2026,[14.8,16.0,16.0,16.0,16.0,16.0],14.8,"ev",1,0],["p_8q2erro",2026,[22.8,17.0,17.0],38,"ev",1,0],["p_sfmsn1z",2026,[17.0,17.0],null,"ev",1,0],["p_zxdpi0a",2026,[5.0,2.0],5,"ev",0,0],["p_dgv13h5",2026,[1.0],null,"ev",0,0],["p_z70dd91",2026,[31.0,26.0,26.0,26.0,26.0,26.0],31,"ev",1,0],["p_nkjfsc2",2026,[5.0,1.0,1.0],5,"ev",1,0],["p_d4z1oqe",2026,[1.0,1.0],null,"ev",1,0],["p_aj79vqx",2026,[1.0],null,"ev",0,0],["p_wccu9oi",2026,[2.0,2.0,2.0],null,"ev",0,0],["p_dfqcffb",2026,[1.0],null,"ev",0,0],["p_hodf77y",2026,[7.0],null,"ev",1,0],["p_sd0zd1y",2026,[19.0],null,"ev",1,0],["p_tokn78j",2026,[37.0,37.0,37.0,37.0,37.0],null,"ev",1,0],["p_tar6ebd",2026,[8.82],4.2,"ev",1,0],["p_fq305oh",2026,[2.0],null,"ev",0,0],["p_l40whec",2026,[1.0,1.0],null,"ev",1,0],["p_xz7e2nu",2026,[6.0,6.0],null,"ev",1,0],["p_jlv4awj",2026,[15.0],null,"ev",1,0],["p_4ygtewc",2026,[1.0],null,"ev",0,0],["p_e6dxgt6",2026,[2.4],null,"ev",1,0],["p_8ta9307",2026,[24.0,24.0],null,"ev",1,0],["p_0wng9zj",2026,[1.0,1.0,1.0],null,"ev",1,0],["p_cayt0fz",2026,[14.0],null,"ev",1,0],["p_2yqtz5c",2026,[15.2,30.4],19,"ev",1,0],["p_pzz63ea",2026,[1.0],null,"ev",0,0],["p_5otf671",2026,[15.2,15.2],19,"ev",1,0],["p_85c9akc",2026,[19.0,19.0],null,"ev",1,0],["p_k2qgios",2026,[17.0],null,"ev",1,0],["p_vkxwqy7",2026,[19.0,19.0,19.0,19.0],null,"ev",1,0],["p_m7w6p2c",2026,[12.9,7.74],17.2,"ev",1,0],["p_9a2c4sj",2026,[1.3,1.3,0.65],13,"ev",1,0],["p_lmjbwfg",2026,[1.0,1.0],null,"ev",0,0],["p_sqcys69",2026,[1.0],null,"ev",0,0],["p_l2kx3rj",2026,[18.0],null,"ev",1,0],["p_jw9swpu",2026,[1.0],null,"ev",1,0],["p_6cv1oc6",2026,[2.0,2.0],null,"ev",0,0],["p_algngxb",2026,[76.0,24.0,24.0,24.0],76,"ev",1,0],["p_w0vntlp",2026,[26.0],null,"ev",1,0],["p_v5fkvdh",2026,[37.0,11.0,11.0],37,"ev",1,0],["p_h377too",2026,[1.0],null,"ev",0,0],["p_167vf4f",2026,[17.0],null,"ev",1,0],["p_4mtipo1",2026,[2.0],null,"ev",1,0],["p_xngudkm",2026,[1.0],null,"ev",0,0],["p_vtjyilv",2026,[1.2,24.0,24.0],20,"ev",1,0],["p_nenn0ub",2026,[1.0],null,"ev",1,0],["p_ve6pego",2026,[1.0],null,"ev",1,0],["p_s3ruyo7",2026,[7.0],null,"ev",1,0],["p_0zm968w",2026,[1.0,1.0,1.0],1,"ev",0,0],["p_7048jgw",2026,[8.55,14.25,34.2],null,"ev",1,0],["p_ppevkk9",2026,[14.0,19.0],14,"ev",1,0],["p_szba4f3",2026,[1.0],null,"ev",0,0],["p_hyxchak",2026,[22.0],null,"ev",0,0],["p_ahq1qkg",2026,[1.0],null,"ev",0,0],["p_1jvugos",2026,[1.0,1.0],null,"ev",1,0],["p_pgyobep",2026,[12.9,12.9],null,"ev",1,0],["p_jnmj1bb",2026,[17.0,17.0],null,"ev",1,0],["p_61d2mat",2026,[0.5,0.5,0.25],15,"ev",1,0],["p_0qr2fwn",2026,[1.0],null,"ev",0,0],["p_bolf359",2026,[11.8,27.2,6.8],11.8,"ev",0,0],["p_lujbt1c",2026,[16.8,30.6,12.75,7.65],16.8,"ev",1,0],["p_sdmvkxs",2026,[1.0],null,"ev",0,0],["p_mv4mgtl",2026,[1.0,8.0,8.0],1,"ev",0,0],["p_hj0pblj",2026,[6.6],null,"ev",1,0],["p_h08n0tl",2026,[115.0,46.0,23.0,23.0,23.0],null,"ev",1,0],["p_eioansn",2026,[9.9,16.5,39.6],null,"st_s4d4uvs",0,0],["p_9xrsib4",2026,[14.0],null,"ev",1,0],["p_5y72gse",2026,[37.0,37.0,37.0,37.0,37.0],null,"ev",1,0],["p_q81ssuo",2026,[1.94,1.29],21.5,"ev",1,0],["p_esui2zp",2026,[17.0],null,"ev",1,0],["p_gtjgelr",2026,[1.0],null,"ev",0,0],["p_2xerpzr",2026,[24.0,24.0],null,"ev",1,0],["p_zexi07p",2026,[17.0,17.0],null,"ev",1,0],["p_p21529w",2026,[1.0,1.0],null,"ev",1,0],["p_suill4t",2026,[1.0,1.0],null,"ev",1,0],["p_x2vvod6",2026,[0.46,16.0],11.6,"ev",1,0],["p_wkw8or3",2026,[53.0,53.0,53.0],null,"ev",1,0],["p_lu6ac95",2026,[1.0],null,"ev",1,0],["p_jcffwgk",2026,[0.5,0.5,0.25],5,"st_dz2ocwo",1,0],["p_2e8y4l4",2026,[6.0,19.0],6,"ev",1,0],["p_3604bti",2026,[1.0,10.0],1,"ev",0,0],["p_sh00fx6",2026,[1.0],null,"ev",0,0],["p_9blgw07",2026,[35.0,35.0],null,"ev",1,0],["p_4q9u861",2026,[2.2],null,"ev",1,0],["p_firkfla",2026,[30.0],null,"ev",0,0],["p_o5fkc4y",2026,[1.0],null,"ev",0,0],["p_mxjwf7r",2026,[14.0],null,"ev",1,0],["p_39z8oho",2026,[14.0,14.0],null,"ev",1,0],["p_8gbxb79",2026,[14.0],null,"ev",1,0],["p_1exqy4e",2026,[11.2,11.2,11.2],null,"ev",0,0],["p_hbr9rf6",2026,[14.3,14.3,14.3],null,"ev",0,0],["p_0tauelj",2026,[8.8,8.8,8.8],null,"ev",0,0],["p_ho9jbil",2026,[7.8],null,"ev",0,0],["p_lbgksrs",2026,[1.0],null,"ev",0,0],["p_qfeph7e",2026,[16.6,16.6,16.6],null,"ev",0,0],["p_0t8l2tv",2026,[1.0],null,"ev",0,0],["p_zv9vg7f",2026,[1.0],null,"ev",0,0],["p_f7vt6ov",2026,[50.0],null,"ev",0,0],["p_uug0270",2026,[17.0],null,"ev",1,0],["p_2vlnwar",2026,[7.0],null,"ev",1,0],["p_rzo56i2",2026,[14.0],null,"ev",1,0],["p_mzhsasy",2026,[1.0,1.0,1.0],null,"ev",1,0],["p_sj6lhw9",2026,[80.0,80.0],null,"ev",1,0],["p_5y44g6j",2026,[1.0],null,"ev",0,0],["p_vuauk46",2026,[76.5,4.25,1.7,1.7,0.85],28,"ev",1,0],["p_w4vgs55",2026,[1.0,1.0],null,"ev",0,0],["p_wgm27ze",2026,[12.9,12.9],null,"ev",1,0],["p_svgbhgd",2026,[18.8,18.8,18.8],null,"ev",1,0],["p_aletli2",2026,[1.0],null,"ev",1,0],["p_1zqhyk1",2026,[1.0],null,"ev",1,0],["p_8lmfr1t",2026,[1.0],null,"ev",1,0],["p_5oqw9ah",2026,[7.14,24.99],11.9,"ev",1,0],["p_qx5kwvu",2026,[15.0,15.0],null,"ev",1,0],["p_q0o0xpl",2026,[2.4],null,"ev",1,0],["p_ozyfqqb",2026,[9.8,9.8,9.8],null,"ev",1,0],["p_vaeo2yj",2026,[17.0,17.0],null,"ev",1,0],["p_dj469iv",2026,[1.0],null,"ev",0,0],["p_xcs1d9x",2026,[9.8],null,"ev",1,0],["p_x3m03qb",2026,[19.0],null,"ev",1,0],["p_7m9u559",2026,[14.0,14.0],null,"ev",1,0],["p_d4pc1mp",2026,[1.0],null,"ev",0,0],["p_vnuk9fp",2026,[4.3,4.3],null,"ev",1,0],["p_rqpkz9o",2026,[21.0],null,"ev",1,0],["p_btvrgpk",2026,[2.0],null,"ev",0,0],["p_a75tgbu",2026,[9.4],null,"ev",1,0],["p_a60h6w9",2026,[6.54,3.27],10.9,"ev",1,0],["p_m15u5a8",2026,[11.0],null,"ev",1,0],["p_n8bvky6",2026,[19.5,19.5],null,"ev",1,0],["p_7hal7s9",2026,[1.0],null,"ev",0,0],["p_9y7howg",2026,[1.0],null,"ev",1,0],["p_8fcyts9",2026,[8.55],19,"ev",1,0],["p_7br9u09",2026,[16.6,16.6,16.6],null,"ev",1,0],["p_g51nfcy",2026,[14.3,14.3,14.3],null,"ev",1,0],["p_fvw0c0v",2026,[1.0],null,"ev",1,0],["p_i0fdaxm",2026,[19.0],null,"ev",1,0],["p_4cv4hj2",2026,[3.84,7.68,26.88],9.8,"ev",1,0],["p_zk915pc",2026,[27.0,27.0,27.0,27.0,27.0],null,"ev",1,0],["p_xu9dnm7",2026,[1.0],null,"ev",1,0],["p_tfrzzof",2026,[15.0,15.0],null,"ev",1,0],["p_k3hxxhm",2026,[1.0,1.0],null,"ev",1,0],["p_cfal90o",2026,[17.0,17.0,17.0,17.0],null,"ev",1,0],["p_qqh3cwh",2026,[7.8],null,"ev",1,0],["p_r7jvla8",2026,[26.0],null,"ev",1,0],["p_jo0goeg",2026,[29.0],null,"ev",1,0],["p_14c6qgv",2026,[1.0],null,"ev",0,0],["p_xckg4nc",2026,[1.0],null,"ev",0,0],["p_tom51tf",2026,[17.0,17.0],null,"ev",1,0],["p_tf5pr8l",2026,[1.0],null,"ev",0,0],["p_phw9r7s",2026,[1.0],null,"ev",1,0],["p_s2ip20w",2026,[1.14,108.0,6.0,2.4,2.4,1.2],19,"ev",1,0],["p_azvb6w9",2026,[3.4],null,"ev",0,0],["p_a6zrg9j",2026,[1.0],null,"ev",0,0],["p_wxxd0eb",2026,[1.0,1.0],null,"ev",0,0],["p_m0yqkii",2026,[19.0],null,"ev",1,0],["p_dd0r2kf",2026,[8.8,8.8],null,"ev",0,0],["p_48ucdr1",2026,[39.9,1.26,0.84],null,"ev",1,0],["p_zxj82so",2026,[1.0],null,"ev",1,0],["p_1lcgzmz",2026,[1.0],null,"ev",0,0],["p_llmiwhj",2026,[0.82],13.6,"ev",1,0],["p_wu7umo2",2026,[9.4],null,"ev",1,0],["p_fqy8z94",2026,[1.0,1.0],null,"ev",0,0],["p_a9z0our",2026,[41.0],null,"ev",1,0],["p_efusb2o",2026,[1.0],null,"ev",0,0],["p_5ezn98r",2026,[14.0],null,"ev",1,0],["p_dopjisc",2026,[53.58,1.69,1.13],null,"st_dz2ocwo",0,0],["p_u4hde49",2026,[9.3,9.3],null,"ev",0,0],["p_wj5ipq0",2026,[53.0],null,"ev",1,0],["p_6l9n8lf",2026,[12.2,12.2,12.2],null,"ev",0,0],["p_94hpm7f",2026,[2.0],null,"ev",1,0],["p_zmpcfp9",2026,[5.4,5.4],null,"ev",0,0],["p_hn8k67l",2026,[1.0],null,"ev",0,0],["p_3801z5c",2026,[59.85,1.89,1.26],null,"st_dz2ocwo",1,0],["p_8igh9ji",2026,[2.0,2.0],null,"ev",0,0],["p_la1sqqh",2026,[1.0],null,"ev",1,0],["p_n167e1z",2026,[1.94,1.29],21.5,"ev",1,0],["p_4to652n",2026,[14.0,14.0],null,"ev",1,0],["p_wz9ucru",2026,[14.0],null,"ev",1,0],["p_fokw51z",2026,[1.0],null,"ev",0,0],["p_4y7kxip",2026,[14.0],null,"ev",1,0],["p_5981pbc",2026,[16.0],null,"ev",1,0],["p_m1cfw9y",2026,[20.0],null,"ev",0,0],["p_urkx929",2026,[4.4,4.4],null,"ev",0,0],["p_q6x72cs",2026,[2.3],null,"ev",1,0],["p_purrt30",2026,[10.98,5.49],18.3,"ev",1,0],["p_c5i81hc",2026,[1.0,1.0,1.0],null,"ev",0,0],["p_98arb4w",2026,[1.0,1.0],null,"ev",0,0],["p_sg25xxk",2026,[1.0,1.0,1.0,1.0],null,"ev",1,0],["p_fdrqz2j",2026,[1.0],null,"ev",0,0],["p_cz77lml",2026,[17.6,17.6,17.6],null,"ev",1,0],["p_d7oia01",2026,[1.0],null,"ev",0,0],["p_cplfqkg",2026,[17.0,23.0,23.0],17,"ev",1,0],["p_xdrmys7",2026,[19.0,19.0,19.0],null,"ev",1,0],["p_ww1nrw8",2026,[28.0,28.0,28.0,28.0],null,"ev",1,0],["p_4x4iejc",2026,[19.0,19.0,19.0,19.0],null,"ev",1,0],["p_e322rzw",2026,[2.0,2.0],null,"ev",1,0],["p_sgrs03r",2026,[5.4,5.4,5.4],null,"ev",0,0],["p_ewbf5sy",2026,[6.8],null,"ev",0,0],["p_iixduwn",2026,[30.0],null,"ev",0,0],["p_vg8k5om",2026,[20.0,20.0],null,"ev",1,0],["p_eb6vjco",2026,[7.0],null,"ev",1,0],["p_t5oe523",2026,[1.0],null,"ev",0,0],["p_gfw0l6t",2026,[6.0,6.0],null,"ev",1,0],["p_r8o17jf",2026,[1.0],null,"ev",0,0],["p_9ak46vd",2026,[1.0],null,"ev",0,0],["p_svyqudg",2026,[15.0,15.0],null,"ev",1,0],["p_wf0fx8x",2026,[6.6,6.6],null,"ev",1,0],["p_l28hvhn",2026,[1.0],null,"ev",0,0],["p_9z458y0",2026,[23.0,23.0,23.0],null,"ev",1,0],["p_i2afz6p",2026,[1.0,1.0],null,"ev",0,0],["p_mdmwj6i",2026,[17.0,17.0,17.0,17.0],null,"ev",1,0],["p_pl204pr",2026,[22.0,22.0,22.0],null,"ev",0,0],["p_yh5viui",2026,[15.6,15.6,15.6],null,"ev",0,0],["p_6h5ry9z",2026,[15.0],null,"ev",1,0],["p_matr1ub",2026,[1.0,1.0],null,"ev",0,0],["p_9opqe17",2026,[1.0,22.0],1,"ev",1,0],["p_ghem04c",2026,[7.4],null,"ev",1,0],["p_gykyjxv",2026,[1.0],null,"ev",0,0],["p_z4nn5vn",2026,[17.6,17.6,17.6],null,"ev",0,0],["p_8wh54sb",2026,[1.0],null,"ev",1,0],["p_uo8sj6f",2026,[9.6,9.6],null,"ev",1,0],["p_5k1rkyx",2026,[14.0,14.0],null,"ev",1,0],["p_h5y9vk4",2026,[7.0,7.0],null,"ev",1,0],["p_fgn6xhk",2026,[14.0,14.0,14.0,14.0,14.0],null,"ev",1,0],["p_xyyuly3",2026,[1.0],null,"ev",0,0],["p_2j73nkr",2026,[4.74],15.8,"ev",1,0],["p_xt8q3ht",2026,[1.0],null,"ev",1,0],["p_444ty62",2026,[27.0],null,"ev",1,0],["p_3cpg0ys",2026,[17.0],null,"ev",1,0],["p_xzieqav",2026,[15.0,15.0],null,"ev",1,0],["p_yhoipcu",2026,[3.4,3.4],null,"ev",0,0],["p_osiakll",2026,[34.2],19,"ev",1,0],["p_7mfka6f",2026,[1.26,12.8,6.4,6.4,6.4],21,"ev",1,0],["p_ct55dgd",2026,[36.0,85.0,34.0,17.0,17.0,17.0],20,"ev",1,0],["p_aacimj6",2026,[1.85,1.23],20.5,"ev",1,0],["p_nwmcxjs",2026,[19.5,19.5],null,"ev",1,0],["p_roaoiv4",2026,[18.3,18.3],18.3,"ev",1,0],["p_jjkuagz",2026,[21.0,21.0,21.0],null,"ev",1,0],["p_tdfnwlb",2026,[13.8,13.8,13.8],null,"ev",1,0],["p_iwj77ae",2026,[1.0,1.0,1.0],1,"ev",1,0],["p_t5ktrgu",2026,[1.0,1.0],1,"ev",1,0],["p_tncin8n",2026,[1.0],null,"ev",0,0],["p_vc009lp",2026,[1.0],null,"ev",0,0],["p_902yq5w",2026,[40.8,13.6,6.8,6.8],null,"ev",1,0],["p_4a6afy3",2026,[24.0,24.0,24.0,24.0],null,"ev",1,0],["p_u5bxtjy",2026,[38.0,38.0],null,"ev",1,0],["p_4hzth4h",2026,[28.0,28.0],null,"ev",1,0],["p_he7mw6r",2026,[1.0],null,"ev",1,0],["p_0a0nhiu",2026,[1.0,1.0],1,"ev",1,0],["p_uzupdzw",2026,[6.4,6.4],16,"ev",1,0],["p_xz1t634",2026,[18.0],null,"ev",0,0],["p_msiu4ri",2026,[3.5,3.5,3.5],7,"ev",1,0],["p_p2e5szl",2026,[9.5,9.5,9.5],19,"ev",1,0],["p_tb2hc9o",2026,[9.3,27.0,27.0],27,"ev",1,0],["p_v6lsbc5",2026,[69.0],null,"ev",1,0],["p_ruy0f7f",2026,[15.0],null,"ev",1,0],["p_344z0mo",2026,[1.0,2.0],1,"ev",0,0],["p_9rfwjst",2026,[13.0,2.0,2.0],13,"ev",0,0],["p_oz3n4th",2026,[2.0,2.0],2,"ev",0,0],["p_uzcsujs",2026,[7.0],null,"ev",1,0],["p_oudxvnb",2026,[7.0,7.0,7.0],null,"ev",1,0],["p_c383tdk",2026,[19.0],26,"ev",1,0],["p_hogomgy",2026,[0.38],6.4,"ev",1,0],["p_z9wjrbk",2026,[11.0],null,"ev",0,0],["p_1ugjy9r",2026,[0.68,0.46],7.6,"ev",1,0],["p_j1kqw3g",2026,[9.6,9.6],null,"ev",1,0],["p_idhqfiz",2026,[10.9],null,"ev",1,0],["p_4bk7bbh",2026,[12.9,30.96],17.2,"ev",1,0],["p_t5mz9n1",2026,[5.3,5.3],null,"ev",1,0],["p_k9dqu1u",2026,[1.0],null,"ev",1,0],["p_uetl8v0",2026,[1.0],null,"ev",1,0],["p_plo0gqm",2026,[1.0,1.0],null,"ev",1,0],["p_dhyl3qc",2026,[1.0],null,"ev",0,0],["p_q1822ru",2026,[1.0],null,"ev",0,0],["p_382jn58",2026,[1.0],null,"ev",0,0],["p_vdpkjz5",2026,[15.0],null,"ev",1,0],["p_mmr86ch",2026,[10.0],null,"ev",1,0],["p_vpz7m8n",2026,[82.0,164.0],82,"ev",1,0],["p_d8p6d3t",2026,[7.0,7.0,7.0,7.0],null,"ev",1,0],["p_7c44xpd",2026,[19.0,19.0],null,"ev",1,0],["p_mq93wjn",2026,[19.0,19.0,19.0,19.0],null,"ev",1,0],["p_tbwtrt6",2026,[1.0],null,"ev",1,0],["p_cqtcstv",2026,[17.25,17.25,11.5],23,"ev",1,0],["p_9dj92qk",2026,[1.0,1.0,1.0,1.0,1.0],null,"ev",1,0],["p_ptjlp9o",2026,[14.0,14.0],null,"ev",1,0],["p_xolqtrc",2026,[11.0],null,"ev",1,0],["p_jisesss",2026,[2.0,2.0,2.0,2.0,2.0],null,"ev",0,0],["p_dmhhqqx",2026,[1.7,0.85],17,"ev",1,0],["p_8g34kg1",2026,[1.0],null,"ev",0,0],["p_d1atzzs",2026,[1.0],null,"ev",0,0],["p_c9yt5qu",2026,[1.0],null,"ev",0,0],["p_3bk4ueb",2026,[1.0],null,"ev",0,0],["p_u66syi3",2026,[1.0],null,"ev",0,0],["p_djqqnwb",2026,[1.0],null,"ev",0,0],["p_ze075n0",2026,[1.0],null,"ev",0,0],["p_uqs2ous",2026,[1.0],null,"ev",0,0],["p_il7e9jg",2026,[1.0],null,"ev",0,0],["p_89nrs2d",2026,[1.0],null,"ev",0,0],["p_fq3czdj",2026,[1.0],null,"ev",0,0],["p_9eojf32",2026,[1.0],null,"ev",0,0],["p_rveofxu",2026,[1.0],null,"ev",0,0],["p_yiipjed",2026,[1.0],null,"ev",0,0]];
+function keptDealsBack(){
+  if(!S || !S.league || S.league.keptDealsBack) return 0;
+  if(!isHomeCopy(S) || !reallyCommish()) return 0;
+  const snap = {}; DEAL_SNAP.forEach(r=> snap[r[0]] = r);
+  const back = [];
+  (S.log||[]).forEach(l=>{
+    if(+l.at <= DEAL_SNAP_AT) return;
+    const t = String(l.text||'');
+    const torn = l.type === 'retire' || / from the practice squad — free/.test(t) || / go for nothing — /.test(t);
+    if(!torn) return;
+    (l.players||[]).forEach(pid=>{
+      const p = byId(S.players, pid), r = snap[pid];
+      if(!p || p.contract || !r || back.some(x=> x.p === p)) return;
+      const from = (l.teams||[])[0] || null;
+      const c = makeContract(null, sum(r[2]), r[2].length, r[4] || 'ev', r[1]);
+      c.salaries = r[2].slice(); c.total = fixInc(sum(r[2])); c.years = r[2].length;
+      if(r[3] != null) c.base = r[3];
+      if(r[5]) c.byYear = true;
+      if(r[6]) c.prior = r[6].map(x=> ({year:x[0], amt:x[1]}));
+      /* and the earlier years from the salary sheets, which the copy predates */
+      const sd = SHEET_DEALS.find(x=> x[0] === pid);
+      if(sd && sd[5] && !c.prior) c.prior = sd[5].map(x=> ({year:+x[0], amt:+x[1]}));
+      const m = /(\$[\d,]+\.\d\d) owed back/.exec(t);
+      const paid = m ? +m[1].replace(/[$,]/g,'') : 0;
+      p.contract = c;
+      keepDealOnCut(p, from, paid);
+      p.contract.freedAt = +l.at;
+      back.push({p, from});
+    });
+  });
+  S.league.keptDealsBack = '2026-11-18';
+  if(back.length){
+    logIt('Deals put back on '+back.length+' cut player'+(back.length===1?'':'s')+' — every cut keeps the deal until the free agency draft: '+
+      back.map(x=> x.p.name+' ('+money(grossHit(x.p, S.league.season))+' a year, cut by '+teamName(x.from)+')').join('; '),
+      {id:'keptback:2026', type:'contract', teams:Array.from(new Set(back.map(x=> x.from).filter(Boolean))), players:back.map(x=> x.p.id)});
+    clearCapCache();
+  }
+  save();
+  return back.length;
 }
 /* Signed by somebody: the deal he was cut with becomes theirs, as it stands. */
 function takeOrphan(p, tid){
@@ -13649,7 +13708,7 @@ ACT.psqCut = (d)=>{
   const from = tid;
   modal('Cut '+esc(p.name)+' — free',
     '<p>He is on '+(p.nfl?esc(p.nfl)+"'s":'an NFL')+' practice squad, so this costs you nothing. '+
-    'His deal is torn up, there is <b>no dead cap</b>, and he goes back into the free-agent pool.</p>'+
+    'There is <b>no dead cap</b>, and he goes back into the free-agent pool with his deal on him until the free agency draft.</p>'+
     '<div class="hint">This is not the same as cutting a rostered player — there is no penalty because he was '+
     'never on a real active roster.</div>',
     '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
@@ -13660,9 +13719,10 @@ ACT.psqCutGo = (d)=>{
   const from = p.contract ? p.contract.teamId : null;
   if(!canManage(from)) return toast('Not your player','bad');
   if(!canFreePracticeCut(p) && !canFreePracticeCutHere(p)) { closeModal(); return toast('No longer eligible for a free cut','bad'); }
-  p.contract = null; p.slot = 'active'; delete p.ir; p.nflPractice = false; p.retired = false;
   markDropped(p);
-  logIt(teamName(from)+' cut '+p.name+' from the practice squad — free, no dead cap',
+  keepDealOnCut(p, from, 0);
+  p.slot = 'active'; delete p.ir; p.nflPractice = false; p.retired = false;
+  logIt(teamName(from)+' cut '+p.name+' from the practice squad — free, no dead cap; his deal goes with him until the free agency draft',
     {type:'drop', teams:[from].filter(Boolean), players:[p.id]});
   closeModal(); save(); render(); toast(p.name+' cut free — no dead cap','good');
 };
@@ -13929,7 +13989,7 @@ ACT.release = (d)=>{
       '<div class="flabel">NFL practice squad — free cut</div>'+
       '<div class="assetbox"><div class="row"><div style="flex:1"><b>Cut him free</b>'+
         '<div class="tiny muted">He is on '+(p.nfl?esc(p.nfl):'an NFL')+' practice squad, so this is a free cut — '+
-        'his deal is torn up, there is <b>no dead cap</b>, and he goes to <b>free agency</b>, off your roster.'+
+        'there is <b>no dead cap</b>, and he goes to <b>free agency</b>, off your roster, his deal going with him until the free agency draft.'+
         ((+((S.settings.roster||{}).practiceCutMax)||0)>0?' Allowed because his '+money(grossHit(p,S.league.season))+' salary is within the league\'s '+money(S.settings.roster.practiceCutMax)+' limit.':'')+
         '</div></div>'+
         '<button class="btn sm danger" data-a="psqCutGo" data-id="'+p.id+'">Do it</button></div></div>'+
@@ -13976,14 +14036,14 @@ function rfaCutHTML(p){
     : '';
   const who = isCommish() ? '' : '<div class="tiny dim" style="margin-top:6px">The commissioner is told when you do this.</div>';
   return '<div class="assetbox"><div><b>He has retired, or has no NFL team</b>'+
-      '<div class="tiny muted">His deal is torn up — nothing on the cap for '+S.league.season+' or any season after.'+words+'</div></div>'+
+      '<div class="tiny muted">Nothing on your cap for '+S.league.season+' or any season after. His deal stays on him until the free agency draft — anyone who signs him before then takes it as it stands; after it, he is a free agent at '+money(+S.settings.waivers.salary || +S.settings.contracts.minSalary || 1)+'.'+words+'</div></div>'+
     table+
     '<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'+
       '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="retired">He retired'+(owes?' — pay '+money(b.owed):'')+'</button>'+
       '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="nflfa">NFL free agent'+(owes?' — pay '+money(b.owed):'')+'</button>'+
     '</div>'+
     '<div class="tiny dim" style="margin-top:6px">Retired, he is out of the league until a commissioner brings him back. '+
-      'An NFL free agent goes into free agency with no deal, for anybody to sign.</div>'+
+      'An NFL free agent goes into free agency, his deal with him, for anybody to sign.</div>'+
     who+
     (isCommish() ? '<div class="row" style="margin-top:6px;gap:8px"><button class="btn sm ghost" data-a="blEdit" data-id="'+p.id+'">Earlier years / fix the math</button>'+
       (b.prior ? '<span class="tiny dim">'+b.prior+' earlier year'+(b.prior===1?'':'s')+' counted</span>' : '')+
@@ -14043,7 +14103,7 @@ ACT.hurtCut = (d)=>{
     '<div class="kv"><dt>Normally left behind</dt><dd>'+money(cutSaving(p) ? 
       fixInc(grossHit(p, S.league.season) - cutSaving(p)) : grossHit(p, S.league.season))+'</dd>'+
     '<dt>This way</dt><dd class="good">nothing</dd></div>'+
-    '<div class="hint">He goes into free agency like anybody else, and can be signed back.</div>',
+    '<div class="hint">He goes into free agency with his deal on him until the free agency draft, and can be signed back.</div>',
     '<button class="btn ghost" data-a="closeModal">Leave it</button>'+
     '<button class="btn pri" data-a="hurtCutGo" data-id="'+p.id+'">Let him go</button>');
 };
@@ -14054,11 +14114,12 @@ ACT.hurtCutGo = (d)=>{
   if(!g.ok) return toast('He cannot be let go for nothing — '+g.why,'bad');
   const from = p.contract.teamId;
   const was = grossHit(p, S.league.season);
-  p.contract = null; p.slot = 'active'; delete p.ir;
   markDropped(p);
+  keepDealOnCut(p, from, 0);
+  p.slot = 'active'; delete p.ir;
   clearCapCache();
   logIt(teamName(from)+' let '+p.name+' go for nothing — '+money(was)+
-    ' on injured reserve, no dead money', {type:'drop', teams:[from], players:[p.id]});
+    ' on injured reserve, no dead money; his deal goes with him until the free agency draft', {type:'drop', teams:[from], players:[p.id]});
   notify('Let go for nothing', p.name+' was on '+money(was)+' and injured reserve, so '+
     teamName(from)+' let him go with nothing left behind.', 'info');
   closeModal(); save(); render();
@@ -14074,16 +14135,17 @@ ACT.freeCut = (d)=>{
     const retire = d.to === 'retired';
     const was = grossHit(p, S.league.season);
     const owed = applyBackload(p, from);
-    p.contract = null; p.slot = 'active'; delete p.ir;
-    p.retired = retire;
     if(!retire) markDropped(p);
+    keepDealOnCut(p, from, owed);
+    p.slot = 'active'; delete p.ir;
+    p.retired = retire;
     const who = currentActorName();
     const what = retire ? 'he retired' : 'he is an NFL free agent';
-    const text = teamName(from)+' cut '+p.name+' as retired / free agent — '+what+'. Deal torn up'+
+    const text = teamName(from)+' cut '+p.name+' as retired / free agent — '+what+'. His deal stays on him until the free agency draft'+
       (owed ? ', '+money(owed)+' owed back on the back-loading' : ', nothing owed')+(who ? ' · by '+who : '');
     logIt(text, {type:'retire', teams:[from].filter(Boolean), players:[p.id], by:who});
     notify(retire ? 'Retired' : 'Cut as an NFL free agent',
-      p.name+(retire ? ' is out of the league' : ' is in free agency with no deal')+
+      p.name+(retire ? ' is out of the league, his deal on him until the free agency draft' : ' is in free agency, his deal going with him until the free agency draft')+
       (owed ? ', and '+teamName(from)+' owes '+money(owed)+'.' : '.'));
     /* Not a commissioner: the head commissioner hears about it on his own. */
     if(!isCommish() && headCommishId()){
@@ -40424,6 +40486,8 @@ function tickBody(){
   /* Once: the earlier years of every deal, then every structure, from the salary sheets. */
   try{ if(sheetYearsRun()) needsRender = true; }catch(e){}
   try{ if(sheetShapesRun()) needsRender = true; }catch(e){}
+  /* Once: deals torn up by a cut before every cut kept them, put back. */
+  try{ if(keptDealsBack()) needsRender = true; }catch(e){}
   /* Injury listings, through the day, on whichever phone is open. */
   try{ injAutoRun(); }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
