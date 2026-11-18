@@ -1716,7 +1716,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-17g · every season of every deal in Find a player and on every card';
+const APP_BUILD = '2026-11-18a · the commissioner can change or cancel a taxi claim';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -10719,12 +10719,12 @@ VIEWS.teams = function(){
                 ? '<button class="btn sm" data-a="redshirt" data-id="'+p2.id+'" '+
                   'title="keep him on the taxi squad, pay him, and nobody can come for him again">Redshirt him</button>'
                 : ''; })()}
-            <button class="btn sm ghost" data-a="newTrade">Offer a trade</button></td></tr>`).join('')}
+            <button class="btn sm ghost" data-a="newTrade">Offer a trade</button>${taxiFixBtn(c)}</td></tr>`).join('')}
         ${mineOut.map(c=>`<tr><td><b style="font-weight:500">${esc(playerName(c.playerId))}</b>
             <div class="tiny muted">your claim on ${esc(teamName(c.fromTeam))}</div></td>
           <td class="right"><span class="clock calm" style="font-size:17px" data-clock="tc:${c.id}">${hhmm(c.clock.remain)}</span></td>
           <td class="right nowrap"><span class="tiny dim">their move</span>
-            ${isCommish()?' <button class="btn sm ghost" data-a="taxiSettleNow" data-id="'+c.id+'">Settle now</button>':''}</td></tr>`).join('')}
+            ${isCommish()?' <button class="btn sm ghost" data-a="taxiSettleNow" data-id="'+c.id+'">Settle now</button>':''}${taxiFixBtn(c)}</td></tr>`).join('')}
         </tbody></table></div></div>`:''}
 
       <div class="grid g2">
@@ -18352,7 +18352,7 @@ function openClaimFor(playerId){ return (S.taxiClaims||[]).find(c=> c.playerId==
    tried something, or it is a table of zeroes. */
 /* The claims behind each number on the board. */
 const TAXI_KINDS = {
-  tried:   {label:'Tried',        side:'to',   pick:c=> true},
+  tried:   {label:'Tried',        side:'to',   pick:c=> c.status!=='voided'},
   landed:  {label:'Landed',       side:'to',   pick:c=> c.status==='awarded'},
   running: {label:'Running',      side:'to',   pick:c=> c.status==='open'},
   sawoff:  {label:'Saw them off', side:'from', pick:c=> c.status==='defended'},
@@ -18369,6 +18369,7 @@ function taxiOutcome(c){
   if(c.status==='open')      return {cls:'warn', word:'Running', why:teamName(c.fromTeam)+' still has time to answer'};
   if(c.status==='defended')  return {cls:'',     word:'Kept', why:teamName(c.fromTeam)+' kept him'+(c.reason ? ' — '+c.reason : '')};
   if(c.status==='withdrawn') return {cls:'',     word:'Lapsed', why:c.reason || 'the claim did not go through'};
+  if(c.status==='voided')    return {cls:'',     word:'Cancelled', why:c.reason || 'cancelled by the commissioner'};
   return {cls:'', word:c.status||'', why:c.reason||''};
 }
 function taxiClaimPlayer(c){
@@ -18399,7 +18400,7 @@ ACT.taxiWho = (d)=>{
         '<div style="flex:1;min-width:0">'+taxiClaimPlayer(c)+
           '<div class="tiny muted">'+(mine ? 'from '+esc(teamName(c.fromTeam)) : 'claimed by '+esc(teamName(c.toTeam)))+
           ' · '+dstr(c.at)+'</div></div>'+
-        '<span class="pill '+o.cls+'">'+esc(o.word)+'</span></div>'+
+        '<span class="pill '+o.cls+'">'+esc(o.word)+'</span>'+taxiFixBtn(c)+'</div>'+
         (o.why ? '<div class="tiny dim" style="margin-top:5px">'+esc(o.why)+'</div>' : '')+
         (c.status==='open' && c.clock ? '<div class="tiny" style="margin-top:5px">Time left: <span class="clock calm" style="font-size:14px" data-clock="tc:'+c.id+'">'+hhmm(c.clock.remain)+'</span></div>' : '')+
       '</div>';
@@ -18423,7 +18424,7 @@ function taxiStealBoard(){
   if(!any && !taxiLimitOn()) return '';
   const t = S.settings.taxi;
   const rows = S.teams.map(tm=>({tm, n:taxiStealCount(tm.id), left:taxiStealsLeft(tm.id),
-      against: all.filter(c=> c.fromTeam===tm.id).length}))
+      against: all.filter(c=> c.fromTeam===tm.id && c.status!=='voided').length}))
     .filter(r=> r.n.attempts>0 || r.against>0 || taxiLimitOn())
     .sort((a,b)=> b.n.landed-a.n.landed || b.n.attempts-a.n.attempts);
   if(!rows.length) return '';
@@ -18453,7 +18454,7 @@ function taxiStealBoard(){
       <tbody>${every.map(c=>{ const o = taxiOutcome(c);
         return '<tr><td>'+taxiClaimPlayer(c)+'</td><td>'+esc(teamName(c.toTeam))+'</td><td>'+esc(teamName(c.fromTeam))+'</td>'+
           '<td class="tiny nowrap">'+dstr(c.at)+'</td>'+
-          '<td><span class="pill '+o.cls+'">'+esc(o.word)+'</span>'+(o.why ? '<div class="tiny dim" style="margin-top:3px">'+esc(o.why)+'</div>' : '')+'</td></tr>';
+          '<td><span class="pill '+o.cls+'">'+esc(o.word)+'</span> '+taxiFixBtn(c)+(o.why ? '<div class="tiny dim" style="margin-top:3px">'+esc(o.why)+'</div>' : '')+'</td></tr>';
       }).join('')}</tbody></table></div>` : ''}
     <div class="pb"><div class="hint">Counts start over when the season rolls over. Tap any number to see who it is.
       <b>Tried</b> is every claim put in, <b>Landed</b> is the ones that stuck, <b>Running</b> is still waiting on an answer,
@@ -18468,7 +18469,7 @@ function taxiStolenFrom(teamId){
    S.taxiClaims is emptied when the season rolls over, so all of this is
    per-season without anything having to be reset by hand. */
 function taxiStealCount(teamId){
-  const mine = (S.taxiClaims||[]).filter(c=> c.toTeam===teamId);
+  const mine = (S.taxiClaims||[]).filter(c=> c.toTeam===teamId && c.status!=='voided');
   return {
     attempts: mine.length,
     landed:   mine.filter(c=> c.status==='awarded').length,
@@ -18580,6 +18581,77 @@ function claimForRow(){
   return '<label class="f" style="margin-bottom:8px"><span>Claiming for</span>'+
     teamSelect(null, me, {attrs:'data-oninput="claimFor"'})+'</label>';
 }
+/* ---- The commissioner putting a taxi claim right ------------------------------
+   A claim put in by accident, for the wrong team, or on the wrong man (two
+   names next to each other in the list). The commissioner can, on any claim
+   still running or one that has landed:
+     · give it to the team that meant to claim — a running claim keeps its
+       clock; a landed one moves the player to that team's active roster;
+     · cancel it — a running claim stops; a landed one puts the player back on
+       the taxi squad he came off. A cancelled claim does not count against
+       anybody's allowance, and it stays on the record as cancelled.
+   To claim the man who was meant, cancel this one and put the right claim in.
+   Both teams are told, and it goes in Transactions. */
+function taxiFixable(c){ return c && (c.status === 'open' || c.status === 'awarded'); }
+function taxiFixBtn(c){
+  return isCommish() && taxiFixable(c) ? '<button class="btn sm ghost" data-a="taxiFix" data-id="'+c.id+'">Change</button>' : '';
+}
+ACT.taxiFix = (d)=>{
+  if(!isCommish()) return toast('Only a commissioner can change a claim','bad');
+  const c = (S.taxiClaims||[]).find(x=> x.id === d.id);
+  if(!taxiFixable(c)) return toast('That claim is already settled','bad');
+  const p = byId(S.players, c.playerId), landed = c.status === 'awarded';
+  const others = S.teams.filter(t=> t.id !== c.fromTeam && t.id !== c.toTeam);
+  ui.tmp.taxiFixTo = others.length ? others[0].id : null;
+  const still = landed && p && p.contract && p.contract.teamId === c.toTeam;
+  modal('Change the claim on '+esc(p ? p.name : playerName(c.playerId)),
+    '<p>'+esc(teamName(c.toTeam))+' '+(landed ? 'took him off ' : 'is claiming him off ')+esc(teamName(c.fromTeam))+'’s taxi squad'+
+      (landed ? (c.at2 ? ' on '+dstr(c.at2) : '') : ' — still running')+'.</p>'+
+    (landed && !still ? '<div class="hint bad">He is not on '+esc(teamName(c.toTeam))+' any more, so this claim can no longer be changed here.</div>' : '')+
+    '<div class="panel" style="margin:10px 0"><div class="pb stack" style="gap:8px">'+
+      '<b>It was meant for another team</b>'+
+      '<label class="f"><span>Give the claim to</span><select data-oninput="taxiFixTo">'+
+        others.map(t=> '<option value="'+t.id+'">'+esc(t.name)+'</option>').join('')+'</select></label>'+
+      '<div class="tiny dim">'+(landed ? 'He moves to that team’s active roster.' : 'The clock keeps running as it is.')+'</div>'+
+      '<div><button class="btn" data-a="taxiFixGo" data-id="'+c.id+'" data-k="move"'+(landed && !still ? ' disabled' : '')+'>Give it to that team</button></div>'+
+    '</div></div>'+
+    '<div class="panel"><div class="pb stack" style="gap:8px">'+
+      '<b>It should never have gone in — or it was the wrong man</b>'+
+      '<div class="tiny dim">'+(landed ? 'He goes back on '+esc(teamName(c.fromTeam))+'’s taxi squad. ' : '')+
+        'It no longer counts against '+esc(teamName(c.toTeam))+'’s claims. For the man who was meant, put a new claim in on him.</div>'+
+      '<div><button class="btn bad" data-a="taxiFixGo" data-id="'+c.id+'" data-k="cancel"'+(landed && !still ? ' disabled' : '')+'>Cancel the claim</button></div>'+
+    '</div></div>',
+    '<button class="btn ghost" data-a="closeModal">Close</button>');
+};
+ACT.taxiFixTo = (d, el)=>{ ui.tmp.taxiFixTo = el.value; };
+ACT.taxiFixGo = (d)=>{
+  if(!isCommish()) return toast('Only a commissioner can change a claim','bad');
+  const c = (S.taxiClaims||[]).find(x=> x.id === d.id);
+  if(!taxiFixable(c)) return toast('That claim is already settled','bad');
+  const p = byId(S.players, c.playerId);
+  const landed = c.status === 'awarded';
+  if(landed && !(p && p.contract && p.contract.teamId === c.toTeam)) return toast('He is not on '+teamName(c.toTeam)+' any more','bad');
+  const nm = p ? p.name : playerName(c.playerId), was = c.toTeam;
+  if(d.k === 'move'){
+    const to = ui.tmp.taxiFixTo;
+    if(!to || !byId(S.teams, to) || to === c.fromTeam || to === was) return toast('Pick the team it was meant for','bad');
+    c.toTeam = to;
+    c.log.unshift({at:Date.now(), text:'The commissioner gave the claim to '+teamName(to)+' — it was put in for '+teamName(was)+' by mistake'});
+    if(landed){ p.contract.teamId = to; p.slot = 'active'; }
+    logIt('Commissioner: the taxi claim on '+nm+' was meant for '+teamName(to)+', not '+teamName(was)+
+      (landed ? ' — he moves to '+teamName(to) : ' — the claim is now theirs'), {type:landed ? 'add' : 'admin', teams:[to, was, c.fromTeam], players:p ? [p.id] : []});
+    notify('Taxi claim changed', 'The claim on '+nm+' was meant for '+teamName(to)+', not '+teamName(was)+'.'+(landed ? ' He is on '+teamName(to)+' now.' : ''), 'warn', [to, was, c.fromTeam]);
+  } else {
+    c.status = 'voided'; c.at3 = Date.now();
+    c.reason = 'cancelled by the commissioner — put in by mistake';
+    c.log.unshift({at:Date.now(), text:'Cancelled by the commissioner'+(landed ? ' — he goes back to '+teamName(c.fromTeam)+'’s taxi squad' : '')});
+    if(landed){ p.contract.teamId = c.fromTeam; p.slot = 'taxi'; }
+    logIt('Commissioner: cancelled '+teamName(was)+'’s taxi claim on '+nm+(landed ? ' — he goes back on '+teamName(c.fromTeam)+'’s taxi squad' : '')+
+      '. It does not count against their claims', {type:landed ? 'drop' : 'admin', teams:[was, c.fromTeam], players:p ? [p.id] : []});
+    notify('Taxi claim cancelled', teamName(was)+'’s claim on '+nm+' was cancelled by the commissioner.'+(landed ? ' He is back on '+teamName(c.fromTeam)+'’s taxi squad.' : ''), 'warn', [was, c.fromTeam]);
+  }
+  clearCapCache(); closeModal(); save(); render(); toast(d.k === 'move' ? 'Claim given to '+teamName(c.toTeam) : 'Claim cancelled','good');
+};
 ACT.claimFor = (d, el)=>{ ui.tmp.claimFor = el.value; };
 ACT.taxiClaim = (d)=>{
   { const p2 = byId(S.players, d.id);
