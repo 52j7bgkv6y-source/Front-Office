@@ -1716,7 +1716,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18d · every cut keeps the deal until the free agency draft';
+const APP_BUILD = '2026-11-18f · a number box with 0 in it starts empty — type the figure, nothing to delete';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2464,7 +2464,7 @@ function defaultState(){
       bbd:{ on:true, roundHours:24, minBid:1, maxPerRound:0, tiebreak:'earliest',
             budgetMode:'fa', separateBudget:false, budget:120, maxYears:4, maxRounds:0 },
       trades:{
-        reviewHours:24, auctionHours:48,
+        reviewHours:24, auctionHours:48, deadlineWeek:14,
         antiSnipeOn:true, antiSnipeWithinMin:15, antiSnipeExtendMin:30, antiSnipeUnit:'min',
         undoHours:0,
         allowCompeting:true, ownerMustAccept:true, mustMeetAsk:true,
@@ -12552,6 +12552,27 @@ document.addEventListener('focusin', (e)=>{
   try{ t.select(); }catch(_){}
   setTimeout(()=>{ try{ if(document.activeElement === t) t.select(); }catch(_){} }, 0);
 }, true);
+/* ---- A number box holding 0 starts empty --------------------------------------
+   Tap a box with a 0 in it — cash in a trade, salary kept, a bid, any setting —
+   and the 0 is gone, so the first figure typed is the figure, with nothing to
+   delete after. Left empty, the 0 is shown again; nothing is changed by it. */
+const ZERO_BOX = 'input[type=number], input[inputmode=numeric], input[inputmode=decimal]';
+function isZeroText(v){ return /^\s*-?0+(\.0*)?\s*$/.test(String(v)); }
+document.addEventListener('focusin', (e)=>{
+  const t = e.target;
+  if(!t || !t.matches || !t.matches(ZERO_BOX) || t.matches('[data-selectall],[data-keepzero]') || t.readOnly || t.disabled) return;
+  if(!isZeroText(t.value)) return;
+  t.dataset.zeroWas = t.value;
+  if(!t.placeholder) { t.placeholder = '0'; t.dataset.zeroPh = '1'; }
+  t.value = '';
+}, true);
+document.addEventListener('focusout', (e)=>{
+  const t = e.target;
+  if(!t || !t.dataset || t.dataset.zeroWas == null) return;
+  if(t.value === '') t.value = t.dataset.zeroWas;
+  delete t.dataset.zeroWas;
+  if(t.dataset.zeroPh){ t.removeAttribute('placeholder'); delete t.dataset.zeroPh; }
+}, true);
 /* Left empty, the extension's years box shows again the number it is holding. */
 document.addEventListener('focusout', (e)=>{
   const t = e.target;
@@ -16048,6 +16069,8 @@ function keyDates(){
     const anchor = card.length ? card[0] : null;
     const est = (wk)=> anchor ? anchor + (wk - w)*7*86400000 : null;
     const first = (wk)=>{ const k = ((S.live.nfl||{})[wk]||[]).map(g=> +g.at).filter(Boolean); return k.length ? Math.min.apply(null, k) : null; };
+    const tdw = tradeDeadlineWeek();
+    if(tdw && w <= tdw){ const at = tradeDeadlineAt(); add('trade', 'Trade deadline', at || est(tdw), !at, 'trades'); }
     const xw = extDeadlineWeek();
     if(xw && w <= xw){ const at = extDeadlineAt(); add('ext', 'Extensions close', at || est(xw), !at, 'teams'); }
     /* Past the late-cut week a release saves nothing — from when that week's
@@ -22170,6 +22193,7 @@ function processTrade(tr){
 }
 
 ACT.newTrade = ()=>{
+  if(tradesShut()) return toast(tradeShutWhy().replace(/^t/, 'T'), 'bad', 6000);
   const me = actingTeam(), other = (S.teams.find(t=>t.id!==me)||{}).id;
   ui.tmp.multi = null;
   ui.tmp.tb = { a:{teamId:me, players:[], picks:[], cash:0, retain:{}}, b:{teamId:other, players:[], picks:[], cash:0, retain:{}} };
@@ -22834,6 +22858,7 @@ ACT.tbFill = (d)=>{
   remodal(tradeForm());
 };
 ACT.sendTrade = ()=>{
+  if(tradesShut()){ closeModal(); render(); return toast(tradeShutWhy().replace(/^t/, 'T'), 'bad', 6000); }
   const m = ui.tmp.multi;
   const editId = tradeEditId(), old = editId ? byId(S.trades, editId) : null;
   if(editId){
@@ -22919,6 +22944,7 @@ function tradeProposer(tr){ return tr && (tr.by || (tr.a && tr.a.teamId) || null
 /* An offer has to be accepted by the other side. */
 function canAcceptTrade(tr){
   if(!tr) return 'that offer has gone';
+  if(tradesShut()) return tradeShutWhy();
   const me = actingTeam();
   if(me === tradeProposer(tr)) return 'you put this offer up — '+
     (tr.type==='multi' ? 'the other teams' : teamName((tr.b||{}).teamId)) + ' has to accept it';
@@ -22959,6 +22985,7 @@ ACT.undoTradeGo = (d)=>{
 
 /* counters ---------------------------------------------------------------- */
 ACT.counter = (d)=>{
+  if(tradesShut()) return toast(tradeShutWhy().replace(/^t/, 'T'), 'bad', 6000);
   const tr = byId(S.trades,d.id), side = d.side;
   if(!tr || !tr[side]) return toast('That trade has gone','bad');
   /* The counter starts with the original trade on the board: everything the
@@ -23126,6 +23153,7 @@ function nameOfAsset(id){
   return k ? pickLabel(k) : 'an asset';
 }
 ACT.sendCounter = ()=>{
+  if(tradesShut()){ closeModal(); render(); return toast(tradeShutWhy().replace(/^t/, 'T'), 'bad', 6000); }
   const ct = ui.tmp.ct, tr = byId(S.trades,ct.tradeId), c = S.settings.trades.counters, orig = originalAssets(tr);
   if(!ct.wants.players.length && !ct.wants.picks.length) return toast('Ask for something','bad');
   const missing = counterMissing(tr, ct);
@@ -25299,7 +25327,12 @@ VIEWS.trades = function(){
   return `
   <div class="section">
     <header><div><div class="eyebrow">${review.length} in review · ${inbox.length} waiting on an answer</div><h1>Trades</h1></div>
-      <div class="spacer"></div>${actAsBar()}<button class="btn pri" data-a="newTrade">Propose a trade</button></header>
+      <div class="spacer"></div>${actAsBar()}<button class="btn pri" data-a="newTrade"${tradesShut()?' disabled':''}>Propose a trade</button></header>
+    ${(()=>{ const tw = tradeDeadlineWeek(); if(!tw) return '';
+      const at = tradeDeadlineAt();
+      return tradesShut()
+        ? '<div class="hint bad" style="margin-bottom:10px">The trade deadline has passed — trades shut at the first kickoff of week '+tw+'. Trades accepted before it finish their review.</div>'
+        : '<div class="hint" style="margin-bottom:10px">Trade deadline: the first kickoff of week '+tw+(at ? ' — '+esc(whenText(at)) : '')+'.</div>'; })()}
 
     <div class="tabs">
       <button class="${sub==='review'?'on':''}" data-a="sub" data-s="review">In review (${review.length})</button>
@@ -25316,6 +25349,7 @@ VIEWS.trades = function(){
       '<div class="panel"><div class="empty-state"><h3>No completed trades yet</h3></div></div>')+'</div>' : ''}
     ${sub==='rules' ? `<div class="grid g2">
       <div class="panel"><div class="ph"><h3>Clocks</h3></div><div class="pb grid g2">
+        <label class="f"><span>Trade deadline — week <span class="dim">(at its first kickoff; 0 for none)</span></span><input type="number" min="0" max="18" data-set="settings.trades.deadlineWeek" value="${tradeDeadlineWeek()}"></label>
         <label class="f"><span>Review window (hours)</span><input type="number" min="0" data-set="settings.trades.reviewHours" value="${c.reviewHours}"></label>
         <label class="f"><span>Auction clock (hours)</span><input type="number" min="0" data-set="settings.trades.auctionHours" value="${c.auctionHours}"></label>
         <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.trades.antiSnipeOn" ${c.antiSnipeOn?'checked':''}>
@@ -31122,6 +31156,35 @@ function tagWindowOpen(){
   return {ok:false, why:'Tags wait until the season is over — it is week '+
     (+S.live.week||1)+' of '+((+((S.settings.playoffs||{}).lastWeek)) || 17)+'.'};
 }
+/* ---- The trade deadline -------------------------------------------------------
+   Trades shut at the first kickoff of the deadline week — week 14 unless the
+   league says otherwise, 0 for none. From then nobody can put an offer up,
+   counter one, or accept one; a trade already accepted before it still goes
+   through its review. The deadline shows in Coming up and on the Trades page. */
+function tradeDeadlineWeek(){
+  const v = (S.settings.trades||{}).deadlineWeek;
+  return v == null || v === '' ? 14 : Math.max(0, +v||0);
+}
+function tradeDeadlineAt(){
+  const w = tradeDeadlineWeek();
+  if(!w) return null;
+  const kicks = (((S.live||{}).nfl||{})[w] || []).map(g=> +g.at).filter(v=> v && !isNaN(v));
+  if(kicks.length) return Math.min.apply(null, kicks);
+  const book = ((S.live||{}).kicks||{})[w] || {};
+  const times = Object.keys(book).map(k=> +book[k]).filter(v=> v && !isNaN(v));
+  return times.length ? Math.min.apply(null, times) : null;
+}
+/* Shut? Past the week's first kickoff, or into a later week. The season over,
+   the market opens again for the new year. */
+function tradesShut(now){
+  const w = tradeDeadlineWeek();
+  if(!w) return false;
+  if(typeof seasonOver === 'function' && seasonOver()) return false;
+  const at = tradeDeadlineAt(), t = now || Date.now();
+  if(at) return t >= at;
+  return (+((S.live||{}).week) || 1) > w;
+}
+function tradeShutWhy(){ return 'the trade deadline has passed — trades shut at the first kickoff of week '+tradeDeadlineWeek(); }
 /* Extensions close at the first kickoff of the deadline week. */
 function extDeadlineWeek(){
   const c = S.settings.contracts || {};
