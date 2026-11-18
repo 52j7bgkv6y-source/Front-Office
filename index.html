@@ -1721,7 +1721,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18h · counters have the table view too';
+const APP_BUILD = '2026-11-18j · salary-kept boxes wide enough for the cents';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -22189,8 +22189,8 @@ function processTrade(tr){
   const ch = (tr.counters||[]).find(c=> c.status==='accepted');
   if(ch){
     const target = tr[ch.side].teamId;
-    moveAssets(ch.byTeamId, target, ch.gives);
-    moveAssets(target, ch.byTeamId, ch.wants);
+    moveAssets(ch.byTeamId, target, Object.assign({}, ch.gives, {retain:ch.giveRetain||{}}));
+    moveAssets(target, ch.byTeamId, Object.assign({}, ch.wants, {retain:ch.retain||{}}));
     ch.status='processed';
     logIt('Follow-on counter processed — '+teamName(ch.byTeamId)+' ⇄ '+teamName(target),
       {type:'trade', teams:[ch.byTeamId, target], players:[].concat(ch.wants.players||[], ch.gives.players||[])});
@@ -22459,6 +22459,7 @@ ACT.ctTog = (d)=>{
     if(d.side === 'wants' && tr0 && counterLocks(tr0, ct.side)[d.id]) return toast('That is part of the original trade, so it stays in','bad');
     arr.splice(i, 1);
     if(d.side === 'wants' && ct.retain) delete ct.retain[d.id];
+    if(d.side === 'gives' && ct.giveRetain) delete ct.giveRetain[d.id];
   } else arr.push(d.id);
   const box = $('#modalBox'), top = box ? box.scrollTop : 0;
   $('#modalBox .mb').innerHTML = counterForm();
@@ -22619,7 +22620,7 @@ function tbSide(side, compact){
           ${contractYears(pl).map(x=>`<td style="padding:1px 3px">
             <div class="tiny dim" style="text-align:center">${x.year}</div>
             <input type="number" min="0" max="${x.salary}" step="${S.settings.cap.increment}"
-              value="${+keep[x.year]||0}" style="width:70px;text-align:right"
+              value="${+keep[x.year]||0}" style="width:86px;text-align:right"
               data-oninput="tbKeep" data-side="${side}" data-pid="${pid}" data-y="${x.year}" data-k="tk_${side}_${pid}_${x.year}">
             <div class="tiny dim" style="text-align:center">of ${money(x.salary)}</div></td>`).join('')}
           </tr></tbody></table></div>
@@ -22796,7 +22797,7 @@ function mtLeg(l, i){
           ${contractYears(pl).map(x=>`<td style="padding:1px 3px">
             <div class="tiny dim" style="text-align:center">${x.year}</div>
             <input type="number" min="0" max="${x.salary}" step="${S.settings.cap.increment}"
-              value="${+keep[x.year]||0}" style="width:70px;text-align:right"
+              value="${+keep[x.year]||0}" style="width:86px;text-align:right"
               data-oninput="mtKeep" data-i="${i}" data-pid="${pid}" data-y="${x.year}" data-k="mk_${i}_${pid}_${x.year}">
             <div class="tiny dim" style="text-align:center">of ${money(x.salary)}</div></td>`).join('')}
           </tr></tbody></table></div>
@@ -23097,7 +23098,9 @@ ACT.counter = (d)=>{
   ui.tmp.ct = {tradeId:tr.id, side,
     wants:{players: start ? (o.players||[]).slice() : [], picks: start ? (o.picks||[]).slice() : [],
            cash: start ? (+o.cash||0) : 0},
-    retain: start ? deep(o.retain||{}) : {},
+    retain: start ? retainToYears({retain:o.retain||{}}) : {},
+    retainFloor: start ? retainToYears({retain:o.retain||{}}) : {},
+    giveRetain: {},
     gives:{players:[],picks:[],cash:0}};
   modal('Counter '+teamName(tr[side].teamId), counterForm(),
     '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="sendCounter">Send the counter</button>');
@@ -23122,6 +23125,85 @@ function counterLocks(tr, side){
   if(+o.cash) out.cash = 1;
   return out;
 }
+/* ---- Salary kept, in a counter, player by player and year by year -----------
+   For each man coming to you, how much of each season the team sending him
+   keeps paying; for each of yours going the other way, how much you keep. Any
+   season, any amount, up to all of it. What the original trade already had
+   that team keeping on a man is the least you can ask for — more, never less. */
+function ctRetainStore(which){
+  const ct = ui.tmp.ct;
+  if(which === 'gives') return ct.giveRetain = ct.giveRetain || {};
+  return ct.retain = ct.retain || {};
+}
+function ctFloor(pid, y){
+  const f = ((ui.tmp.ct.retainFloor||{})[pid]||{}).byYear || {};
+  return +f[y] || 0;
+}
+function ctRetainHTML(which){
+  const ct = ui.tmp.ct, tr = byId(S.trades, ct.tradeId);
+  const ids = (ct[which].players||[]).filter(pid=>{ const p = byId(S.players, pid); return p && p.contract; });
+  if(!ids.length) return '';
+  const store = ctRetainStore(which);
+  const eater = which === 'gives' ? actingTeam() : tr[ct.side].teamId;
+  return '<div style="margin-top:9px"><div class="flabel">'+(which === 'gives' ? 'You keep paying part of the salary' : esc(teamName(eater))+' keeps paying part of the salary')+'</div>'+
+    posSortIds(ids).map(pid=>{
+      const pl = byId(S.players, pid), r = store[pid] || {}, keep = r.byYear || {};
+      const tot = sum(Object.keys(keep).map(k=> +keep[k]||0));
+      const floorTot = which === 'wants' ? sum(contractYears(pl).map(x=> ctFloor(pid, x.year))) : 0;
+      return '<div style="margin-bottom:8px">'+
+        '<div class="row" style="margin-bottom:3px"><span class="tiny" style="flex:1;min-width:70px">'+esc(pl.name)+'</span>'+
+          '<input type="number" min="0" max="100" style="width:56px" placeholder="%" data-oninput="ctPct" data-w="'+which+'" data-pid="'+pid+'" value="'+(r.pct==null?'':esc(String(r.pct)))+'">'+
+          '<button class="btn sm ghost" data-a="ctFill" data-w="'+which+'" data-pid="'+pid+'">Every year</button></div>'+
+        '<div class="scrollx"><table><tbody><tr>'+contractYears(pl).map(x=>{
+          const fl = which === 'wants' ? ctFloor(pid, x.year) : 0;
+          return '<td style="padding:1px 3px"><div class="tiny dim" style="text-align:center">'+x.year+'</div>'+
+            '<input type="number" min="'+fl+'" max="'+x.salary+'" step="'+S.settings.cap.increment+'" value="'+(+keep[x.year]||0)+'" style="width:86px;text-align:right"'+
+              ' data-oninput="ctKeep" data-w="'+which+'" data-pid="'+pid+'" data-y="'+x.year+'">'+
+            '<div class="tiny dim" style="text-align:center">of '+money(x.salary)+(fl ? '<br>at least '+money(fl) : '')+'</div></td>'; }).join('')+
+        '</tr></tbody></table></div>'+
+        '<div class="tiny good" id="ctrt_'+which+'_'+pid+'">'+(tot ? 'keeping '+money(tot)+' across the deal' : '')+'</div>'+
+        (floorTot ? '<div class="tiny dim">The original trade had '+esc(teamName(eater))+' keeping '+money(floorTot)+' of him — you can ask for more, not less.</div>' : '')+
+      '</div>';
+    }).join('')+'</div>';
+}
+ACT.ctKeep = (d, el)=>{
+  const store = ctRetainStore(d.w), r = store[d.pid] = store[d.pid] || {byYear:{}};
+  r.byYear = r.byYear || {};
+  const p = byId(S.players, d.pid), yr = (contractYears(p).find(x=> x.year === +d.y) || {}).salary || 0;
+  const v = Math.min(yr, Math.max(0, +el.value||0));
+  if(v) r.byYear[d.y] = fixInc(v); else delete r.byYear[d.y];
+  const tot = sum(Object.keys(r.byYear).map(k=> +r.byYear[k]||0));
+  const line = $('#ctrt_'+d.w+'_'+d.pid);
+  if(line) line.innerHTML = tot ? 'keeping '+money(tot)+' across the deal' : '';
+  const box = $('#ctCapBox'), ct = ui.tmp.ct, tr = byId(S.trades, ct.tradeId);
+  if(box && tr) box.innerHTML = capBoard(counterLegs(ct, tr));
+};
+ACT.ctPct = (d, el)=>{ const store = ctRetainStore(d.w); (store[d.pid] = store[d.pid] || {byYear:{}}).pct = el.value; };
+ACT.ctFill = (d)=>{
+  const p = byId(S.players, d.pid); if(!p || !p.contract) return;
+  const store = ctRetainStore(d.w), r = store[d.pid] = store[d.pid] || {byYear:{}};
+  const v = Math.max(0, Math.min(100, +r.pct||0));
+  r.byYear = {};
+  contractYears(p).forEach(x=>{
+    const amt = Math.max(fixInc(x.salary*v/100), d.w === 'wants' ? ctFloor(d.pid, x.year) : 0);
+    if(amt > 0) r.byYear[x.year] = amt;
+  });
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0;
+  $('#modalBox .mb').innerHTML = counterForm();
+  if(box) box.scrollTop = top;
+};
+/* Below what the original had: the seasons and the least for each. */
+function ctUnderFloor(){
+  const ct = ui.tmp.ct, out = [];
+  (ct.wants.players||[]).forEach(pid=>{
+    const p = byId(S.players, pid);
+    contractYears(p).forEach(x=>{
+      const fl = ctFloor(pid, x.year), have = +(((ct.retain||{})[pid]||{}).byYear||{})[x.year] || 0;
+      if(fl > have + 0.004) out.push(playerName(pid)+' '+x.year+' (at least '+money(fl)+')');
+    });
+  });
+  return out;
+}
 function counterForm(){
   const ct = ui.tmp.ct, tr = byId(S.trades,ct.tradeId), me = actingTeam();
   const orig = originalAssets(tr), locks = counterLocks(tr, ct.side);
@@ -23144,7 +23226,7 @@ function counterForm(){
   <div class="grid g2">
     <div><div class="flabel">What you want from ${esc(teamName(tr[ct.side].teamId))}</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.wants,{rm:'ctRm', side:'wants', lock:locks, price:true})}</div>
-        ${retainNote({retain:ct.retain||{}})}
+        ${ctRetainHTML('wants')}
         ${asTable ? '' : adderHTML({f:'ct', act:'ctAdd', side:'wants', key:'ct_wants', pid:'ctwp', kid:'ctwk',
           players:avail.players.map(id=> byId(S.players,id)).filter(Boolean), picks:avail.picks.map(id=> byId(S.picks,id)).filter(Boolean),
           tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')+inTrade(p.id), ktail:k=> inTrade(k.id)})}
@@ -23157,6 +23239,7 @@ function counterForm(){
       </div></div>
     <div><div class="flabel">What you send</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.gives,{rm:'ctRm', side:'gives', price:true})}</div>
+        ${ctRetainHTML('gives')}
         ${asTable ? '' : adderHTML({f:'ct', act:'ctAdd', side:'gives', key:'ct_gives', pid:'ctgp', kid:'ctgk',
           players:ownedPlayers(me).filter(p=> !givenIds[p.id]), picks:ownedPicks(me).filter(k=> !givenIds[k.id]),
           tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')})}
@@ -23191,7 +23274,7 @@ function counterLegs(ct, tr){
   const them = tr[ct.side].teamId, me = actingTeam();
   return {legs:[
     {from:them, to:me, players:ct.wants.players||[], picks:ct.wants.picks||[], cash:+ct.wants.cash||0, retain:retainToYears({retain:ct.retain||{}})},
-    {from:me, to:them, players:ct.gives.players||[], picks:ct.gives.picks||[], cash:+ct.gives.cash||0, retain:{}}]};
+    {from:me, to:them, players:ct.gives.players||[], picks:ct.gives.picks||[], cash:+ct.gives.cash||0, retain:retainToYears({retain:ct.giveRetain||{}})}]};
 }
 /* Under each side: the cap dollars and salary moving, and the room left. */
 function ctMoneyLine(teamId, tr){
@@ -23220,6 +23303,7 @@ ACT.ctRm = (d)=>{
     return toast('That is part of the original trade, so it stays in','bad');
   if(d.kind==='cash' && d.side==='wants'){ ui.tmp.ct.wants.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
   if(d.kind!=='cash' && d.side==='wants' && ui.tmp.ct.retain) delete ui.tmp.ct.retain[d.id];
+  if(d.kind!=='cash' && d.side==='gives' && ui.tmp.ct.giveRetain) delete ui.tmp.ct.giveRetain[d.id];
   if(d.kind==='cash'){ ui.tmp.ct.gives.cash = 0; $('#modalBox .mb').innerHTML=counterForm(); return; }
   const arr=ui.tmp.ct[d.side][d.kind]; const i=arr.indexOf(d.id); if(i>=0) arr.splice(i,1); $('#modalBox .mb').innerHTML=counterForm(); };
 /* Everything the countered side put into the original trade. A counter has to
@@ -23265,10 +23349,14 @@ ACT.sendCounter = ()=>{
   }
   if(!(ct.gives.players||[]).length && !(ct.gives.picks||[]).length && !(+ct.gives.cash))
     return toast('Add what you are sending for it','bad');
-  const keptRetain = {};
-  Object.keys(ct.retain||{}).forEach(pid=>{ if((ct.wants.players||[]).indexOf(pid)>=0) keptRetain[pid] = ct.retain[pid]; });
+  const under = ctUnderFloor();
+  if(under.length) return toast('You can ask them to keep paying more than the original trade had, not less — '+under.slice(0,3).join(', ')+(under.length>3?' and more':''), 'bad', 7000);
+  const keptRetain = {}, giveRetain = {};
+  const want = retainToYears({retain:ct.retain||{}}), give = retainToYears({retain:ct.giveRetain||{}});
+  Object.keys(want).forEach(pid=>{ if((ct.wants.players||[]).indexOf(pid)>=0) keptRetain[pid] = want[pid]; });
+  Object.keys(give).forEach(pid=>{ if((ct.gives.players||[]).indexOf(pid)>=0) giveRetain[pid] = give[pid]; });
   tr.counters.unshift({id:uid('c'), byTeamId:actingTeam(), side:ct.side, wants:deep(ct.wants), gives:deep(ct.gives),
-    retain:keptRetain, at:Date.now(), status:'pending'});
+    retain:keptRetain, giveRetain, at:Date.now(), status:'pending'});
   tr.log.unshift({at:Date.now(), text:teamName(actingTeam())+' countered '+teamName(tr[ct.side].teamId)});
   notify('Counter filed', teamName(actingTeam())+' is trying to break into the '+teamName(tr.a.teamId)+'/'+teamName(tr.b.teamId)+' trade.','warn');
   closeModal(); save(); render(); toast('Counter filed','good');
@@ -23300,7 +23388,7 @@ ACT.acceptCounter = (d)=>{
   if(c.outcome==='replace'){
     tr.status='replaced'; tr.log.unshift({at:Date.now(), text:'Voided — replaced by '+teamName(ct.byTeamId)+"'s counter"});
     const nt = {id:uid('tr'), type:'standard',
-      a:{teamId:ct.byTeamId, players:ct.gives.players, picks:ct.gives.picks, cash:ct.gives.cash||0},
+      a:{teamId:ct.byTeamId, players:ct.gives.players, picks:ct.gives.picks, cash:ct.gives.cash||0, retain:deep(ct.giveRetain||{})},
       b:{teamId:tr[ct.side].teamId, players:ct.wants.players, picks:ct.wants.picks, cash:+ct.wants.cash||0,
          retain:deep(ct.retain||{})},
       status:'review', createdAt: tr.createdAt || Date.now(),
@@ -25413,7 +25501,9 @@ VIEWS.trades = function(){
             <div style="flex:1;min-width:180px"><b style="font-weight:500">${esc(teamName(ct.byTeamId))}</b>
               <span class="dim tiny">wants from ${esc(teamName(tr[ct.side].teamId))}</span>
               <div style="margin-top:5px">${assetChips(ct.wants)}</div>
-              <div class="tiny dim" style="margin:5px 0 3px">and sends</div>${assetChips(ct.gives)}</div>
+              ${retainNote({retain:ct.retain||{}, teamId:tr[ct.side].teamId})}
+              <div class="tiny dim" style="margin:5px 0 3px">and sends</div>${assetChips(ct.gives)}
+              ${retainNote({retain:ct.giveRetain||{}, teamId:ct.byTeamId})}</div>
             <div class="right">${ct.status==='pending' ? (!counterAnswerNo(tr, ct)
                 ? '<button class="btn sm pri" data-a="acceptCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Accept</button> <button class="btn sm ghost" data-a="declineCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Decline</button>'
                 : '<span class="pill">Waiting on '+esc(teamName(tr[ct.side].teamId))+'</span>')
