@@ -1688,6 +1688,12 @@ div.head>select{width:auto;max-width:240px}
   .yearstrip .tile .v{font-size:clamp(11.5px,3.5vw,14px);margin-top:4px;letter-spacing:-.03em}
   .yearstrip .tile .s{font-size:11px;line-height:1.3;margin-top:5px}
 }
+a.plink{color:inherit;cursor:pointer;text-decoration:underline dotted;text-decoration-color:color-mix(in srgb,currentColor 35%,transparent);text-underline-offset:3px}
+a.plink:hover{text-decoration-style:solid}
+.dealyears{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px;margin-top:10px}
+.dealyears .dy{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--line);border-radius:8px}
+.dealyears .dy.now{border-color:currentColor}
+.dealyears .dy.past b{opacity:.7}
 </style>
 </head>
 <body>
@@ -1710,7 +1716,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-17c · contract shape year by year, and the retired / free agent cut for everyone';
+const APP_BUILD = '2026-11-17g · every season of every deal in Find a player and on every card';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -3440,10 +3446,13 @@ function cutBill(p, atWeek){
      including this season — earlier years of the deal counted where entered. */
   const hist = blHistory(c, y);
   const base = hist.even;
-  /* The league's claw-back switch and percentage, the same ones retiring uses. */
+  /* The league's claw-back switch and percentage, the same ones retiring uses.
+     Only a back loaded deal has saved anything: a front loaded one is cut the
+     same as a level one, whatever its early years paid. */
   const cfg = S.settings.cap.backload || {};
+  const back = blBackLoaded(c, y);
   const cut = cfg.on === false ? 0 : clamp(cfg.pct == null ? 100 : +cfg.pct || 0, 0, 200) / 100;
-  let saved = cfg.on === false ? 0 : sum(hist.rows.map(r=> r.diff)) * cut + (+c.blAdj || 0);
+  let saved = cfg.on === false ? 0 : (back ? sum(hist.rows.map(r=> r.diff)) * cut : 0) + (+c.blAdj || 0);
   saved = Math.max(0, Math.round(saved*100)/100);
 
   /* The years still to come. A back-loaded deal settles them on the base rather
@@ -3533,7 +3542,9 @@ function extCutBill(p, atWeek){
   /* Its own base, not the whole deal's — what the extension itself pays a year. */
   const base = Math.round((sum(slots.map(x=> x.amt)) / slots.length) * 100) / 100;
   let saved = 0;
-  slots.forEach(x=>{ if(x.y <= y) saved += base - x.amt; });
+  /* Only an extension that is back loaded has saved anything. */
+  const seg = dealSegments(c).find(g=> g.from <= from && g.to >= from);
+  if(seg && seg.mode === 'back') slots.forEach(x=>{ if(x.y <= y) saved += base - x.amt; });
   saved = Math.max(0, Math.round(saved*100)/100);
   const later = slots.filter(x=> x.y > y), left = later.length;
   const written = sum(later.map(x=> x.amt));
@@ -3795,9 +3806,29 @@ function txKind(l){
   if((k === 'drop' || k === 'admin') && /cut .+ (free and he retired|as retired \/ free agent)/.test(String(l.text||''))) return 'retire';
   return TX_TYPES[k] ? k : 'admin';
 }
+/* Transactions holds the newest 600 entries. When it is full, the routine notes
+   go first — projections pulled, the week matched to Sleeper, stat corrections,
+   depth charts, the free agent list brought up to date, all written by the app
+   many times a week — so the trades, deals, cuts and pickups stay on the record
+   as long as there is room. It used to drop whatever was oldest, which by
+   November was the commissioner's own September contract work. Same size as
+   before, so nothing extra to send or fetch. */
+const LOG_CAP = 600;
+const LOG_ROUTINE = /^(Projections pulled for week|Recorded what each team was projected|\d{4} matched to Sleeper|\d+ stat corrections? from Sleeper|Free agents brought up to date from Sleeper|Depth charts refreshed)/;
+function logRoutine(l){ return !!l && (l.type || 'admin') === 'admin' && LOG_ROUTINE.test(String(l.text || '')); }
+function trimLog(a, cap){
+  if(!Array.isArray(a)) return a;
+  cap = cap || LOG_CAP;
+  if(a.length <= cap) return a;
+  let over = a.length - cap;
+  /* Newest first, so the oldest routine notes are at the far end. */
+  for(let i = a.length - 1; i >= 0 && over > 0; i--){ if(logRoutine(a[i])){ a.splice(i, 1); over--; } }
+  if(a.length > cap) a.length = cap;
+  return a;
+}
 function logIt(text, meta){
   S.log.unshift(Object.assign({at:Date.now(), text, type:'admin', teams:[], players:[]}, meta||{}));
-  if(S.log.length>600) S.log.length=600;
+  trimLog(S.log, LOG_CAP);
 }
 /* teams: leave it out and everybody sees the notice. Name the teams a piece of
    business belongs to and only they will. */
@@ -4458,6 +4489,125 @@ function restoreCutDeals(st){
   });
   if(done.length) st.log.unshift({id:'cutfix:summary', at:Date.now(), type:'admin', teams:[], players:[],
     text:'Cut players keep their deals until the next free agency draft. Put back for '+done.length+': '+done.join(', ')});
+}
+/* ---- Every deal checked against the salary sheets ------------------------------
+   The deals came into the app in September with only the seasons they had left,
+   so the seasons already paid were never seen: a back loaded deal looked level,
+   and its structure was guessed from whatever years were left.
+
+   Earlier years. The 2022–2025 tabs of the league's contract sheet say what each
+   deal charged in each of those seasons. A deal ran the season before when it
+   had one more year left and the same base salary — the commissioner's rule —
+   and what it charged that season is that season's own column on that season's
+   tab. A season the sheet marks as extended, or one before the deal first adds
+   up to its base times its years, was the old deal's last (Tyreek Hill's $113.40
+   in 2022) and is left out. A season another team ate (a $0 where the deal was
+   written for more) counts at the figure the deal was written for.
+   Tyreek comes out at 2023 $41, 2024 $61.50, 2025 $61.50.
+
+   Structure. A deal of N years on base B pays B × N × the structure's share
+   for each year, and the league's structures carry the same shares as the
+   sheet. Every deal of more than a year, earlier years included, was matched to
+   the one whose shares it pays; a season eaten by another team is allowed to
+   pay less. That structure is the one the deal shows — Kmet's eaten 2026 does
+   not make his level deal read as set year by year — for as long as the figures
+   stay what they were; edit the deal and it is read from its figures again.
+
+   Done once, on the commissioner's phone once it holds the latest copy, on the
+   league itself. Earlier years only go where a deal has none; a deal that is no
+   longer the one the sheet shows (its 2026 salary or its length changed since,
+   or it was signed again) is left alone. Each team's are written down in
+   Transactions under that team.
+
+   [id, name, position, 2026 salary, years from 2026 (null: extended since),
+    earlier years [[season, charged], ...] or 0, structure, years in the deal] */
+const SHEET_YEARS_DONE = '2026-11-17';
+const SHEET_DEALS = [["p_grijntk","Jalen Royals","WR",0.82,2,[[2025,25.94]],"st_dz2ocwo",3],["p_z03z23y","Josh Jacobs","RB",24.8,2,0,"st_s4d4uvs",4],["p_lq5jd5x","Ka'imi Fairbairn","K",5.0,2,0,"ev",2],["p_9414y7j","Justin Jefferson","WR",0.0,3,0,"ev",3],["p_kre47ks","Bills D/ST","DEF",1.0,null,[[2024,1.0],[2025,1.0]],"ev",4],["p_n67qrxg","Jalen Coker","WR",1.0,null,[[2024,1.0],[2025,1.0]],"ev",3],["p_opyuufx","Stefon Diggs","WR",17.0,2,0,"ev",2],["p_06l4bu9","Cole Kmet","TE",0.0,2,[[2024,17.0],[2025,17.0]],"ev",4],["p_2504392","Amon-Ra St. Brown","WR",175.5,5,0,"st_dz2ocwo",5],["p_50u8k98","Trevor Etienne","RB",1.0,1,[[2025,1.0]],"ev",2],["p_sgtvkcf","Mike Gesicki","TE",4.0,2,0,"ev",2],["p_3980nmb","Michael Penix","QB",0.53,null,[[2024,25.37],[2025,0.8]],"st_dz2ocwo",3],["p_0tp4yjq","Justin Fields","QB",1.5,4,[[2025,27.0]],"st_dz2ocwo",5],["p_gk7o1m2","Christian McCaffrey","RB",1.8,2,[[2025,57.0]],"st_dz2ocwo",3],["p_rse5q79","Luther Burden","WR",1.46,2,[[2025,46.17]],"st_dz2ocwo",3],["p_kh9qezr","Kirk Cousins","QB",2.0,2,0,"ev",2],["p_x3nm3nx","T.J. Hockenson","TE",6.0,2,0,"ev",2],["p_d4t7dg4","Jahdae Walker","WR",1.0,3,0,"ev",3],["p_ye94zab","Dylan Laube","RB",1.0,1,[[2024,1.0],[2025,1.0]],"ev",3],["p_2db9jv4","Jonathan Taylor","RB",22.0,2,[[2023,22.0],[2024,22.0],[2025,22.0]],"ev",5],["p_x8ylqx1","Michael Pittman","WR",19.0,1,[[2024,19.0],[2025,19.0]],"ev",3],["p_w01dpfj","Jaylen Wright","RB",5.2,1,[[2024,5.2],[2025,5.2]],"ev",3],["p_ajpex81","Jarquez Hunter","RB",3.3,2,[[2025,3.3]],"ev",3],["p_45tfohl","Chuba Hubbard","RB",12.0,2,[[2024,6.0],[2025,6.0]],"st_823p6dh",4],["p_y4rozm2","Chris Olave","WR",17.0,4,[[2025,42.5]],"st_m1hdjii",5],["p_skjng8u","Cam Skattebo","RB",8.34,2,[[2025,4.17]],"st_823p6dh",3],["p_ehhdf0z","Christian Kirk","WR",34.0,2,[[2023,17.0],[2024,17.0],[2025,17.0]],"st_823p6dh",5],["p_g1hvwao","George Kittle","TE",18.0,2,0,"ev",2],["p_dor28ch","Jameson Williams","WR",18.0,2,[[2025,10.8]],"st_s4d4uvs",3],["p_gcbiijw","Jaxson Dart","QB",9.12,2,[[2025,4.56]],"st_823p6dh",3],["p_zpej3gi","Trevor Lawrence","QB",1.8,3,[[2024,81.0],[2025,4.5]],"st_dz2ocwo",5],["p_ss4a6e3","A.J. Brown","WR",17.0,5,0,"ev",5],["p_ruvfow9","Savion Williams","WR",4.3,2,[[2025,4.3]],"ev",3],["p_7g1bw8o","Rico Dowdle","RB",20.0,2,[[2025,20.0]],"ev",3],["p_s4gkk2d","Evan McPherson","K",1.0,2,0,"ev",2],["p_p2o135q","Isiah Pacheco","RB",14.0,2,[[2025,14.0]],"ev",3],["p_7lllg2y","Rome Odunze","WR",37.38,1,[[2024,5.34],[2025,10.68]],"st_823p6dh",3],["p_4kq5cdj","Ravens D/ST","DEF",1.0,1,[[2024,1.0],[2025,1.0]],"ev",3],["p_c5ukz21","Audric Estime","RB",3.2,1,[[2024,3.2],[2025,3.2]],"ev",3],["p_w59r3g2","Oronde Gadsden","TE",10.0,2,0,"ev",2],["p_dg52g13","Makai Lemon","WR",20.0,3,0,"ev",3],["p_klnls30","Brock Bowers","TE",31.08,1,[[2024,4.44],[2025,8.88]],"st_823p6dh",3],["p_wg8ncct","Caleb Williams","QB",1.26,null,[[2024,59.85],[2025,1.89]],"st_dz2ocwo",3],["p_25rzhtd","Quinn Ewers","QB",2.3,1,[[2025,2.3]],"ev",2],["p_p4c1hgf","Dylan Sampson","RB",7.6,1,[[2025,7.6]],"ev",2],["p_6wbt7f0","David Montgomery","RB",1.4,2,[[2023,63.0],[2024,3.5],[2025,1.4]],"st_dz2ocwo",5],["p_loy390b","Brian Thomas","WR",4.74,null,[[2024,33.18],[2025,9.48]],"st_m1hdjii",3],["p_jzffic7","Tetairoa McMillan","WR",1.85,2,[[2025,58.43]],"st_dz2ocwo",3],["p_ilx033g","Jahmyr Gibbs","RB",9.3,3,0,"st_823p6dh",3],["p_r34fiwn","Aaron Anderson","WR",1.0,2,0,"ev",2],["p_j9n4lz9","Trey McBride","TE",21.0,2,[[2025,10.5]],"st_823p6dh",3],["p_7bba118","Will Shipley","RB",1.0,1,[[2025,1.0]],"ev",2],["p_hwokm24","Blake Corum","RB",10.6,1,[[2024,10.6],[2025,10.6]],"ev",3],["p_ty2yiyp","Garrett Wilson","WR",14.4,2,[[2025,7.2]],"st_823p6dh",3],["p_hxgnai9","Emeka Egbuka","WR",15.2,2,[[2025,15.2]],"ev",3],["p_iqoo8db","Tre' Harris","WR",13.9,2,[[2025,13.9]],"ev",3],["p_bhkws50","Baker Mayfield","QB",24.0,5,0,"ev",5],["p_qgbgfid","Eli Stowers","TE",13.2,3,0,"ev",3],["p_pvwyza3","Lamar Jackson","QB",24.0,4,0,"ev",4],["p_zh82gg3","Shedeur Sanders","QB",17.0,2,0,"ev",2],["p_6jty6ws","CJ Daniels","WR",1.0,2,0,"ev",2],["p_fiv9m7v","Courtland Sutton","WR",17.0,null,[[2025,17.0]],"ev",3],["p_imdezz2","Ja'Kobi Lane","WR",6.8,3,0,"ev",3],["p_h6thryo","Jonah Coleman","RB",15.6,3,0,"ev",3],["p_ca4edns","Kyren Williams","RB",27.0,1,[[2025,27.0]],"ev",2],["p_8c3gv8b","Fernando Mendoza","QB",20.0,3,0,"ev",3],["p_ysfxin4","Jared Goff","QB",17.0,2,[[2023,8.5],[2024,8.5],[2025,8.5]],"st_823p6dh",5],["p_e18bc71","J.J. McCarthy","QB",17.8,null,[[2024,17.8],[2025,17.8]],"ev",3],["p_wmkryqg","Tre Tucker","WR",17.0,2,0,"ev",2],["p_ujglg96","RJ Harvey","RB",16.2,2,0,"ev",2],["p_hr3e2ud","Nico Collins","WR",19.0,5,0,"ev",5],["p_ftr69g7","Isaiah Likely","TE",1.0,2,0,"ev",2],["p_ma5zi7r","Ladd McConkey","WR",14.8,null,[[2024,14.8],[2025,14.8]],"ev",3],["p_8q2erro","Sam Darnold","QB",22.8,null,[[2025,39.9]],"st_m1hdjii",3],["p_sfmsn1z","Khalil Shakir","WR",17.0,2,[[2025,17.0]],"ev",3],["p_d4z1oqe","Donovan Edwards","RB",1.0,2,[[2025,1.0]],"ev",3],["p_wccu9oi","Vikings D/ST","DEF",2.0,3,0,"ev",3],["p_tokn78j","Josh Allen","QB",37.0,5,0,"ev",5],["p_tar6ebd","Brenden Rice","WR",8.82,1,[[2024,1.26],[2025,2.52]],"st_823p6dh",3],["p_l40whec","Xavier Restrepo","WR",1.0,2,[[2025,1.0]],"ev",3],["p_xz7e2nu","Joshua Palmer","WR",6.0,2,0,"ev",2],["p_8ta9307","Kenneth Walker","RB",24.0,2,0,"ev",2],["p_0wng9zj","Cam Little","K",1.0,3,0,"ev",3],["p_2yqtz5c","Marquise Brown","WR",15.2,2,[[2024,15.2],[2025,15.2]],"st_s4d4uvs",4],["p_5otf671","DeVonta Smith","WR",15.2,2,[[2024,30.4],[2025,15.2]],"st_89lzejk",4],["p_85c9akc","DJ Moore","WR",19.0,2,[[2025,19.0]],"ev",3],["p_vkxwqy7","George Pickens","WR",19.0,4,[[2025,19.0]],"ev",5],["p_m7w6p2c","Tyler Warren","TE",12.9,2,[[2025,30.96]],"st_89lzejk",3],["p_9a2c4sj","Tee Higgins","WR",1.3,3,[[2024,58.5],[2025,3.25]],"st_dz2ocwo",5],["p_lmjbwfg","Jaren Kanak","TE",1.0,2,0,"ev",2],["p_6cv1oc6","Colts D/ST","DEF",2.0,2,[[2025,2.0]],"ev",3],["p_algngxb","Jalen Hurts","QB",76.0,null,[[2023,76.0],[2024,76.0],[2025,76.0]],"ev",4],["p_w0vntlp","D'Andre Swift","RB",26.0,1,[[2023,26.0],[2024,26.0],[2025,26.0]],"ev",4],["p_4mtipo1","Noah Gray","TE",2.0,1,[[2024,2.0],[2025,2.0]],"ev",3],["p_vtjyilv","Jayden Daniels","QB",1.2,null,[[2024,57.0],[2025,1.8]],"st_dz2ocwo",3],["p_7048jgw","Wan'Dale Robinson","WR",8.55,3,0,"st_s4d4uvs",3],["p_1jvugos","Isaiah Bond","WR",1.0,2,0,"ev",2],["p_pgyobep","Jayden Higgins","WR",12.9,2,[[2025,12.9]],"ev",3],["p_jnmj1bb","Terry McLaurin","WR",17.0,2,[[2025,17.0]],"ev",3],["p_61d2mat","Rashod Bateman","WR",0.5,3,[[2024,22.5],[2025,1.25]],"st_dz2ocwo",5],["p_lujbt1c","Bo Nix","QB",16.8,null,[[2024,16.8],[2025,16.8]],"ev",3],["p_h08n0tl","Bijan Robinson","RB",115.0,5,0,"st_m1hdjii",5],["p_eioansn","Carnell Tate","WR",9.9,3,0,"st_s4d4uvs",3],["p_5y72gse","Rashee Rice","WR",37.0,5,0,"ev",5],["p_q81ssuo","Ashton Jeanty","RB",1.94,2,[[2025,61.28]],"st_dz2ocwo",3],["p_2xerpzr","Saquon Barkley","RB",24.0,2,0,"ev",2],["p_zexi07p","Chimere Dike","WR",17.0,2,0,"ev",2],["p_p21529w","Darnell Washington","TE",1.0,2,0,"ev",2],["p_suill4t","Tahj Brooks","RB",1.0,2,0,"ev",2],["p_x2vvod6","Roman Wilson","WR",0.46,null,[[2025,22.74]],"st_dz2ocwo",2],["p_wkw8or3","Patrick Mahomes","QB",53.0,3,[[2024,53.0],[2025,53.0]],"ev",5],["p_jcffwgk","Steelers D/ST","DEF",0.5,3,[[2024,22.5],[2025,1.25]],"st_dz2ocwo",5],["p_9blgw07","James Cook","RB",35.0,2,[[2025,35.0]],"ev",3],["p_4q9u861","Devontez Walker","WR",2.2,1,[[2024,2.2],[2025,2.2]],"ev",3],["p_39z8oho","Elic Ayomanor","WR",14.0,2,0,"ev",2],["p_1exqy4e","Elijah Sarratt","WR",11.2,3,0,"ev",3],["p_hbr9rf6","Ty Simpson","QB",14.3,3,0,"ev",3],["p_0tauelj","Max Klare","TE",8.8,3,0,"ev",3],["p_qfeph7e","Denzel Boston","WR",16.6,3,0,"ev",3],["p_2vlnwar","Irv Smith","TE",7.0,1,[[2022,7.0],[2023,7.0],[2024,7.0],[2025,7.0]],"ev",5],["p_rzo56i2","Najee Harris","RB",14.0,1,[[2025,14.0]],"ev",2],["p_mzhsasy","Riley Patterson","K",1.0,3,0,"ev",3],["p_sj6lhw9","Malik Willis","QB",80.0,2,0,"ev",2],["p_vuauk46","C.J. Stroud","QB",76.5,5,0,"st_dz2ocwo",5],["p_w4vgs55","Jets D/ST","DEF",1.0,2,0,"ev",2],["p_wgm27ze","Matthew Golden","WR",12.9,2,[[2025,12.9]],"ev",3],["p_svgbhgd","KC Concepcion","WR",18.8,3,0,"ev",3],["p_5oqw9ah","Jalen Milroe","QB",7.14,2,[[2025,3.57]],"st_823p6dh",3],["p_qx5kwvu","Deshaun Watson","QB",15.0,2,[[2024,15.0],[2025,15.0]],"ev",4],["p_ozyfqqb","Skyler Bell","WR",9.8,3,0,"ev",3],["p_vaeo2yj","Brandon Aiyuk","WR",17.0,2,[[2025,17.0]],"ev",3],["p_7m9u559","Jaylen Warren","RB",14.0,2,[[2025,14.0]],"ev",3],["p_vnuk9fp","Kyle Williams","WR",4.3,2,[[2025,4.3]],"ev",3],["p_rqpkz9o","Rhamondre Stevenson","RB",21.0,1,[[2024,21.0],[2025,21.0]],"ev",3],["p_a75tgbu","MarShawn Lloyd","RB",9.4,1,[[2024,9.4],[2025,9.4]],"ev",3],["p_a60h6w9","Jack Bech","WR",6.54,2,[[2025,22.89]],"st_m1hdjii",3],["p_n8bvky6","Travis Hunter","DB",19.5,2,[[2025,19.5]],"ev",3],["p_8fcyts9","Rashid Shaheed","WR",8.55,1,[[2024,34.2],[2025,14.25]],"st_89lzejk",3],["p_7br9u09","Chris Brazzell","WR",16.6,3,0,"ev",3],["p_g51nfcy","De'Zhaun Stribling","WR",14.3,3,0,"ev",3],["p_i0fdaxm","Mike Evans","WR",19.0,1,[[2025,19.0]],"ev",2],["p_4cv4hj2","Chris Bell","WR",3.84,3,0,"st_823p6dh",3],["p_zk915pc","Tucker Kraft","TE",27.0,5,0,"ev",5],["p_tfrzzof","Jordan Mason","RB",15.0,2,0,"ev",2],["p_k3hxxhm","Terrance Ferguson","TE",1.0,2,0,"ev",2],["p_cfal90o","Bryce Young","QB",17.0,4,0,"ev",4],["p_tom51tf","Tua Tagovailoa","QB",17.0,2,0,"ev",2],["p_s2ip20w","Drake Maye","QB",1.14,null,[[2024,54.15],[2025,1.71]],"st_dz2ocwo",3],["p_wxxd0eb","Matt Hibner","TE",1.0,2,0,"ev",2],["p_m0yqkii","David Njoku","TE",19.0,1,[[2025,19.0]],"ev",2],["p_dd0r2kf","Kevin Coleman","WR",8.8,2,0,"ev",2],["p_48ucdr1","Josh Downs","WR",39.9,3,0,"st_dz2ocwo",3],["p_zxj82so","DJ Giddens","RB",1.0,1,[[2025,1.0]],"ev",2],["p_llmiwhj","Keon Coleman","WR",0.82,1,[[2024,38.76],[2025,1.22]],"st_dz2ocwo",3],["p_wu7umo2","Xavier Legette","WR",9.4,1,[[2024,9.4],[2025,9.4]],"ev",3],["p_fqy8z94","Zavion Thomas","WR",1.0,2,0,"ev",2],["p_dopjisc","Omar Cooper","WR",53.58,3,0,"st_dz2ocwo",3],["p_u4hde49","Kaytron Allen","RB",9.3,2,0,"ev",2],["p_6l9n8lf","Zachariah Branch","WR",12.2,3,0,"ev",3],["p_94hpm7f","Chris Boswell","K",2.0,1,[[2025,2.0]],"ev",2],["p_zmpcfp9","Kaelon Black","RB",5.4,2,0,"ev",2],["p_3801z5c","Jadarian Price","RB",59.85,3,0,"st_dz2ocwo",3],["p_8igh9ji","Buccaneers D/ST","DEF",2.0,2,0,"ev",2],["p_la1sqqh","Tai Felton","WR",1.0,1,[[2025,1.0]],"ev",2],["p_n167e1z","Cam Ward","QB",1.94,2,[[2025,61.28]],"st_dz2ocwo",3],["p_4to652n","Theo Johnson","TE",14.0,2,0,"ev",2],["p_urkx929","Demond Claiborne","RB",4.4,2,0,"ev",2],["p_q6x72cs","Isaac TeSlaa","WR",2.3,1,[[2025,2.3]],"ev",2],["p_purrt30","TreVeyon Henderson","RB",10.98,2,[[2025,38.43]],"st_m1hdjii",3],["p_c5i81hc","Justin Joly","TE",1.0,3,0,"ev",3],["p_98arb4w","Brenen Thompson","WR",1.0,2,0,"ev",2],["p_sg25xxk","Cade Otton","TE",1.0,4,0,"ev",4],["p_cz77lml","Antonio Williams","WR",17.6,3,0,"ev",3],["p_xdrmys7","DK Metcalf","WR",19.0,3,[[2024,19.0],[2025,19.0]],"ev",5],["p_ww1nrw8","Kyler Murray","QB",28.0,4,[[2025,28.0]],"ev",5],["p_4x4iejc","Jordan Addison","WR",19.0,4,0,"ev",4],["p_e322rzw","Dalton Schultz","TE",2.0,2,[[2023,2.0],[2024,2.0],[2025,2.0]],"ev",5],["p_sgrs03r","Drew Allar","QB",5.4,3,0,"ev",3],["p_vg8k5om","Chase Brown","RB",20.0,2,[[2025,20.0]],"ev",3],["p_eb6vjco","Pat Freiermuth","TE",7.0,1,[[2024,7.0],[2025,7.0]],"ev",3],["p_gfw0l6t","Romeo Doubs","WR",6.0,2,[[2025,6.0]],"ev",3],["p_svyqudg","Tyjae Spears","RB",15.0,2,0,"ev",2],["p_wf0fx8x","Pat Bryant","WR",6.6,2,[[2025,6.6]],"ev",3],["p_9z458y0","Brock Purdy","QB",23.0,3,[[2025,23.0]],"ev",4],["p_i2afz6p","Saints D/ST","DEF",1.0,2,0,"ev",2],["p_mdmwj6i","Drake London","WR",17.0,4,[[2025,17.0]],"ev",5],["p_pl204pr","Jeremiyah Love","RB",22.0,3,0,"ev",3],["p_yh5viui","Malachi Fields","WR",15.6,3,0,"ev",3],["p_matr1ub","Chargers D/ST","DEF",1.0,2,0,"ev",2],["p_9opqe17","Woody Marks","RB",1.0,null,[[2025,1.0]],"ev",2],["p_ghem04c","Luke McCaffrey","WR",7.4,1,[[2024,7.4],[2025,7.4]],"ev",3],["p_gykyjxv","Cowboys D/ST","DEF",1.0,1,[[2022,1.0],[2023,1.0],[2024,1.0],[2025,1.0]],"ev",5],["p_z4nn5vn","Kenyon Sadiq","TE",17.6,3,0,"ev",3],["p_uo8sj6f","Tyler Shough","QB",9.6,2,[[2025,9.6]],"ev",3],["p_5k1rkyx","Brenton Strange","TE",14.0,2,0,"ev",2],["p_h5y9vk4","Brashard Smith","RB",7.0,2,0,"ev",2],["p_fgn6xhk","Sam LaPorta","TE",14.0,5,0,"ev",5],["p_2j73nkr","Trey Benson","RB",4.74,1,[[2024,33.18],[2025,9.48]],"st_m1hdjii",3],["p_444ty62","Brian Robinson","RB",27.0,1,[[2025,27.0]],"ev",2],["p_xzieqav","Rachaad White","RB",15.0,2,0,"ev",2],["p_yhoipcu","Adam Randall","RB",3.4,2,0,"ev",2],["p_osiakll","Jonathon Brooks","RB",34.2,1,[[2024,8.55],[2025,14.25]],"st_s4d4uvs",3],["p_7mfka6f","Marvin Harrison","WR",1.26,null,[[2024,59.85],[2025,1.89]],"st_dz2ocwo",3],["p_ct55dgd","Malik Nabers","WR",36.0,null,[[2024,9.0],[2025,15.0]],"st_s4d4uvs",3],["p_aacimj6","Omarion Hampton","RB",1.85,2,[[2025,58.43]],"st_dz2ocwo",3],["p_nwmcxjs","Quinshon Judkins","RB",19.5,2,[[2025,19.5]],"ev",3],["p_roaoiv4","Colston Loveland","TE",18.3,null,[[2025,18.3]],"ev",2],["p_jjkuagz","Jordyn Tyson","WR",21.0,3,0,"ev",3],["p_tdfnwlb","Nicholas Singleton","RB",13.8,3,0,"ev",3],["p_902yq5w","Joe Burrow","QB",40.8,4,0,"st_m1hdjii",4],["p_4a6afy3","CeeDee Lamb","WR",24.0,4,[[2025,24.0]],"ev",5],["p_u5bxtjy","Justin Herbert","QB",38.0,2,[[2023,38.0],[2024,38.0],[2025,38.0]],"ev",5],["p_4hzth4h","Jordan Love","QB",28.0,2,[[2024,28.0],[2025,28.0]],"ev",4],["p_uzupdzw","Jaylen Waddle","WR",6.4,2,[[2024,38.4],[2025,12.8]],"st_m1hdjii",4],["p_msiu4ri","Kyle Pitts","TE",3.5,3,[[2024,17.5],[2025,7.0]],"st_m1hdjii",5],["p_p2e5szl","Ja'Marr Chase","WR",9.5,3,[[2024,47.5],[2025,19.0]],"st_m1hdjii",5],["p_tb2hc9o","Breece Hall","RB",9.3,3,[[2025,27.0]],"ev",4],["p_nnp3ite","Falcons D/ST","DEF",2.0,3,0,"ev",3],["p_oz3n4th","Eagles D/ST","DEF",2.0,null,[[2024,2.0],[2025,2.0]],"ev",3],["p_oudxvnb","Cedric Tillman","WR",7.0,3,0,"ev",3],["p_hogomgy","Kimani Vidal","RB",0.38,1,[[2024,18.24],[2025,0.58]],"st_dz2ocwo",3],["p_1ugjy9r","Jaydon Blue","RB",0.68,2,[[2025,21.66]],"st_dz2ocwo",3],["p_j1kqw3g","Bhayshul Tuten","RB",9.6,2,0,"ev",2],["p_idhqfiz","Mason Taylor","TE",10.9,1,[[2025,10.9]],"ev",2],["p_4bk7bbh","Kaleb Johnson","RB",12.9,2,[[2025,7.74]],"st_s4d4uvs",3],["p_t5mz9n1","Will Howard","QB",5.3,2,[[2025,5.3]],"ev",3],["p_k9dqu1u","Kyle Monangai","RB",1.0,1,[[2025,1.0]],"ev",2],["p_uetl8v0","Efton Chism","WR",1.0,1,[[2025,1.0]],"ev",2],["p_plo0gqm","Tyler Loop","K",1.0,2,[[2025,1.0]],"ev",3],["p_vdpkjz5","Geno Smith","QB",15.0,1,[[2024,15.0],[2025,15.0]],"ev",3],["p_mmr86ch","Travis Kelce","TE",10.0,1,[[2025,10.0]],"ev",2],["p_vpz7m8n","Tyreek Hill","WR",82.0,2,[[2023,41.0],[2024,61.5],[2025,61.5]],"st_s4d4uvs",5],["p_d8p6d3t","Chris Godwin","WR",7.0,4,0,"ev",4],["p_7c44xpd","Jonnu Smith","TE",19.0,2,[[2025,19.0]],"ev",3],["p_mq93wjn","Jakobi Meyers","WR",19.0,4,[[2025,19.0]],"ev",5],["p_tbwtrt6","Gardner Minshew","QB",1.0,1,[[2023,1.0],[2024,1.0],[2025,1.0]],"ev",4],["p_cqtcstv","Travis Etienne","RB",17.25,3,[[2024,46.0],[2025,23.0]],"st_89lzejk",5],["p_9dj92qk","Tank Bigsby","RB",1.0,5,0,"ev",5],["p_ptjlp9o","Tank Dell","WR",14.0,2,0,"ev",2],["p_jisesss","Bears D/ST","DEF",2.0,5,0,"ev",5],["p_dmhhqqx","Jerry Jeudy","WR",1.7,2,[[2023,76.5],[2024,4.25],[2025,1.7]],"st_dz2ocwo",5],["p_9wcutv6","Calvin Ridley","WR",6.0,2,0,"ev",2],["p_6ovvfwd","Calvin Austin","WR",6.0,1,[[2025,6.0]],"ev",2],["p_olvwgc6","Luke Musgrave","TE",1.0,2,0,"ev",2]];
+function sheetDealFind(r, byIdP, byName){
+  const [pid, name, pos, sal26, yrs] = r;
+  let p = byIdP[pid];
+  if(!p || String(p.name||'').toLowerCase() !== String(name).toLowerCase()) p = byName[String(name).toLowerCase()+'|'+pos] || null;
+  const c = p && p.contract;
+  if(!c || p.retired) return null;
+  if(+c.startYear !== 2026) return null;
+  if(Math.abs((+(c.salaries||[])[0]||0) - (+sal26||0)) > 0.011) return null;      /* not the deal the sheet shows */
+  if(yrs != null && !(c.extensions||[]).length && +c.years !== +yrs) return null;
+  return p;
+}
+function sheetDealIndex(){
+  const byIdP = {}, byName = {};
+  S.players.forEach(p=>{ byIdP[p.id] = p; byName[String(p.name||'').toLowerCase()+'|'+p.pos] = p; });
+  return [byIdP, byName];
+}
+/* Earlier years where a deal has none. Returns the players given them. */
+function sheetPriorFill(){
+  const [byIdP, byName] = sheetDealIndex();
+  const got = [];
+  SHEET_DEALS.forEach(r=>{
+    if(!r[5]) return;
+    const p = sheetDealFind(r, byIdP, byName); if(!p) return;
+    const c = p.contract;
+    if(blPrior(c).length) return;                                            /* entered already: left alone */
+    c.prior = r[5].map(x=> ({year:+x[0], amt:fixInc(Math.max(0, +x[1]||0))})).sort((a,b)=> a.year - b.year);
+    got.push(p);
+  });
+  return got;
+}
+function sheetLogByTeam(list, line, idp){
+  const byTeam = {}, order = [];
+  list.forEach(x=>{ const k = x.p.contract.teamId || ''; if(!byTeam[k]){ byTeam[k] = []; order.push(k); } byTeam[k].push(x); });
+  order.forEach(k=>{
+    const xs = byTeam[k];
+    logIt((k ? teamName(k) : 'Unsigned, with their deals')+': '+line(xs.length)+' — '+xs.map(x=> x.say).join('; '),
+      {id:idp+(k||'free'), type:'contract', teams:k ? [k] : [], players:xs.map(x=> x.p.id)});
+  });
+}
+const priorSay = (p)=> p.name+' ('+p.contract.prior.map(x=> x.year+' '+money(x.amt)).join(', ')+')';
+function sheetYearsRun(){
+  if(!S || !S.league || S.league.sheetYearsSet) return 0;
+  if(!isHomeCopy(S) || +S.league.season !== 2026) return 0;
+  if(!reallyCommish()) return 0;
+  const got = sheetPriorFill();
+  S.league.sheetYearsSet = SHEET_YEARS_DONE;
+  sheetLogByTeam(got.map(p=> ({p, say:priorSay(p)})),
+    (n)=> 'earlier years of '+n+' deal'+(n===1?'':'s')+' filled in from the 2022–2025 salary sheets', 'sheetyears:');
+  clearCapCache();
+  save();
+  if(got.length) toast('Earlier years filled in for '+got.length+' deal'+(got.length===1?'':'s')+' from the salary sheets — each team’s are in Transactions', 'good', 7000);
+  return got.length;
+}
+/* After the earlier years: any the first pass did not have, then every deal's
+   structure from the shares it pays. */
+function sheetShapesRun(){
+  if(!S || !S.league || S.league.sheetShapesSet || !S.league.sheetYearsSet) return 0;
+  if(!isHomeCopy(S) || +S.league.season !== 2026) return 0;
+  if(!reallyCommish()) return 0;
+  const more = sheetPriorFill();
+  const [byIdP, byName] = sheetDealIndex();
+  const moved = [];
+  SHEET_DEALS.forEach(r=>{
+    const p = sheetDealFind(r, byIdP, byName); if(!p) return;
+    const c = p.contract, st = structById(r[6]);
+    if(!st || st.id !== r[6]) return;
+    const whole = dealFirstWhole(c);
+    if(whole.length !== +r[7]) return;                                       /* not the run the sheet was matched on */
+    const was = dealShape(c).segs[0];
+    c.shapeSet = {id:st.id, sig:shapeSig(whole)};
+    const first = dealFirstDeal(c);
+    if(first) first.structId = st.id;
+    clearCapCache();
+    const now = dealShape(c).segs[0];
+    if(!was || was.name !== now.name) moved.push({p, say:p.name+' '+(was ? was.name : '—')+' → '+now.name});
+  });
+  S.league.sheetShapesSet = SHEET_YEARS_DONE;
+  if(more.length) sheetLogByTeam(more.map(p=> ({p, say:priorSay(p)})),
+    (n)=> 'earlier years of '+n+' more deal'+(n===1?'':'s')+' filled in from the salary sheets, eaten seasons at the figure written', 'sheetyears2:');
+  if(moved.length) sheetLogByTeam(moved,
+    (n)=> n+' structure'+(n===1?'':'s')+' put right from the salary sheets — base × years × each year’s share', 'sheetshapes:');
+  clearCapCache();
+  save();
+  if(moved.length || more.length) toast('Structures checked against the salary sheets — '+moved.length+' put right'+(more.length ? ', '+more.length+' more with earlier years' : '')+'. See Transactions', 'good', 7000);
+  return moved.length + more.length;
 }
 function blockTestClear(st){
   if(!st || !st.league || st.league.blockTestsCleared) return;
@@ -6154,6 +6304,27 @@ function shapeOf(sal, own){
    signed, then each extension from the season it takes over. A back loaded deal
    in its last year with a front loaded extension behind it reads as both —
    Back Load 2026, then Front Load 2027–2029 — rather than one or the other. */
+/* The deal as first signed, whole: its earlier years and the seasons it has
+   before any extension takes over — or, where it was extended, everything it
+   was written for. The figures its structure is read from. */
+function dealFirstDeal(c){
+  const exts = (c.extensions || []).filter(e=> e && isFinite(+e.from));
+  if(!exts.length) return c;
+  const lastExt = exts[exts.length-1];
+  const editedAfter = (+c.signedAt||0) > (+lastExt.at||0) + 1000;
+  if(editedAfter) return null;
+  return exts[0].prev && (exts[0].prev.salaries || []).length ? exts[0].prev : null;
+}
+function dealFirstWhole(c){
+  const segs = dealSegments(c), g = segs[0];
+  if(!g) return [];
+  const prior = blPrior(c).map(x=> x.amt);
+  const first = (c.extensions||[]).length ? dealFirstDeal(c) : null;
+  const y0 = +c.startYear || S.league.season;
+  const part = ((c.salaries||[]).map(v=> +v || 0)).slice(g.from - y0, g.to - y0 + 1);
+  return prior.concat(first ? first.salaries.map(v=> +v || 0) : part);
+}
+function shapeSig(xs){ return (xs||[]).map(v=> (+v||0).toFixed(2)).join(','); }
 function dealSegments(c){
   const structs = S.settings.contracts.structures || [];
   const sal = ((c && c.salaries) || []).map(v=> +v || 0);
@@ -6187,7 +6358,10 @@ function dealSegments(c){
          the years it still has before an extension takes over. */
       const first = exts.length && !editedAfter && exts[0].prev && (exts[0].prev.salaries || []).length ? exts[0].prev : null;
       const whole = prior.concat(first ? first.salaries.map(v=> +v || 0) : part);
-      sh = shapeOf(whole, byId(structs, (first || c).structId));
+      /* Matched against the league's shares from the salary sheets: that is
+         the structure, as long as the figures are still the ones it was matched on. */
+      const set = c.shapeSet && c.shapeSet.sig === shapeSig(whole) ? byId(structs, c.shapeSet.id) : null;
+      sh = set ? {st:set, mode:set.mode, name:set.name, known:true} : shapeOf(whole, byId(structs, (first || c).structId));
     }
     return Object.assign(sh, {from, to, ext: !!e});
   });
@@ -12235,7 +12409,74 @@ ACT.listSort = (d, el)=>{
   ACT.sortBy({t: v.slice(0, i), k: v.slice(i + 1)});
 };
 var phoneTidyQ = false;
-function phoneTidy(again){ try{ numPads(); phoneLists(true); fitTables(again); phoneLists(); edgeHints(); }catch(e){ console.error(e); } }
+function phoneTidy(again){ try{ nameLinks(); }catch(e){ console.error(e); } try{ numPads(); phoneLists(true); fitTables(again); phoneLists(); edgeHints(); }catch(e){ console.error(e); } }
+/* ---- Every player's name opens his card ---------------------------------------
+   Wherever a man's name is written — a table, the squads, Transactions, a
+   notice, a pop-up — it opens his card, not only where a screen happened to
+   make it a link. Run after every draw. Names inside something that already
+   does a job of its own (a link, a button, a box to type in, a row that opens
+   something) are left as they are. Where two men share a name, the one under
+   contract here is meant. */
+let nameIdx = null;
+function plinkIndex(){
+  const ps = S.players || [];
+  if(nameIdx && nameIdx.arr === ps && nameIdx.n === ps.length) return nameIdx;
+  const byName = Object.create(null), byFirst = Object.create(null);
+  ps.forEach(p=>{
+    const nm = String(p.name||'').trim();
+    if(nm.length < 5 || nm.indexOf(' ') < 0) return;
+    const k = nm.toLowerCase(), had = byName[k];
+    if(!had || (!(had.contract && had.contract.teamId) && p.contract && p.contract.teamId)) byName[k] = p;
+  });
+  Object.keys(byName).forEach(k=>{ const f = k.split(' ')[0]; (byFirst[f] = byFirst[f] || []).push(k); });
+  Object.keys(byFirst).forEach(f=> byFirst[f].sort((a,b)=> b.length - a.length));
+  nameIdx = {arr:ps, n:ps.length, byName, byFirst};
+  return nameIdx;
+}
+const NAME_SKIP = 'a,button,select,option,textarea,input,label,script,style,[data-a],[contenteditable],.nolink,.plink';
+function nameLinks(){
+  if(!S || !Array.isArray(S.players) || !S.players.length) return;
+  const idx = plinkIndex();
+  ['view','modalBox','sheet'].forEach(id=>{
+    const root = document.getElementById(id); if(!root) return;
+    const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    let n;
+    while((n = tw.nextNode())){
+      const t = n.nodeValue;
+      if(!t || t.length < 5 || !/[A-Z]/.test(t)) continue;
+      const par = n.parentElement;
+      if(!par || par.closest(NAME_SKIP)) continue;
+      const low = t.toLowerCase(), found = [];
+      const re = /[A-Za-z0-9][^\s]*/g; let m;
+      while((m = re.exec(t))){
+        const at = m.index;
+        if(at > 0 && /[\w'’.]/.test(t[at-1])) continue;
+        const first = low.slice(at).split(/\s/)[0];
+        const list = idx.byFirst[first]; if(!list) continue;
+        const k = list.find(k=> low.startsWith(k, at) && !/[\w]/.test(t[at + k.length] || ''));
+        if(!k) continue;
+        found.push({at, len:k.length, p:idx.byName[k]});
+        re.lastIndex = at + k.length;
+      }
+      if(found.length) hits.push({n, found});
+    }
+    hits.forEach(({n, found})=>{
+      const t = n.nodeValue, frag = document.createDocumentFragment();
+      let pos = 0;
+      found.forEach(f=>{
+        if(f.at > pos) frag.appendChild(document.createTextNode(t.slice(pos, f.at)));
+        const a = document.createElement('a');
+        a.href = '#'; a.className = 'plink'; a.dataset.a = 'playerCard'; a.dataset.id = f.p.id;
+        a.textContent = t.slice(f.at, f.at + f.len);
+        frag.appendChild(a);
+        pos = f.at + f.len;
+      });
+      if(pos < t.length) frag.appendChild(document.createTextNode(t.slice(pos)));
+      n.parentNode.replaceChild(frag, n);
+    });
+  });
+}
 function phoneTidySoon(){
   if(phoneTidyQ) return;
   phoneTidyQ = true;
@@ -13719,11 +13960,12 @@ function rfaCutHTML(p){
   const owes = on && b.owed > 0;
   const words = !on ? ' The league has back-loading payback switched off, so nothing is owed.'
     : !b.years ? ' He has not played a season of this deal yet, so nothing is owed.'
+    : !b.back ? ' His deal is not back loaded, so nothing is owed.'
     : owes ? ' <b class="bad">'+money(b.owed)+' comes back to the cap</b> — '+b.years+' season'+(b.years===1?'':'s')+
         ' already played charged less than his '+money(b.even)+' base, and that is settled now.'
     : b.raw < 0 ? ' He was charged more early than his base. '+(cfg.credit ? 'The league credits that back: '+money(-b.owed)+'.' : 'Nothing is owed either way.')
     : ' He was never charged under his base, so nothing is owed.';
-  const table = (on && b.years)
+  const table = (on && b.years && b.back)
     ? '<div class="scrollx" style="margin-top:8px"><table><thead><tr><th>Season</th>'+
         b.rows.map(r=>'<th class="right">'+r.year+(r.earlier?'*':'')+'</th>').join('')+'<th class="right">'+S.league.season+' on</th></tr></thead><tbody>'+
         '<tr><td class="dim">Charged</td>'+b.rows.map(r=>'<td class="right num">'+money(r.paid)+'</td>').join('')+'<td class="right dim">—</td></tr>'+
@@ -17933,7 +18175,8 @@ ACT.playerCard = (d)=>{
           <dt>Running</dt><dd>${c.startYear}–${c.startYear+c.years-1}</dd>
           <dt>This year</dt><dd>${money(capHit(p,S.league.season))}${offCap(p)?' <span class="dim tiny">parked</span>':''}</dd>
           <dt>Total</dt><dd>${money(c.total)}</dd>
-        </div>`:'<span class="dim tiny">no contract — free agent</span>'}</div>
+          <dt>Structure</dt><dd>${dealShapeHTML(c, true)}</dd>
+        </div>${dealYearsHTML(c)}`:'<span class="dim tiny">no contract — free agent</span>'}</div>
       <div class="assetbox"><div class="flabel">Form</div>
         <div class="kv">
           <dt>Real production</dt><dd>${b.real==null?'—':Math.round(b.real)+' · '+Math.round(b.rRank*100)+'th'}</dd>
@@ -24328,6 +24571,7 @@ function fsStatCols(pos){
 function fsColMeaning(label, f){
   const per = f && f.mode === 'avg' ? ' A game, on average.' : f && f.mode === 'one' ? ' In that week.' : '';
   const def = f && f.pos === 'DEF';
+  if(/^\d{4} \$$/.test(String(label||''))) return 'What his deal pays in '+String(label).slice(0,4)+'. Grey: unsigned, the deal going with him to whoever picks him up.';
   const M = {
     '#':'His place in the list as it is sorted now.',
     'Player':'Tap his name for his game-by-game and every season he has played.',
@@ -24470,7 +24714,33 @@ function fsBuild(f){
     if(f.pos !== 'DEF') cols.push({k:'snap', label:'Snap %', get:a=> a.none ? null : snap(src(a), a.pos), fmt:v=> v == null ? '<span class="dim">—</span>' : Math.round(v)+'%'});
   }
   cols.push({k:'held', label:'Held by', txt:true, get:a=> fsHeld(a.p).sort, fmt:(v, a)=> fsHeld(a.p).html});
+  /* His deal, every season it runs — as far as the longest deal in the league goes. */
+  const y0 = +S.league.season;
+  let last = y0;
+  S.players.forEach(p=>{ const c = p.contract; if(c && (c.salaries||[]).length) last = Math.max(last, +c.startYear + c.salaries.length - 1); });
+  for(let y = y0; y <= last; y++) cols.push({k:'deal'+y, label:String(y)+' $',
+    get:a=> fsDealYear(a.p, y),
+    fmt:(v, a)=> v == null ? '<span class="dim">\u2014</span>' : '<span class="'+(a.p.contract.teamId ? '' : 'dim')+'">'+money(v)+'</span>'});
   return {rows, cols};
+}
+/* What a deal pays, a season at a time: the seasons already paid before it came
+   into the app (marked), then every season it runs. */
+function dealYearsHTML(c){
+  if(!c) return '';
+  const y = +S.league.season;
+  const rows = blPrior(c).map(x=> ({year:x.year, amt:x.amt, earlier:true}));
+  (c.salaries||[]).forEach((v,i)=> rows.push({year:c.startYear + i, amt:+v||0}));
+  if(!rows.length) return '';
+  return '<div class="dealyears">'+rows.map(r=> '<div class="dy'+(r.year===y?' now':'')+(r.year<y?' past':'')+'"><span class="tiny dim">'+r.year+(r.earlier?'*':'')+'</span>'+
+      '<b class="num">'+money(r.amt)+'</b></div>').join('')+'</div>'+
+    (rows.some(r=> r.earlier) ? '<div class="tiny dim">* paid before the deal came into the app</div>' : '');
+}
+/* A year of a deal in Find a player: what it pays that season. */
+function fsDealYear(p, y){
+  const c = p && p.contract; if(!c) return null;
+  const i = y - (+c.startYear||0);
+  if(i < 0 || i >= (c.salaries||[]).length) return null;
+  return +c.salaries[i] || 0;
 }
 function fsSorted(f, rows, cols){
   const col = cols.find(c=> c.k === f.sort.key) || cols[0];
@@ -27712,6 +27982,12 @@ function settleTagOffer(o){
    came into the app (a contract brought over from the spreadsheet with only its
    remaining years). The level salary is the whole deal, earlier years included,
    spread evenly. */
+/* Is any stretch of this deal that has been played back loaded? Judged on the
+   deal's structure year by year — the deal as first signed whole, earlier
+   years included, and each extension on its own. */
+function blBackLoaded(c, upTo){
+  try{ return dealSegments(c).some(g=> g.from <= Math.max(upTo, +c.startYear||upTo) && g.mode === 'back'); }catch(e){ return false; }
+}
 function blPrior(c){
   return ((c && c.prior) || []).filter(x=> x && isFinite(+x.year) && isFinite(+x.amt))
     .map(x=> ({year:+x.year, amt:fixInc(+x.amt)})).sort((a,b)=> a.year - b.year);
@@ -27776,13 +28052,16 @@ function backloadOwed(p, atYear){
   const cfg = S.settings.cap.backload || {};
   const season = atYear==null ? S.league.season : atYear;
   const h = rfaHistory(c, season);
-  const raw = fixInc(sum(h.rows.map(r=> r.diff)));
+  /* Only a back loaded deal owes anything: a level or front loaded one has
+     saved nothing, however its early years compare with the base. */
+  const back = blBackLoaded(c, season - 1);
+  const raw = back ? fixInc(sum(h.rows.map(r=> r.diff))) : 0;
   let owed = fixInc(raw * (clamp(+cfg.pct||0, 0, 200)/100));
-  if(owed < 0 && !cfg.credit) owed = 0;       // front-loaded deals earn nothing back unless the league says so
+  if(owed < 0 && !cfg.credit) owed = 0;
   /* A commissioner's correction, for when the figures above are not the whole story. */
   const adj = fixInc(+c.blAdj || 0);
   if(adj){ owed = fixInc(owed + adj); if(owed < 0 && !cfg.credit) owed = 0; }
-  return {owed, rows:h.rows, even:h.even, raw, adj, years:h.rows.length, fromBase:h.fromBase, prior:h.prior};
+  return {owed, rows:h.rows, even:h.even, raw, adj, back, years:h.rows.length, fromBase:h.fromBase, prior:h.prior};
 }
 /* ---- Putting the back-loading right -------------------------------------------
    A deal brought over from the spreadsheet arrives with only the years it has
@@ -27817,7 +28096,7 @@ function blEditBody(p){
 function blPreviewHTML(b, cfg){
   if(!cfg.on) return '<div class="hint warn">Back-loading payback is switched off for the league, so retiring him costs nothing whatever this says.</div>';
   return '<div class="kv"><dt>Level salary</dt><dd class="num">'+money(b.even)+(b.fromBase?' <span class="tiny dim">his signed base</span>':b.prior?' <span class="tiny dim">whole deal, earlier years included</span>':'')+'</dd>'+
-    '<dt>If he retired today</dt><dd class="'+(b.owed>0?'bad':'good')+'"><b>'+(b.owed>0 ? money(b.owed)+' owed back' : 'nothing owed')+'</b></dd></div>'+
+    '<dt>If he retired today</dt><dd class="'+(b.owed>0?'bad':'good')+'"><b>'+(b.owed>0 ? money(b.owed)+' owed back' : b.back===false ? 'nothing owed — the deal is not back loaded' : 'nothing owed')+'</b></dd></div>'+
     (b.rows.length ? '<div class="scrollx" style="margin-top:8px"><table><thead><tr><th>Year</th>'+b.rows.map(r=>'<th class="right">'+r.year+(r.earlier?'*':'')+'</th>').join('')+'</tr></thead><tbody>'+
       '<tr><td class="dim">Charged</td>'+b.rows.map(r=>'<td class="right num">'+money(r.paid)+'</td>').join('')+'</tr>'+
       '<tr><td class="dim">Level</td>'+b.rows.map(r=>'<td class="right num dim">'+money(r.even)+'</td>').join('')+'</tr>'+
@@ -38111,7 +38390,7 @@ const STREAMS = [
   {key:'dms',     cap:2000, at:m=> +m.at||0},
   {key:'chat',    cap:1200, at:m=> +m.at||0},
   {key:'notices', cap:200,  at:m=> +m.at||0},
-  {key:'log',     cap:600,  at:m=> +m.at||0}
+  {key:'log',     cap:600,  at:m=> +m.at||0, trim:(a, c)=> trimLog(a, c)}
 ];
 function streamKey(m){
   if(!m || typeof m!=='object') return null;
@@ -38119,7 +38398,7 @@ function streamKey(m){
   return 't:'+(+m.at||0)+'|'+String(m.text||m.title||'').slice(0,60);
 }
 /* Both lists in, one list out, newest first, nothing counted twice. */
-function joinStream(mine, theirs, cap, atOf){
+function joinStream(mine, theirs, cap, atOf, trim){
   const a = Array.isArray(mine) ? mine : [], b = Array.isArray(theirs) ? theirs : [];
   const seen = {}, out = [];
   /* Theirs first so the server's wording wins on a genuine duplicate, then
@@ -38130,13 +38409,13 @@ function joinStream(mine, theirs, cap, atOf){
     seen[k] = 1; out.push(m);
   });
   out.sort((x,y)=> atOf(y) - atOf(x));
-  if(cap && out.length > cap) out.length = cap;
+  if(cap && out.length > cap){ if(trim) trim(out, cap); else out.length = cap; }
   return out;
 }
 function mergeStreams(before, after){
   if(!before || !after) return;
   STREAMS.forEach(s=>{
-    const joined = joinStream(before[s.key], after[s.key], s.cap, s.at);
+    const joined = joinStream(before[s.key], after[s.key], s.cap, s.at, s.trim);
     /* The room reads oldest-first everywhere it is shown, so it is put back
        that way round; the rest are held newest-first. */
     after[s.key] = (s.key==='chat') ? joined.slice().reverse() : joined;
@@ -38660,7 +38939,7 @@ function joinStreamsInto(target, other){
   const sig = mergeSig(target);
   STREAMS.forEach(s=>{
     if(!Array.isArray(other[s.key]) || !other[s.key].length) return;
-    const joined = joinStream(other[s.key], target[s.key], s.cap, s.at);
+    const joined = joinStream(other[s.key], target[s.key], s.cap, s.at, s.trim);
     target[s.key] = (s.key==='chat') ? joined.slice().reverse() : joined;
   });
   /* Read in either copy is read. */
@@ -38676,7 +38955,7 @@ function tidyStreams(st, touched){
     const a = st[s.key];
     if(!Array.isArray(a)) return;
     if(touched && touched[s.key]) a.sort((x,y)=> s.key === 'chat' ? s.at(x) - s.at(y) : s.at(y) - s.at(x));
-    if(a.length > s.cap){ if(s.key === 'chat') a.splice(0, a.length - s.cap); else a.length = s.cap; }
+    if(a.length > s.cap){ if(s.key === 'chat') a.splice(0, a.length - s.cap); else if(s.trim) s.trim(a, s.cap); else a.length = s.cap; }
   });
 }
 /* Somebody else changed the same thing first, so something done here could not
@@ -40016,6 +40295,9 @@ function tickBody(){
   if(ui.tmp.syncBusy && Date.now() - (ui.tmp.syncStartedAt||0) > 30000) ui.tmp.syncBusy = false;
   /* The weekly dues nudge. Cheap to check, and it only fires once a week. */
   try{ if(duesWeeklyRun()) needsRender = true; }catch(e){}
+  /* Once: the earlier years of every deal, then every structure, from the salary sheets. */
+  try{ if(sheetYearsRun()) needsRender = true; }catch(e){}
+  try{ if(sheetShapesRun()) needsRender = true; }catch(e){}
   try{ if(weeklyReportRun()) needsRender = true; }catch(e){}
   try{ if(engTick()) needsRender = true; }catch(e){}
   /* Look for revisions a few times a day. The NFL takes days over them, so
