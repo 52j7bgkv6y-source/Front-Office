@@ -1721,7 +1721,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18g · trades and counters: a list to tick, and several at once from the drop-downs';
+const APP_BUILD = '2026-11-18h · counters have the table view too';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -5869,6 +5869,7 @@ function modalBack(){
      changed on the card side of things shows. */
   if(r.ctx === 'builder' && ui.tmp.tb && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeForm();
   else if(r.ctx === 'view' && r.id && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = tradeTableView(r.id);
+  else if(r.ctx === 'counter' && ui.tmp.ct && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = counterForm();
   /* Back to the start/sit advice, or the lineup it was opened from, drawn
      again so a change made meanwhile shows. */
   else if(r.ctx === 'ss' && ui.tmp.ss && $('#modalBox .mb')) $('#modalBox .mb').innerHTML = ssBody();
@@ -22388,10 +22389,12 @@ function tbViewIsTable(){
   if(ui.tmp.tbView) return ui.tmp.tbView === 'table';
   try{ return localStorage.getItem(TT_VIEW_KEY) === 'table'; }catch(e){ return false; }
 }
-function ttColumn(tid, side, deal, editable){
+function ttColumn(tid, side, deal, editable, opt){
+  opt = opt || {};
   const y = S.league.season, w = +S.live.week || 1, pts = ttPtsOn();
   const inDeal = new Set((deal && deal.players) || []), picksIn = new Set((deal && deal.picks) || []);
-  const all = teamPlayers(tid);
+  const all = opt.players || teamPlayers(tid);
+  const act = opt.act || 'ttTog', lock = opt.lock || {};
   const slotOf = (p)=> playerSlot(p);
   const main = all.filter(p=> ['ir','taxi','practice'].indexOf(slotOf(p)) < 0);
   const keys = Array.from(new Set(main.map(p=> posKey(p.pos) || 'Other')))
@@ -22403,16 +22406,17 @@ function ttColumn(tid, side, deal, editable){
   if(taxi.length) groups.push({label:'Taxi squad', list:byPosition(taxi, y), mixed:true, taxi:true});
   const row = (p, g)=>{
     const on = inDeal.has(p.id), v = pts ? weekPoints(p, w) : null;
-    const tag = editable ? ' data-a="ttTog" data-side="'+side+'" data-kind="players" data-id="'+esc(p.id)+'"' : '';
-    return '<div class="ttrow'+(on?' on':'')+(g.taxi?' taxi':'')+(editable?' tap':'')+'"'+tag+'>'+
-      (editable ? '<span class="tttog" aria-hidden="true">'+(on ? '\u2713' : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
+    const ed = editable && !(on && lock[p.id]);
+    const tag = ed ? ' data-a="'+act+'" data-side="'+side+'" data-kind="players" data-id="'+esc(p.id)+'"' : '';
+    return '<div class="ttrow'+(on?' on':'')+(g.taxi?' taxi':'')+(ed?' tap':'')+'"'+tag+'>'+
+      (editable ? '<span class="tttog" aria-hidden="true">'+(on ? (ed ? '\u2713' : '\u2605') : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
       '<div class="ttn"><a href="#" data-a="ttCard" data-id="'+esc(p.id)+'">'+esc(p.name)+'</a>'+
         '<div class="tts">'+(g.mixed ? esc(posKey(p.pos)||'')+' \u00b7 ' : '')+'<span class="money">'+money(tradeHit(p, y))+'</span>'+
           (p.nfl ? ' \u00b7 '+esc(p.nfl) : '')+(g.taxi ? ' \u00b7 <b class="tttaxi">taxi</b>' : '')+'</div></div>'+
       (pts ? '<div class="ttp num'+(v == null ? ' dim' : '')+'">'+(v == null ? '\u2014' : v.toFixed(1))+'</div>' : '')+
     '</div>';
   };
-  const picks = ownedPicks(tid);
+  const picks = opt.picks || ownedPicks(tid);
   const total = sum(all.map(p=> tradeHit(p, y)));
   return '<div class="ttcol" data-ttcol="'+esc(side)+'">'+
     '<div class="tth"><div class="tthn">'+esc(teamName(tid))+'</div>'+
@@ -22423,12 +22427,50 @@ function ttColumn(tid, side, deal, editable){
       g.list.map(p=> row(p, g)).join('')).join('')+
     (picks.length ? '<div class="ttg">Draft picks <span class="dim">'+picks.length+'</span></div>'+
       picks.map(k=>{ const on = picksIn.has(k.id);
-        const tag = editable ? ' data-a="ttTog" data-side="'+side+'" data-kind="picks" data-id="'+esc(k.id)+'"' : '';
-        return '<div class="ttrow'+(on?' on':'')+(editable?' tap':'')+'"'+tag+'>'+
-          (editable ? '<span class="tttog" aria-hidden="true">'+(on ? '\u2713' : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
+        const ed = editable && !(on && lock[k.id]);
+        const tag = ed ? ' data-a="'+act+'" data-side="'+side+'" data-kind="picks" data-id="'+esc(k.id)+'"' : '';
+        return '<div class="ttrow'+(on?' on':'')+(ed?' tap':'')+'"'+tag+'>'+
+          (editable ? '<span class="tttog" aria-hidden="true">'+(on ? (ed ? '\u2713' : '\u2605') : '+')+'</span>' : (on ? '<span class="tttog" aria-hidden="true">\u21c4</span>' : ''))+
           '<div class="ttn"><span class="ttpk">'+esc(pickLabel(k))+'</span></div></div>'; }).join('') : '')+
   '</div>';
 }
+/* The counter's table: what you want from the countered side, everything you
+   could ask for; what you send, your own roster. Tap a row in or out; the
+   original trade's own pieces are starred and stay in. */
+function counterTableHTML(ct, tr, me){
+  const w = +S.live.week || 1, pts = ttPtsOn();
+  const av = counterAvail(tr, ct.side), lock = counterLocks(tr, ct.side);
+  const wantsP = av.players.map(id=> byId(S.players, id)).filter(Boolean);
+  const wantsK = av.picks.map(id=> byId(S.picks, id)).filter(Boolean);
+  ui.tmp.ttCtx = 'counter'; ui.tmp.ttTradeId = null;
+  return '<div class="ttbar"><span class="tiny dim">Tap a row to put him in your counter or take him out. Tap a name for his card.</span>'+
+      '<button class="btn sm '+(pts?'pri':'ghost')+'" data-a="ttPts" aria-pressed="'+(pts?'true':'false')+'">Week '+w+' points: '+(pts?'on':'off')+'</button></div>'+
+    '<div class="ttwrap">'+
+      ttColumn(tr[ct.side].teamId, 'wants', ct.wants, true, {players:wantsP, picks:wantsK, act:'ctTog', lock})+
+      ttColumn(me, 'gives', ct.gives, true, {act:'ctTog'})+
+    '</div>';
+}
+ACT.ctTog = (d)=>{
+  const ct = ui.tmp.ct; if(!ct || !ct[d.side]) return;
+  const tr0 = byId(S.trades, ct.tradeId);
+  const s = ct[d.side], arr = s[d.kind] = s[d.kind] || [];
+  const i = arr.indexOf(d.id);
+  if(i >= 0){
+    if(d.side === 'wants' && tr0 && counterLocks(tr0, ct.side)[d.id]) return toast('That is part of the original trade, so it stays in','bad');
+    arr.splice(i, 1);
+    if(d.side === 'wants' && ct.retain) delete ct.retain[d.id];
+  } else arr.push(d.id);
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0;
+  $('#modalBox .mb').innerHTML = counterForm();
+  if(box) box.scrollTop = top;
+};
+ACT.ctView = (d)=>{
+  ui.tmp.tbView = d.v === 'table' ? 'table' : 'list';
+  try{ localStorage.setItem(TT_VIEW_KEY, ui.tmp.tbView); }catch(e){}
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0;
+  $('#modalBox .mb').innerHTML = counterForm();
+  if(box) box.scrollTop = top;
+};
 function tradeTableHTML(tidA, tidB, dealA, dealB, editable){
   const w = +S.live.week || 1, pts = ttPtsOn();
   return '<div class="ttbar"><span class="tiny dim">'+(editable ? 'Tap a row to put him in the deal or take him out. Tap a name for his card.' : 'What is in the deal is marked. Tap a name for his card.')+'</span>'+
@@ -22462,6 +22504,7 @@ ACT.ttPts = ()=>{
   try{ localStorage.setItem(TT_PTS_KEY, ui.tmp.ttPts ? '1' : '0'); }catch(e){}
   const box = $('#modalBox'), top = box ? box.scrollTop : 0;
   if(ui.tmp.ttCtx === 'view' && ui.tmp.ttTradeId) $('#modalBox .mb').innerHTML = tradeTableView(ui.tmp.ttTradeId);
+  else if(ui.tmp.ttCtx === 'counter' && ui.tmp.ct) $('#modalBox .mb').innerHTML = counterForm();
   else if(ui.tmp.tb) $('#modalBox .mb').innerHTML = tradeForm();
   if(box) box.scrollTop = top;
 };
@@ -23090,15 +23133,19 @@ function counterForm(){
   const c = S.settings.trades.counters;
   const hits = [].concat(ct.wants.players, ct.wants.picks).filter(id=> orig[id]).length;
   const inTrade = (id)=> orig[id] ? ' ★' : '';
+  const asTable = tbViewIsTable();
   return `
+  <div class="row" style="margin-bottom:10px;gap:8px;align-items:center"><span class="eyebrow">View</span>
+    <div class="seg" role="group" aria-label="Counter view"><button class="${asTable?'':'on'}" data-a="ctView" data-v="list">Pick lists</button><button class="${asTable?'on':''}" data-a="ctView" data-v="table">Table</button></div></div>
   <p class="muted" style="margin-top:0">You are ${esc(teamName(me))}, stepping into a deal between
     <b>${esc(teamName(tr.a.teamId))}</b> and <b>${esc(teamName(tr.b.teamId))}</b>. Anything marked ★ is part of that trade.</p>
   <div class="assetbox" style="margin-bottom:12px"><div class="tiny dim">On the table</div><div style="margin-top:6px">${tradeLine(tr)}</div></div>
+  ${asTable ? counterTableHTML(ct, tr, me) : ''}
   <div class="grid g2">
     <div><div class="flabel">What you want from ${esc(teamName(tr[ct.side].teamId))}</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.wants,{rm:'ctRm', side:'wants', lock:locks, price:true})}</div>
         ${retainNote({retain:ct.retain||{}})}
-        ${adderHTML({f:'ct', act:'ctAdd', side:'wants', key:'ct_wants', pid:'ctwp', kid:'ctwk',
+        ${asTable ? '' : adderHTML({f:'ct', act:'ctAdd', side:'wants', key:'ct_wants', pid:'ctwp', kid:'ctwk',
           players:avail.players.map(id=> byId(S.players,id)).filter(Boolean), picks:avail.picks.map(id=> byId(S.picks,id)).filter(Boolean),
           tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')+inTrade(p.id), ktail:k=> inTrade(k.id)})}
         <div class="row" style="margin-top:6px">
@@ -23110,7 +23157,7 @@ function counterForm(){
       </div></div>
     <div><div class="flabel">What you send</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.gives,{rm:'ctRm', side:'gives', price:true})}</div>
-        ${adderHTML({f:'ct', act:'ctAdd', side:'gives', key:'ct_gives', pid:'ctgp', kid:'ctgk',
+        ${asTable ? '' : adderHTML({f:'ct', act:'ctAdd', side:'gives', key:'ct_gives', pid:'ctgp', kid:'ctgk',
           players:ownedPlayers(me).filter(p=> !givenIds[p.id]), picks:ownedPicks(me).filter(k=> !givenIds[k.id]),
           tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')})}
         <div class="row" style="margin-top:6px">
