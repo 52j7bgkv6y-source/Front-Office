@@ -1694,6 +1694,11 @@ a.plink:hover{text-decoration-style:solid}
 .dealyears .dy{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--line);border-radius:8px}
 .dealyears .dy.now{border-color:currentColor}
 .dealyears .dy.past b{opacity:.7}
+.addlist{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 8px}
+.addrow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid var(--line);cursor:pointer;min-height:36px}
+.addrow:last-child{border-bottom:0}
+.addrow input{width:18px;height:18px;flex:none}
+.addrow .addn{flex:1;min-width:0;overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -1716,7 +1721,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18f · a number box with 0 in it starts empty — type the figure, nothing to delete';
+const APP_BUILD = '2026-11-18g · trades and counters: a list to tick, and several at once from the drop-downs';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -22471,6 +22476,64 @@ ACT.ttCard = (d)=>{
   ui.tmp.modalReturn = {html: box.innerHTML, scroll: box.scrollTop, ctx: ui.tmp.ttCtx, id: ui.tmp.ttTradeId};
   ACT.playerCard({id:d.id});
 };
+/* ---- Putting players and picks into a trade or a counter ---------------------
+   Two ways, the manager's choice, remembered on his phone: the drop-downs as
+   they were, where several can now be picked at once (a phone shows its own
+   tick list; a computer takes Ctrl or Shift clicks), or a list — every player
+   and pick with a box to tick, and one button to put the ticked ones in. */
+const ADD_VIEW_KEY = 'frontoffice.tradeadd.v1';
+function addView(){
+  if(ui.tmp.addView) return ui.tmp.addView;
+  let v = null; try{ v = localStorage.getItem(ADD_VIEW_KEY); }catch(e){}
+  return ui.tmp.addView = (v === 'list' ? 'list' : 'drop');
+}
+ACT.addView = (d)=>{
+  ui.tmp.addView = d.v === 'list' ? 'list' : 'drop';
+  try{ localStorage.setItem(ADD_VIEW_KEY, ui.tmp.addView); }catch(e){}
+  const box = $('#modalBox'), top = box ? box.scrollTop : 0, mb = $('#modalBox .mb');
+  if(mb) mb.innerHTML = d.f === 'ct' ? counterForm() : tradeForm();
+  if(box) box.scrollTop = top;
+};
+function addViewSwitch(f){
+  const v = addView();
+  return '<div class="seg tiny" style="display:inline-flex;gap:4px;margin:2px 0 6px">'+
+    '<button class="btn sm '+(v==='drop'?'pri':'ghost')+'" data-a="addView" data-v="drop" data-f="'+f+'">Drop-downs</button>'+
+    '<button class="btn sm '+(v==='list'?'pri':'ghost')+'" data-a="addView" data-v="list" data-f="'+f+'">List</button></div>';
+}
+function coarsePointer(){ try{ return matchMedia('(pointer:coarse)').matches; }catch(e){ return false; } }
+/* o: {f:'tb'|'ct', act, side, key, pid, kid, players, picks, tail(p), ktail(k)} */
+function adderHTML(o){
+  const v = addView();
+  if(v === 'list'){
+    const prow = (p)=> '<label class="addrow"><input type="checkbox" data-addk="'+o.key+'" data-kind="players" value="'+p.id+'">'+
+      '<span class="addn">'+posTag(p.pos)+' '+esc(p.name)+(p.nfl?' <span class="dim tiny">'+esc(p.nfl)+'</span>':'')+'</span>'+
+      '<span class="tiny dim num">'+(o.tail ? esc(o.tail(p).replace(/^ · /,'')) : '')+'</span></label>';
+    const krow = (k)=> '<label class="addrow"><input type="checkbox" data-addk="'+o.key+'" data-kind="picks" value="'+k.id+'">'+
+      '<span class="addn">'+esc(pickLabel(k))+(o.ktail ? esc(o.ktail(k)) : '')+'</span></label>';
+    const ps = byPosition(o.players.filter(Boolean)), ks = o.picks.filter(Boolean);
+    return addViewSwitch(o.f)+
+      '<div class="addlist">'+
+        (ps.length ? '<div class="flabel">Players</div>'+ps.map(prow).join('') : '<div class="tiny dim">No players to add.</div>')+
+        (ks.length ? '<div class="flabel" style="margin-top:6px">Picks</div>'+ks.map(krow).join('') : '')+
+      '</div>'+
+      '<div class="row" style="margin-top:6px"><button class="btn sm pri" data-a="'+o.act+'" data-side="'+o.side+'" data-kind="list" data-key="'+o.key+'">Add the ticked ones</button></div>';
+  }
+  const size = coarsePointer() ? 1 : 6;
+  return addViewSwitch(o.f)+
+    '<div class="tiny dim" style="margin-bottom:3px">Pick one or more'+(coarsePointer() ? '' : ' — Ctrl or Shift for several')+', then Add.</div>'+
+    '<div class="row"><select id="'+o.pid+'" multiple size="'+size+'" aria-label="Players" style="flex:1;min-width:140px">'+
+      posOptions(o.players, o.tail)+'</select>'+
+      '<button class="btn sm" data-a="'+o.act+'" data-side="'+o.side+'" data-kind="players">Add</button></div>'+
+    '<div class="row" style="margin-top:6px"><select id="'+o.kid+'" multiple size="'+(coarsePointer() ? 1 : Math.min(4, Math.max(2, o.picks.length)))+'" aria-label="Picks" style="flex:1;min-width:140px">'+
+      o.picks.map(k=> k ? '<option value="'+k.id+'">'+esc(pickLabel(k))+(o.ktail ? esc(o.ktail(k)) : '')+'</option>' : '').join('')+'</select>'+
+      '<button class="btn sm" data-a="'+o.act+'" data-side="'+o.side+'" data-kind="picks">Add</button></div>';
+}
+/* What was chosen: [{kind, id}] — the ticked boxes, or the picked options. */
+function addPicked(d, selId){
+  if(d.kind === 'list') return Array.from(document.querySelectorAll('#modalBox input[data-addk="'+d.key+'"]:checked')).map(b=> ({kind:b.dataset.kind, id:b.value}));
+  const sel = $(selId); if(!sel) return [];
+  return Array.from(sel.selectedOptions || []).map(o=> o.value).filter(Boolean).map(id=> ({kind:d.kind, id}));
+}
 function tbSide(side, compact){
   tbFixSender();
   const s = ui.tmp.tb[side], tid = s.teamId, y=S.league.season;
@@ -22487,16 +22550,9 @@ function tbSide(side, compact){
               return '<option value="'+t.id+'"'+(t.id===tid?' selected':'')+'>'+esc(t.name)+(b ? ' ('+b.rec+(b.played && b.rank ? ', '+ordinal(b.rank) : '')+')' : '')+'</option>'; }).join('')+
           '</select>'+(tid ? '<div style="margin-top:4px">'+teamStandingHTML(tid)+'</div>' : '')}</label>
     <div style="margin-bottom:8px">${assetChips(s,{rm:'tbRm', side:side})}</div>
-    ${compact ? '' : `<div class="row">
-      <select id="tbp_${side}" style="flex:1;min-width:140px"><option value="">Player…</option>
-        ${posOptions(ownedPlayers(tid), p=> ' · '+money(tradeHit(p,y))+(offCap(p)?' (off the cap now)':''))}</select>
-      <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="players">Add</button>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <select id="tbk_${side}" style="flex:1;min-width:140px"><option value="">Pick…</option>
-        ${ownedPicks(tid).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
-      <button class="btn sm" data-a="tbAdd" data-side="${side}" data-kind="picks">Add</button>
-    </div>`}
+    ${compact ? '' : adderHTML({f:'tb', act:'tbAdd', side, key:'tb_'+side, pid:'tbp_'+side, kid:'tbk_'+side,
+        players:ownedPlayers(tid).filter(p=> s.players.indexOf(p.id) < 0), picks:ownedPicks(tid).filter(k=> s.picks.indexOf(k.id) < 0),
+        tail:p=> ' · '+money(tradeHit(p,y))+(offCap(p)?' (off the cap now)':'')})}
     <div class="row" style="margin-top:6px">
       <input type="number" id="tbc_${side}" min="0" step="${S.settings.cap.increment}"
         placeholder="Cap dollars…" style="flex:1;min-width:140px">
@@ -22821,8 +22877,9 @@ document.addEventListener('change', e=>{
 });
 ACT.tbAdd = (d)=>{
   if(d.kind==='cash') return setCashFrom('#tbc_'+d.side, v=>{ ui.tmp.tb[d.side].cash = v; });
-  const sel = $('#'+(d.kind==='players'?'tbp_':'tbk_')+d.side); if(!sel||!sel.value) return;
-  const arr = ui.tmp.tb[d.side][d.kind]; if(arr.indexOf(sel.value)<0) arr.push(sel.value);
+  const got = addPicked(d, '#'+(d.kind==='players'?'tbp_':'tbk_')+d.side);
+  if(!got.length) return toast(d.kind==='list' ? 'Tick the ones to add first' : 'Pick one or more first');
+  got.forEach(x=>{ const arr = ui.tmp.tb[d.side][x.kind]; if(arr && arr.indexOf(x.id)<0) arr.push(x.id); });
   $('#modalBox .mb').innerHTML = tradeForm();
 };
 ACT.tbRm = (d)=>{
@@ -23041,12 +23098,9 @@ function counterForm(){
     <div><div class="flabel">What you want from ${esc(teamName(tr[ct.side].teamId))}</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.wants,{rm:'ctRm', side:'wants', lock:locks, price:true})}</div>
         ${retainNote({retain:ct.retain||{}})}
-        <div class="row"><select id="ctwp" style="flex:1;min-width:130px"><option value="">Player…</option>
-          ${posOptions(avail.players.map(id=> byId(S.players,id)).filter(Boolean), p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')+inTrade(p.id))}</select>
-          <button class="btn sm" data-a="ctAdd" data-side="wants" data-kind="players">Add</button></div>
-        <div class="row" style="margin-top:6px"><select id="ctwk" style="flex:1;min-width:130px"><option value="">Pick…</option>
-          ${avail.picks.map(id=>{const k=byId(S.picks,id);return k?'<option value="'+id+'">'+esc(pickLabel(k))+inTrade(id)+'</option>':'';}).join('')}</select>
-          <button class="btn sm" data-a="ctAdd" data-side="wants" data-kind="picks">Add</button></div>
+        ${adderHTML({f:'ct', act:'ctAdd', side:'wants', key:'ct_wants', pid:'ctwp', kid:'ctwk',
+          players:avail.players.map(id=> byId(S.players,id)).filter(Boolean), picks:avail.picks.map(id=> byId(S.picks,id)).filter(Boolean),
+          tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')+inTrade(p.id), ktail:k=> inTrade(k.id)})}
         <div class="row" style="margin-top:6px">
           <input type="number" id="ctwc" min="0" step="${S.settings.cap.increment}"
             placeholder="Cap dollars from them…" style="flex:1;min-width:130px">
@@ -23056,12 +23110,9 @@ function counterForm(){
       </div></div>
     <div><div class="flabel">What you send</div>
       <div class="assetbox"><div style="margin-bottom:8px">${assetChips(ct.gives,{rm:'ctRm', side:'gives', price:true})}</div>
-        <div class="row"><select id="ctgp" style="flex:1;min-width:130px"><option value="">Player…</option>
-          ${posOptions(ownedPlayers(me).filter(p=> !givenIds[p.id]), p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':''))}</select>
-          <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="players">Add</button></div>
-        <div class="row" style="margin-top:6px"><select id="ctgk" style="flex:1;min-width:130px"><option value="">Pick…</option>
-          ${ownedPicks(me).filter(k=> !givenIds[k.id]).map(k=>'<option value="'+k.id+'">'+esc(pickLabel(k))+'</option>').join('')}</select>
-          <button class="btn sm" data-a="ctAdd" data-side="gives" data-kind="picks">Add</button></div>
+        ${adderHTML({f:'ct', act:'ctAdd', side:'gives', key:'ct_gives', pid:'ctgp', kid:'ctgk',
+          players:ownedPlayers(me).filter(p=> !givenIds[p.id]), picks:ownedPicks(me).filter(k=> !givenIds[k.id]),
+          tail:p=> ' · '+money(tradeHit(p,S.league.season))+(offCap(p)?' (off the cap now)':'')})}
         <div class="row" style="margin-top:6px">
           <input type="number" id="ctgc" min="0" step="${S.settings.cap.increment}"
             placeholder="Cap dollars…" style="flex:1;min-width:130px">
@@ -23111,8 +23162,9 @@ ACT.ctAdd = (d)=>{
   if(d.kind==='cash' && d.side==='wants') return setCashFrom('#ctwc', v=>{ ui.tmp.ct.wants.cash = v; }, counterForm);
   if(d.kind==='cash') return setCashFrom('#ctgc', v=>{ ui.tmp.ct.gives.cash = v; }, counterForm);
   const map = {'wants-players':'#ctwp','wants-picks':'#ctwk','gives-players':'#ctgp','gives-picks':'#ctgk'};
-  const sel = $(map[d.side+'-'+d.kind]); if(!sel||!sel.value) return;
-  const arr = ui.tmp.ct[d.side][d.kind]; if(arr.indexOf(sel.value)<0) arr.push(sel.value);
+  const got = addPicked(d, map[d.side+'-'+d.kind]);
+  if(!got.length) return toast(d.kind==='list' ? 'Tick the ones to add first' : 'Pick one or more first');
+  got.forEach(x=>{ const arr = ui.tmp.ct[d.side][x.kind]; if(arr && arr.indexOf(x.id)<0) arr.push(x.id); });
   $('#modalBox .mb').innerHTML = counterForm();
 };
 ACT.ctRm = (d)=>{
