@@ -440,6 +440,8 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .spark i{flex:1;background:var(--brass);opacity:.85;border-radius:1px 1px 0 0;min-height:2px}
 .spark.back i{background:var(--chalk)}
 .spark.even i{background:var(--sage)}
+.spark.mixed i.f{background:var(--brass)} .spark.mixed i.b{background:var(--chalk)} .spark.mixed i.e{background:var(--sage)}
+.shapeseg{display:block;white-space:nowrap}
 
 /* ── clock ────────────────────────────────────────────── */
 .clock{font:600 26px/1 var(--mono);letter-spacing:.02em;color:var(--signal);font-variant-numeric:tabular-nums}
@@ -1708,7 +1710,7 @@ div.head>select{width:auto;max-width:240px}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-14b · made for a phone: easier to tap, number pads, tables that fit, and any wide table as a list';
+const APP_BUILD = '2026-11-17c · contract shape year by year, and the retired / free agent cut for everyone';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -3783,8 +3785,16 @@ const TX_TYPES = {
   cap:     {label:'Cap swaps',     ic:'$'},
   waiver:  {label:'Waivers',       ic:'W'},
   contract:{label:'Contract edits',ic:'✎'},
+  retire:  {label:'Retired / free agent',ic:'⌀'},
   admin:   {label:'Everything else',ic:'·'}
 };
+/* What kind an entry is. Retirements made before the retired / free agent cut
+   had its own kind were written down as drops; they are counted with it. */
+function txKind(l){
+  const k = (l && l.type) || 'admin';
+  if((k === 'drop' || k === 'admin') && /cut .+ (free and he retired|as retired \/ free agent)/.test(String(l.text||''))) return 'retire';
+  return TX_TYPES[k] ? k : 'admin';
+}
 function logIt(text, meta){
   S.log.unshift(Object.assign({at:Date.now(), text, type:'admin', teams:[], players:[]}, meta||{}));
   if(S.log.length>600) S.log.length=600;
@@ -4408,7 +4418,7 @@ function restoreCutDeals(st){
     const noDeal = !cur || (!cur.teamId && !(cur.freedBy || cur.freedAt));
     if(!onWaiverDeal && !noDeal) return;                            /* he still has a real deal */
     /* Was he cut? */
-    const drops = (st.log||[]).filter(l=> l && l.type==='drop' && (+l.at||0) > CUT_SNAP_AT &&
+    const drops = (st.log||[]).filter(l=> l && (l.type==='drop' || l.type==='retire') && (+l.at||0) > CUT_SNAP_AT &&
         ((l.players||[]).indexOf(p.id) >= 0 || (again && named(l.text, p.name))))
       .sort((a,b)=> (+b.at||0) - (+a.at||0));
     const last = drops[0] || null;
@@ -6086,6 +6096,139 @@ function sparkFor(structId, years){
     p.map(x=>'<i style="height:'+Math.max(8,x/mx*100)+'%"></i>').join('')+'</span>';
 }
 
+
+/* ---- What shape a deal really has ---------------------------------------------
+   A contract keeps the structure it was signed with, but that is not always the
+   shape it has now. An extension pays its new years on the structure picked for
+   them — max front loading a deal left it still marked Even — and a deal set
+   year by year, or brought in from a sheet with its own salaries, may follow no
+   structure at all. So the shape shown is worked out from the deal itself:
+     · extended (and not edited since): the structure picked for the extension,
+       which pays every year from the extension on;
+     · otherwise: what the salaries actually do — the same every year, stepping
+       down, or stepping up. The structure it was signed with is kept when the
+       salaries bear it out; when they do not, the league's structure that fits
+       them best is shown, and a deal that goes up and down is "set year by year".
+   Nothing is stored or changed — it is read off the deal each time, so every
+   contract, old or new, shows its real shape. */
+function shapeSteps(sal){
+  const inc = centsOn() ? 0.01 : (+S.settings.cap.increment || 1);
+  const xs = (sal||[]).map(v=> +v || 0);
+  if(xs.length < 2) return 'even';
+  const hi = Math.max.apply(null, xs), lo = Math.min.apply(null, xs);
+  if(hi - lo <= Math.max(inc*1.5, hi*0.02)) return 'even';
+  const tol = inc*1.5;
+  let down = true, up = true;
+  for(let i = 1; i < xs.length; i++){
+    if(xs[i] > xs[i-1] + tol) down = false;
+    if(xs[i] < xs[i-1] - tol) up = false;
+  }
+  if(down && xs[0] > xs[xs.length-1]) return 'front';
+  if(up && xs[xs.length-1] > xs[0]) return 'back';
+  return 'custom';
+}
+/* The league's structure of a given kind closest to these salaries. */
+function shapeNearest(sal, mode){
+  const n = sal.length, tot = sum(sal) || 1, pct = sal.map(v=> (+v||0)/tot*100);
+  let best = null, err = Infinity;
+  (S.settings.contracts.structures||[]).forEach(st=>{
+    if(st.mode !== mode) return;
+    const p = structPctRaw(st, n);
+    const e = Math.max.apply(null, p.map((x,i)=> Math.abs(x - pct[i])));
+    if(e < err){ err = e; best = st; }
+  });
+  return best;
+}
+const SHAPE_WORDS = {front:'Front loaded', back:'Back loaded', even:'Even (same every year)', custom:'Set year by year'};
+/* Name a run of salaries: the structure it was signed or extended on when the
+   figures bear that out, otherwise the league's structure that fits best. */
+function shapeOf(sal, own){
+  const mode = shapeSteps(sal);
+  if(mode === 'custom') return {st:null, mode, name:SHAPE_WORDS.custom, known:false};
+  if(own && (sal.length < 2 || own.mode === mode)) return {st:own, mode:own.mode, name:own.name, known:true};
+  const near = shapeNearest(sal, mode);
+  if(near) return {st:near, mode, name:near.name, known:true};
+  return {st:null, mode, name:SHAPE_WORDS[mode], known:false};
+}
+/* A deal year by year, in the stretches it was written in: the deal as first
+   signed, then each extension from the season it takes over. A back loaded deal
+   in its last year with a front loaded extension behind it reads as both —
+   Back Load 2026, then Front Load 2027–2029 — rather than one or the other. */
+function dealSegments(c){
+  const structs = S.settings.contracts.structures || [];
+  const sal = ((c && c.salaries) || []).map(v=> +v || 0);
+  const y0 = +c.startYear || S.league.season, n = Math.max(1, sal.length);
+  const exts = (c.extensions || []).filter(e=> e && isFinite(+e.from));
+  const lastExt = exts.length ? exts[exts.length-1] : null;
+  /* Edited since the last extension: the editor wrote the whole deal again, so
+     the figures as they stand are what count. */
+  const editedAfter = !!(lastExt && (+c.signedAt||0) > (+lastExt.at||0) + 1000);
+  /* Where each extension takes over; a later one starting the same season
+     replaces the earlier. One that took over the whole deal starts it. */
+  const byFrom = {};
+  exts.forEach(e=>{
+    const f = Math.max(y0, +e.from);
+    if(f <= y0 + n - 1) byFrom[f] = e;
+  });
+  const starts = Object.keys(byFrom).map(Number).sort((a,b)=> a - b);
+  if(!byFrom[y0]) starts.unshift(y0);
+  const prior = blPrior(c).map(x=> x.amt);
+  return starts.map((from, i)=>{
+    const to = (i + 1 < starts.length ? starts[i+1] : y0 + n) - 1;
+    const part = sal.slice(from - y0, to - y0 + 1);
+    const e = byFrom[from] || null;
+    let sh;
+    if(e){
+      const est = byId(structs, e.structId);
+      sh = (!editedAfter && est) ? {st:est, mode:est.mode, name:est.name, known:true} : shapeOf(part, est);
+    } else {
+      /* The deal as first signed is judged whole — every year it was written
+         for, the ones already paid before the app had it included — not just
+         the years it still has before an extension takes over. */
+      const first = exts.length && !editedAfter && exts[0].prev && (exts[0].prev.salaries || []).length ? exts[0].prev : null;
+      const whole = prior.concat(first ? first.salaries.map(v=> +v || 0) : part);
+      sh = shapeOf(whole, byId(structs, (first || c).structId));
+    }
+    return Object.assign(sh, {from, to, ext: !!e});
+  });
+}
+function dealShape(c){
+  if(!c) return {st:structById(null), mode:'even', name:structById(null).name, from:null, known:true, segs:[]};
+  const segs = dealSegments(c);
+  const last = segs[segs.length - 1];
+  return Object.assign({}, last, {segs});
+}
+function shapeYears(g){ return g.from === g.to ? String(g.from) : g.from+'–'+String(g.to).slice(-2); }
+/* The deal's name for its shape, ready to show: one name for a deal written in
+   one go, each stretch with its years for one that has been extended. */
+function dealShapeName(c, short){
+  const segs = dealShape(c).segs;
+  const nm = (g)=> short ? g.name.replace(' — ', ' ') : g.name;
+  if(segs.length < 2) return segs.length ? nm(segs[0]) : '';
+  return segs.map(g=> nm(g)+' '+shapeYears(g)).join(' → ');
+}
+/* The same, a stretch to a line, for a table cell. */
+function dealShapeHTML(c, short){
+  const segs = dealShape(c).segs;
+  const nm = (g)=> esc(short ? g.name.replace(' — ', ' ') : g.name);
+  if(segs.length < 2) return '<span class="muted">'+(segs.length ? nm(segs[0]) : '')+'</span>';
+  return segs.map((g,i)=> '<span class="muted shapeseg">'+(i ? '→ ' : '')+nm(g)+' <span class="dim">'+shapeYears(g)+'</span></span>').join('');
+}
+/* The little chart of a deal, drawn from what it actually pays each year, each
+   year in the colour of the stretch it belongs to. */
+function dealSpark(c){
+  const sh = dealShape(c), sal = ((c && c.salaries) || []).map(v=> +v || 0);
+  if(!sal.length) return sparkFor(c && c.structId, (c && c.years) || 1);
+  const mx = Math.max.apply(null, sal) || 1, y0 = +c.startYear || S.league.season;
+  const one = sh.segs.length < 2;
+  const cls = (m)=> m==='back' ? 'b' : m==='even' ? 'e' : 'f';
+  return '<span class="spark '+(one ? (sh.mode==='back'?'back':sh.mode==='even'?'even':'') : 'mixed')+'">'+
+    sal.map((x,i)=>{
+      const g = sh.segs.find(s=> y0 + i >= s.from && y0 + i <= s.to) || sh;
+      return '<i'+(one ? '' : ' class="'+cls(g.mode)+'"')+' style="height:'+Math.max(8, x/mx*100)+'%" title="'+(y0+i)+': '+money(x)+'"></i>';
+    }).join('')+'</span>';
+}
+
 /* ============================================================
    VIEW · FRONT OFFICE (dashboard)
    ============================================================ */
@@ -6314,7 +6457,7 @@ VIEWS.dash = function(){
       <div class="panel dashtx">
         <div class="ph"><h3>Transaction log</h3><div class="spacer"></div><button class="btn ghost sm" data-a="go" data-r="tx">All of it</button></div>
         <div class="pb"><div class="log">${S.log.filter(l=> logSees(l)).slice(0,14).map(l=>
-          '<div><span class="dim">'+dstr(l.at)+'</span> <span class="dim">'+TX_TYPES[l.type||'admin'].ic+'</span> '+esc(l.text)+'</div>').join('') || '<div class="dim">No moves yet.</div>'}</div></div></div>
+          '<div><span class="dim">'+dstr(l.at)+'</span> <span class="dim">'+TX_TYPES[txKind(l)].ic+'</span> '+esc(l.text)+'</div>').join('') || '<div class="dim">No moves yet.</div>'}</div></div></div>
     </div>
 
   </div>`;
@@ -10037,12 +10180,12 @@ function rosFootLead(label, cls){
 /* Everything that can be done with a man on your roster, as a sheet of big
    buttons — what the row of small ones does on a wider screen. */
 function rosterActsHTML(p){
-  const c = p.contract, y = S.league.season, st = structById(c.structId);
+  const c = p.contract, y = S.league.season;
   const ext = !(waiverBarsExtension(p) || yearsLeft(c) > 2 || rookieExtBarred(p)), ce = ext ? canExtend(p) : null;
   const row = (btn, note)=> '<div class="ractrow">'+btn+(note ? '<div class="tiny dim">'+note+'</div>' : '')+'</div>';
   return '<div class="ractsum">'+posTag(p.pos)+' '+clubTag(p.nfl)+
       ' <span class="num">'+money(capHit(p,y))+'</span> <span class="dim">in '+y+' \u00b7 '+
-      yearsLeft(c)+' yr'+(yearsLeft(c)===1?'':'s')+' left \u00b7 '+esc(st.name.replace(' \u2014 ',' '))+'</span></div>'+
+      yearsLeft(c)+' yr'+(yearsLeft(c)===1?'':'s')+' left \u00b7 '+esc(dealShapeName(c, true))+'</span></div>'+
     '<div class="racts">'+
     row('<button class="btn wide" data-a="playerCard" data-id="'+p.id+'">His card \u2014 stats, news, contract</button>')+
     (ext ? row('<button class="btn wide'+(ce.ok?'':' danger')+'" data-a="extend" data-id="'+p.id+'">Extend</button>',
@@ -10222,11 +10365,11 @@ VIEWS.teams = function(){
       <tbody>
       ${posBanded('ros', sortRows('ros', roster, Object.assign({
           name:p=>p.name, pos:p=>posSortVal(p,y), age:p=>+p.age||0,
-          struct:p=>structById(p.contract.structId).name,
+          struct:p=>dealShapeName(p.contract),
           left:p=>yearsLeft(p.contract), total:p=>p.contract.total
         }, yrs.reduce((m,yy)=>{ m['y'+yy] = p=> capHit(p,yy); return m; },{})),
         {key:'pos',dir:1}), yrs.length + 7, p=>{
-        const c=p.contract, st=structById(c.structId);
+        const c=p.contract;
         return `<tr>
           <td><div class="pname">${playerFace(p, 32)}<div class="pn">
             <a href="#" data-a="playerCard" data-id="${p.id}" style="font-weight:500;color:inherit">${esc(p.name)}</a>
@@ -10234,7 +10377,7 @@ VIEWS.teams = function(){
             ${nickLine(p)}</div>${mine ? '<button class="btn sm ghost rosmore phone-only" data-a="rosterActs" data-id="'+p.id+
               '" title="What you can do with '+esc(p.name)+'" aria-label="What you can do with '+esc(p.name)+'">\u22EF</button>' : ''}</div></td>
           <td>${posTag(p.pos)}</td><td class="hide-xs num">${p.age||'—'}</td>
-          <td class="tiny">${sparkFor(c.structId,c.years)} <span class="muted">${esc(st.name.replace(' — ',' '))}</span></td>
+          <td class="tiny">${dealSpark(c)} ${dealShapeHTML(c, true)}</td>
           <td class="right num">${yearsLeft(c)}</td>
           ${yrs.map(yy=>{
             const h=capHit(p,yy), ph = '';
@@ -12098,6 +12241,28 @@ function phoneTidySoon(){
   phoneTidyQ = true;
   requestAnimationFrame(()=>{ phoneTidyQ = false; phoneTidy(); });
 }
+/* A box marked to be replaced has what is in it picked out when it is tapped,
+   so the number typed goes in place of the one there. Safari drops a selection
+   made during the tap itself, so it is made again a moment later. */
+document.addEventListener('focusin', (e)=>{
+  const t = e.target;
+  if(!t || !t.matches || !t.matches('input[data-selectall]')) return;
+  /* put back after a redraw, not tapped: the cursor stays where it was put */
+  if(t.dataset.caret){ delete t.dataset.caret; return; }
+  try{ t.select(); }catch(_){}
+  setTimeout(()=>{ try{ if(document.activeElement === t) t.select(); }catch(_){} }, 0);
+}, true);
+/* Left empty, the extension's years box shows again the number it is holding. */
+document.addEventListener('focusout', (e)=>{
+  const t = e.target;
+  if(t && t.matches && t.matches('[data-k="exty"]') && t.value === '' && ui.tmp && ui.tmp.ext) t.value = ui.tmp.ext.years;
+}, true);
+document.addEventListener('mouseup', (e)=>{
+  const t = e.target;
+  if(t && t.matches && t.matches('input[data-selectall]') && document.activeElement === t){
+    try{ if(t.selectionStart === t.selectionEnd) t.select(); }catch(_){ try{ t.select(); }catch(__){} }
+  }
+}, true);
 /* Before the box takes the cursor, so the right keyboard comes up first time. */
 document.addEventListener('pointerdown', (e)=> numPad(e.target), true);
 document.addEventListener('focusin', (e)=> numPad(e.target), true);
@@ -13528,47 +13693,62 @@ ACT.release = (d)=>{
         '</div></div>'+
         '<button class="btn sm danger" data-a="psqCutGo" data-id="'+p.id+'">Do it</button></div></div>'+
       '</div>' : '')+
+    '<div class="hr"></div>'+
+    '<div class="flabel">Retired / free agent</div>'+rfaCutHTML(p)+
     (isCommish() ? '<div class="hr"></div>'+
       '<div class="flabel">Commissioner — cut him free, no dead cap</div>'+
       '<div class="stack">'+
-      '<div class="assetbox"><div class="row"><div style="flex:1"><b>Free agent</b>'+
+      '<div class="assetbox"><div class="row"><div style="flex:1"><b>Free agent, deal and all</b>'+
         '<div class="tiny muted">Off your books with no dead money, but the deal is not torn up — it goes with him, '+
         'and whoever picks him up takes it as it stands. Nobody does by '+(S.league.season+1)+' and it lapses.'+
         (gross<=(+S.settings.waivers.salary||1)?' At '+money(gross)+' he would come back as a waiver player.':'')+
         '</div></div>'+
         '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="free">Do it</button></div></div>'+
-      (function(){ const b = backloadOwed(p);
-        return '<div class="assetbox"><div class="row"><div style="flex:1"><b>Retired</b>'+
-        '<div class="tiny muted">Out of the league. He will not show in free agency, auctions or the draft until '+
-        'somebody un-retires him.'+
-        (S.settings.cap.backload.on && b.years
-          ? (b.owed>0
-              ? ' <b class="bad">'+money(b.owed)+' comes back to the cap</b> — the deal was shaped to charge light early, '+
-                'and '+b.years+' year'+(b.years===1?'':'s')+' of that has to be settled.'
-              : b.raw<0
-                ? ' You paid more early than an even deal would have. '+
-                  (S.settings.cap.backload.credit ? 'The league credits that back: '+money(-b.owed)+'.' : 'Nothing is owed either way.')
-                : ' The deal was level, so nothing is owed.')
-          : '')+
-        '</div></div>'+
-        '<button class="btn sm '+(S.settings.cap.backload.on && b.owed>0 ? 'danger' : '')+'" data-a="freeCut" data-id="'+p.id+'" data-to="retired">'+
-          (S.settings.cap.backload.on && b.owed>0 ? 'Retire \u2014 pay '+money(b.owed)+' back' : 'Retire \u2014 nothing owed')+'</button></div>'+
-        '<div class="row" style="margin-top:6px;gap:8px"><button class="btn sm ghost" data-a="blEdit" data-id="'+p.id+'">Earlier years / fix the math</button>'+
-          (b.prior ? '<span class="tiny dim">'+b.prior+' earlier year'+(b.prior===1?'':'s')+' counted</span>' : '')+
-          (b.fromBase ? '<span class="tiny dim">level salary from his signed base '+money(b.even)+'</span>' : '')+
-          (b.adj ? '<span class="tiny dim">corrected by '+money(b.adj,{plus:true})+'</span>' : '')+'</div>'+
-        (S.settings.cap.backload.on && backloadOwed(p).years
-          ? '<div class="scrollx" style="margin-top:8px"><table><thead><tr><th>Year</th>'+
-            backloadOwed(p).rows.map(r=>'<th class="right">'+r.year+'</th>').join('')+'</tr></thead><tbody>'+
-            '<tr><td class="dim">Charged</td>'+backloadOwed(p).rows.map(r=>'<td class="right num">'+money(r.paid)+(r.earlier?'<span class="dim">*</span>':'')+'</td>').join('')+'</tr>'+
-            '<tr><td class="dim">Level deal</td>'+backloadOwed(p).rows.map(r=>'<td class="right num dim">'+money(r.even)+'</td>').join('')+'</tr>'+
-            '<tr><td class="dim">Owed</td>'+backloadOwed(p).rows.map(r=>'<td class="right num '+(r.diff>0?'bad':'good')+'">'+money(r.diff,{plus:true})+'</td>').join('')+'</tr>'+
-            '</tbody></table></div>'
-          : '')+'</div>'; })()+
       '</div>' : ''),
     '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
     '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release with dead cap</button>');
 };
+/* ---- The retired / free agent cut ----------------------------------------------
+   For a man who has retired, or is a free agent with no NFL team. Anybody can
+   make it for their own side; when it is not a commissioner the head
+   commissioner is told, and every one of them has its own place among the
+   transactions. The deal is torn up: nothing this season, nothing after. A
+   back loaded deal hands back what its light early years saved (see rfaBase). */
+function rfaCutHTML(p){
+  const b = backloadOwed(p), cfg = S.settings.cap.backload || {}, on = cfg.on !== false && !!cfg.on;
+  const owes = on && b.owed > 0;
+  const words = !on ? ' The league has back-loading payback switched off, so nothing is owed.'
+    : !b.years ? ' He has not played a season of this deal yet, so nothing is owed.'
+    : owes ? ' <b class="bad">'+money(b.owed)+' comes back to the cap</b> — '+b.years+' season'+(b.years===1?'':'s')+
+        ' already played charged less than his '+money(b.even)+' base, and that is settled now.'
+    : b.raw < 0 ? ' He was charged more early than his base. '+(cfg.credit ? 'The league credits that back: '+money(-b.owed)+'.' : 'Nothing is owed either way.')
+    : ' He was never charged under his base, so nothing is owed.';
+  const table = (on && b.years)
+    ? '<div class="scrollx" style="margin-top:8px"><table><thead><tr><th>Season</th>'+
+        b.rows.map(r=>'<th class="right">'+r.year+(r.earlier?'*':'')+'</th>').join('')+'<th class="right">'+S.league.season+' on</th></tr></thead><tbody>'+
+        '<tr><td class="dim">Charged</td>'+b.rows.map(r=>'<td class="right num">'+money(r.paid)+'</td>').join('')+'<td class="right dim">—</td></tr>'+
+        '<tr><td class="dim">Base</td>'+b.rows.map(r=>'<td class="right num dim">'+money(r.even)+'</td>').join('')+'<td class="right dim">—</td></tr>'+
+        '<tr><td class="dim">Owed</td>'+b.rows.map(r=>'<td class="right num '+(r.diff>0?'bad':'good')+'">'+money(r.diff,{plus:true})+'</td>').join('')+
+          '<td class="right good">free</td></tr>'+
+      '</tbody></table></div>'
+    : '';
+  const who = isCommish() ? '' : '<div class="tiny dim" style="margin-top:6px">The commissioner is told when you do this.</div>';
+  return '<div class="assetbox"><div><b>He has retired, or has no NFL team</b>'+
+      '<div class="tiny muted">His deal is torn up — nothing on the cap for '+S.league.season+' or any season after.'+words+'</div></div>'+
+    table+
+    '<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="retired">He retired'+(owes?' — pay '+money(b.owed):'')+'</button>'+
+      '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="nflfa">NFL free agent'+(owes?' — pay '+money(b.owed):'')+'</button>'+
+    '</div>'+
+    '<div class="tiny dim" style="margin-top:6px">Retired, he is out of the league until a commissioner brings him back. '+
+      'An NFL free agent goes into free agency with no deal, for anybody to sign.</div>'+
+    who+
+    (isCommish() ? '<div class="row" style="margin-top:6px;gap:8px"><button class="btn sm ghost" data-a="blEdit" data-id="'+p.id+'">Earlier years / fix the math</button>'+
+      (b.prior ? '<span class="tiny dim">'+b.prior+' earlier year'+(b.prior===1?'':'s')+' counted</span>' : '')+
+      (b.adj ? '<span class="tiny dim">corrected by '+money(b.adj,{plus:true})+'</span>' : '')+'</div>' : '')+
+    (b.prior ? '<div class="tiny dim">* an earlier season of the deal, entered by the commissioner</div>' : '')+
+  '</div>';
+}
 ACT.cutSplit = (d)=>{ ui.tmp.cutSplit = d.m==='split' ? 'split' : 'now'; ACT.release({id:ui.tmp.cutPid}); };
 ACT.releaseGo = (d)=>{ releasePlayer(d.id, ui.tmp.cutSplit||'now'); ui.tmp.cutSplit=null; closeModal(); save(); render(); toast('Player released'); };
 /* ---- Cutting a hurt man off a minimum deal ----------------------------------
@@ -13644,30 +13824,46 @@ ACT.hurtCutGo = (d)=>{
 };
 ACT.freeCut = (d)=>{
   const p = byId(S.players,d.id);
-  const from = p.contract ? p.contract.teamId : null;
-  if(d.to==='retired'){
+  if(!p || !p.contract) return toast('He is not under contract','bad');
+  const from = p.contract.teamId || null;
+  if(d.to === 'retired' || d.to === 'nflfa'){
+    /* Anybody may do this for their own side. */
+    if(from && !isCommish() && !mustManage(from)) return;
+    const retire = d.to === 'retired';
+    const was = grossHit(p, S.league.season);
     const owed = applyBackload(p, from);
     p.contract = null; p.slot = 'active'; delete p.ir;
-    p.retired = true;
-    logIt(teamName(from)+' cut '+p.name+' free and he retired'+
-      (owed?' — '+money(owed)+' owed back on the shape of the deal':' — nothing owed'),
-      {type:'drop', teams:[from].filter(Boolean), players:[p.id]});
-    notify('Retired', p.name+' is out of the league'+(owed?', and '+teamName(from)+' owes '+money(owed)+'.':'.'));
+    p.retired = retire;
+    if(!retire) markDropped(p);
+    const who = currentActorName();
+    const what = retire ? 'he retired' : 'he is an NFL free agent';
+    const text = teamName(from)+' cut '+p.name+' as retired / free agent — '+what+'. Deal torn up'+
+      (owed ? ', '+money(owed)+' owed back on the back-loading' : ', nothing owed')+(who ? ' · by '+who : '');
+    logIt(text, {type:'retire', teams:[from].filter(Boolean), players:[p.id], by:who});
+    notify(retire ? 'Retired' : 'Cut as an NFL free agent',
+      p.name+(retire ? ' is out of the league' : ' is in free agency with no deal')+
+      (owed ? ', and '+teamName(from)+' owes '+money(owed)+'.' : '.'));
+    /* Not a commissioner: the head commissioner hears about it on his own. */
+    if(!isCommish() && headCommishId()){
+      notify('Retired / free agent cut — '+teamName(from),
+        (who ? who : teamName(from))+' cut '+p.name+' ('+money(was)+' this season) as '+(retire ? 'retired' : 'an NFL free agent')+
+        ' — no dead money'+(owed ? ' beyond the '+money(owed)+' back-loading settled' : '')+'. Check it in Transactions.',
+        'warn', [headCommishId()]);
+    }
   } else {
+    if(!isCommish()) return toast('Commissioners only','bad');
     // The deal is not torn up. It comes off your books and follows him about.
     p.slot = 'active'; delete p.ir; p.retired = false;
-    if(p.contract){
-      p.contract.teamId = null;
-      p.contract.freedBy = from;
-      p.contract.freedAt = Date.now();
-      p.contract.freedYear = S.league.season;
-    }
+    p.contract.teamId = null;
+    p.contract.freedBy = from;
+    p.contract.freedAt = Date.now();
+    p.contract.freedYear = S.league.season;
     logIt(teamName(from)+' cut '+p.name+' free — no dead cap, and his '+
-      (p.contract?money(grossHit(p,S.league.season))+' deal goes with him until the next free agency draft':'deal is done'),
+      money(grossHit(p,S.league.season))+' deal goes with him until the next free agency draft',
       {type:'drop', teams:[from].filter(Boolean), players:[p.id]});
     notify('Cut free', p.name+' is available, and whoever takes him takes the contract as it stands.');
   }
-  closeModal(); save(); render(); toast('Done','good');
+  clearCapCache(); closeModal(true); save(); render(); toast('Done','good');
 };
 /* Every week this player has a line for, this season or a past one. */
 function playerLog(p, year){
@@ -17871,7 +18067,7 @@ ACT.playerCard = (d)=>{
         (h.length
           ? '<div class="stack" style="max-height:220px;overflow:auto">'+h.map(l=>
               '<div class="tiny"><span class="dim">'+dstr(l.at)+'</span> '+
-              '<span class="dim">'+(TX_TYPES[l.type||'admin']||TX_TYPES.admin).ic+'</span> '+esc(l.text)+'</div>').join('')+'</div>'
+              '<span class="dim">'+TX_TYPES[txKind(l)].ic+'</span> '+esc(l.text)+'</div>').join('')+'</div>'
           : '<div class="hint">Nothing logged against him yet.</div>');
     })()}
 
@@ -18333,14 +18529,26 @@ ACT.editContract = (d)=>{
       '<button class="btn ghost" data-a="closeModal">Close</button>'+
       '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Drop him</button>');
   }
+  /* The editor opens on the deal as it really is. One whose salaries follow no
+     single structure — an extension paid on a different one, or figures set
+     year by year — opens with those figures, so saving it without touching
+     anything leaves it exactly as it was, instead of spreading it again on the
+     structure it was first signed with. */
+  const shapeNow = c ? dealShape(c) : null;
+  const cdStruct = c ? ((shapeNow.st && shapeNow.st.id) || c.structId) : S.settings.contracts.defaultStruct;
+  const exactNow = !!(c && (c.byYear || (()=>{
+    const want = salariesFor(c.total, c.years, cdStruct), have = (c.salaries||[]);
+    const inc = centsOn() ? 0.01 : (+S.settings.cap.increment || 1);
+    return want.length !== have.length || want.some((v,i)=> Math.abs(v - (+have[i]||0)) > inc*0.5 + 1e-9);
+  })()));
   if(!d.keep) ui.tmp.cd = { pid:p.id, teamId: c? c.teamId : currentTeamId(), total: c? c.total : Math.max(1, p.value||1),
-                years: c? c.years : 1, structId: c? c.structId : S.settings.contracts.defaultStruct,
+                years: c? c.years : 1, structId: cdStruct,
                 startYear: c? c.startYear : S.league.season,
                 waiver: !!(c && c.waiver),
                 rookie: {year: rookieFrom(p) != null ? String(rookieFrom(p)) : '',
                          round: rookieRoundOf(p) != null ? String(rookieRoundOf(p)) : '', hitFA: rookieFreed(p)},
                 base: (c && c.base != null && c.base !== '') ? c.base : '',
-                byYear: (c && c.byYear) ? c.salaries.slice() : null };
+                byYear: exactNow ? c.salaries.slice() : null };
   const cc = S.settings.contracts;
   modal((c?'Edit contract — ':'Sign — ')+p.name, `
     <div class="grid g2">
@@ -19192,7 +19400,8 @@ ACT.extend = (d)=>{
     (!(S.settings.contracts.ladder||{}).on ? ' because the ladder is switched off in Settings › Contracts.' : '.')+'</p>'+extInfoPanel(p),
     '<button class="btn ghost" data-a="closeModal">Close</button>');
   const rx = rookieExtRoom(p);
-  ui.tmp.ext = {pid:p.id, years: Math.max(1, Math.min(2, extMaxAdd(c), rx != null ? rx : 2)), aav: lq.price, structId:c.structId, offset:1};
+  ui.tmp.ext = {pid:p.id, years: Math.max(1, Math.min(2, extMaxAdd(c), rx != null ? rx : 2)), aav: lq.price,
+    structId: (dealShape(c).st && dealShape(c).st.id) || c.structId, offset:1};
   extModal();
 };
 function extModal(){
@@ -19266,7 +19475,7 @@ function extModal(){
     </div>
     <div class="grid g3">
       <label class="f"><span>Extra years (up to ${roomYears})</span>
-        <input type="number" min="1" max="${Math.max(1,roomYears)}" value="${e.years}" data-oninput="extField" data-f="years" data-k="exty"></label>
+        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="${e.years}" data-oninput="extField" data-f="years" data-k="exty" data-selectall="1"></label>
       <div class="f"><span>Base salary a year <span class="dim">— ${lq && lq.raised ? 'his draft price, fixed' : 'the ladder’s, fixed'}</span></span>
         <div class="money" style="font-size:20px;padding:6px 0">${money(e.aav)}</div></div>
       <label class="f"><span>Structure for the new years</span>
@@ -19492,7 +19701,20 @@ ACT.extField = (d,el)=>{
   const e = ui.tmp.ext, c = byId(S.players,e.pid).contract;
   if(d.f==='years'){
     const rx = rookieExtRoom(byId(S.players,e.pid));
-    e.years = clamp(+el.value||1, 1, Math.max(1, Math.min(extMaxAdd(c), rx != null ? rx : Infinity)));
+    const max = Math.max(1, Math.min(extMaxAdd(c), rx != null ? rx : Infinity));
+    /* The number typed replaces the one that was there. Emptied, the box waits
+       for a number instead of putting a 1 straight back. Typed after the one
+       already there — a 3 after a 2 — it is the 3 that is meant, not 23. */
+    const raw = String(el.value || '').replace(/\D/g, '');
+    if(raw === '') return;
+    let n = +raw;
+    if(raw.length > 1 && n > max){
+      const old = String(e.years);
+      const typed = raw.indexOf(old) === 0 ? raw.slice(old.length)
+        : (raw.length > old.length && raw.slice(-old.length) === old) ? raw.slice(0, raw.length - old.length) : raw;
+      n = +(typed.slice(-1) || raw.slice(-1));
+    }
+    e.years = clamp(n || 1, 1, max);
     /* On the ladder the price is a base salary — the same every year whatever
        the length — so changing the years does not change it. */
     const lq = ladderMode() ? ladderQuote(byId(S.players,e.pid)) : null;
@@ -19501,6 +19723,13 @@ ACT.extField = (d,el)=>{
   else if(d.f==='aav'){ /* the ladder's price is not for changing */ }
   else e.structId = el.value;
   extModal();
+  /* Drawn again, the box keeps the keyboard, with the cursor after the number:
+     a 0 after a 1 makes 10 where ten years are allowed, and any number that
+     would be too many takes the place of the one there instead. */
+  if(d.f==='years'){
+    const nb = document.querySelector('#modalBox [data-k="exty"]');
+    if(nb){ try{ nb.dataset.caret = '1'; nb.focus({preventScroll:true}); const n = nb.value.length; nb.setSelectionRange(n, n); }catch(_){} }
+  }
 };
 ACT.extUseQuote = ()=>{ extModal(); };
 ACT.ladderPos = (d,el)=>{ ui.tmp.ladPos = el.value; render(); };
@@ -21253,7 +21482,7 @@ ACT.pickToBlock = ()=>{
   modal('Post a player to the block',
     '<p class="muted" style="margin-top:0">Pick someone from '+esc(teamName(me))+'.</p>'+
     '<div class="scrollx" style="max-height:52vh"><table><tbody>'+
-    list.map(p=>'<tr><td>'+posTag(p.pos)+' <b style="font-weight:500">'+esc(p.name)+'</b><div class="tiny dim">'+money(p.contract.total)+' · '+yearsLeft(p.contract)+' yr left · '+esc(structById(p.contract.structId).name)+'</div></td>'+
+    list.map(p=>'<tr><td>'+posTag(p.pos)+' <b style="font-weight:500">'+esc(p.name)+'</b><div class="tiny dim">'+money(p.contract.total)+' · '+yearsLeft(p.contract)+' yr left · '+esc(dealShapeName(p.contract))+'</div></td>'+
       '<td class="right"><button class="btn sm pri" data-a="blockPlayer" data-id="'+p.id+'">Post</button></td></tr>').join('')+
     '</tbody></table></div>');
 };
@@ -27504,12 +27733,49 @@ function blHistory(c, upTo){
   rows.forEach(r=>{ r.even = fixInc(even); r.diff = fixInc(even - r.paid); });   // positive: charged light
   return {even:fixInc(even), rows, fromBase: setBase != null, prior:prior.length};
 }
+/* ---- Retired or a free agent: what a back loaded deal owes -----------------------
+   When a man retires, or is a free agent with no NFL team, his deal is torn up.
+   A back loaded deal charged the cap light in its early years, so that saving is
+   handed back: for every season already played, his base salary less what he
+   was charged that season. The season in play costs nothing — he is not on a
+   team — and the seasons to come cost nothing, because they have not happened.
+
+   Tyreek Hill on an $82 base: charged $41 in 2023, $61.50 in 2024 and 2025,
+   $82 in 2026 and $164 in 2027. Retired in 2026 he owes 41 + 20.50 + 20.50 = $82;
+   2026 and 2027 are free.
+
+   The base is the one the deal was signed at; the seasons an extension pays,
+   the extension's own base. A deal brought in from a sheet with its earlier
+   years entered, and no base recorded, is levelled over all of its years. */
+function rfaBase(c, y){
+  let ext = null;
+  (c.extensions||[]).forEach(e=>{ if(e && e.from != null && y >= +e.from && isFinite(+e.aav)) ext = e; });
+  if(ext) return +ext.aav;
+  if(c.base != null && c.base !== '' && isFinite(+c.base)) return +c.base;
+  const prior = blPrior(c);
+  if(prior.length){
+    const all = prior.map(x=> x.amt).concat((c.salaries||[]).map(v=> +v||0));
+    return sum(all) / Math.max(1, all.length);
+  }
+  return (+c.total||0) / Math.max(1, +c.years||1);
+}
+function rfaHistory(c, season){
+  const rows = blPrior(c).filter(x=> x.year < season).map(x=> ({year:x.year, paid:x.amt, earlier:true}));
+  for(let i=0;i<(+c.years||0);i++){
+    const y = c.startYear + i;
+    if(y >= season) break;                    // this season and the ones to come are free
+    rows.push({year:y, paid:fixInc(+(c.salaries||[])[i]||0)});
+  }
+  rows.forEach(r=>{ r.even = fixInc(rfaBase(c, r.year)); r.diff = fixInc(r.even - r.paid); });   // positive: charged light
+  const base = fixInc(rfaBase(c, season));
+  return {rows, even:base, fromBase: c.base != null && c.base !== '', prior: blPrior(c).length};
+}
 function backloadOwed(p, atYear){
   const c = p && p.contract;
   if(!c || !c.years) return {owed:0, rows:[], even:0, raw:0};
   const cfg = S.settings.cap.backload || {};
-  const upTo = atYear==null ? S.league.season : atYear;
-  const h = blHistory(c, upTo);
+  const season = atYear==null ? S.league.season : atYear;
+  const h = rfaHistory(c, season);
   const raw = fixInc(sum(h.rows.map(r=> r.diff)));
   let owed = fixInc(raw * (clamp(+cfg.pct||0, 0, 200)/100));
   if(owed < 0 && !cfg.credit) owed = 0;       // front-loaded deals earn nothing back unless the league says so
@@ -30828,7 +31094,7 @@ function txMatches(l, f){
   if(!logSees(l)) return false;
   const anyType = Object.keys(f.types).some(k=>f.types[k]);
   const anyTeam = Object.keys(f.teams).some(k=>f.teams[k]);
-  if(anyType && !f.types[l.type||'admin']) return false;
+  if(anyType && !f.types[txKind(l)]) return false;
   if(anyTeam && !(l.teams||[]).some(t=> f.teams[t])) return false;
   if(f.q && !String(l.text).toLowerCase().includes(f.q.toLowerCase())) return false;
   return true;
@@ -30838,7 +31104,7 @@ VIEWS.tx = function(){
   const rows = S.log.filter(l=> txMatches(l,f));
   const counts = {};
   const seen = S.log.filter(l=> logSees(l));
-  seen.forEach(l=>{ const k=l.type||'admin'; counts[k]=(counts[k]||0)+1; });
+  seen.forEach(l=>{ const k=txKind(l); counts[k]=(counts[k]||0)+1; });
   const anyOn = Object.keys(f.types).some(k=>f.types[k]) || Object.keys(f.teams).some(k=>f.teams[k]) || f.q;
   return `
   <div class="section">
@@ -30863,7 +31129,7 @@ VIEWS.tx = function(){
       <thead><tr><th style="width:150px">When</th><th style="width:60px">Kind</th><th>What happened</th><th class="hide-xs">Teams</th></tr></thead>
       <tbody>${rows.slice(0,300).map(l=>`<tr>
         <td class="num tiny dim nowrap">${dstr(l.at)}</td>
-        <td><span class="pill">${TX_TYPES[l.type||'admin'].ic}</span></td>
+        <td><span class="pill">${TX_TYPES[txKind(l)].ic}</span></td>
         <td>${esc(l.text)}</td>
         <td class="hide-xs tiny muted">${(l.teams||[]).map(teamName).filter((v,i,a)=>a.indexOf(v)===i).join(', ')}</td></tr>`).join('')
         || '<tr><td colspan="4" class="dim center" style="padding:26px">Nothing matches that.</td></tr>'}
