@@ -1721,7 +1721,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-18j · salary-kept boxes wide enough for the cents';
+const APP_BUILD = '2026-11-19a · commissioner can pause a trade timer';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2469,7 +2469,7 @@ function defaultState(){
       bbd:{ on:true, roundHours:24, minBid:1, maxPerRound:0, tiebreak:'earliest',
             budgetMode:'fa', separateBudget:false, budget:120, maxYears:4, maxRounds:0 },
       trades:{
-        reviewHours:24, auctionHours:48, deadlineWeek:14,
+        reviewHours:24, auctionHours:48, deadlineWeek:14, pauseTimers:true,
         antiSnipeOn:true, antiSnipeWithinMin:15, antiSnipeExtendMin:30, antiSnipeUnit:'min',
         undoHours:0,
         allowCompeting:true, ownerMustAccept:true, mustMeetAsk:true,
@@ -3802,13 +3802,19 @@ function quietSkips(){
 function holdForQuiet(){ return quietSkips() && isQuietNow(); }
 /* Has this clock actually finished? Run out is not the same as finished where
    the deadline would fall inside the pause window. */
+/* The commissioner can stop one trade's timer where it stands. It only ever
+   counts as stopped while the league allows pausing, so switching that off
+   starts every one of them again. */
+function tradePauseOn(){ return ((S.settings||{}).trades||{}).pauseTimers !== false; }
+function clockPaused(c){ return !!(c && c.paused && tradePauseOn()); }
 function clockDone(c){
   if(!c) return false;
+  if(clockPaused(c)) return false;
   if(c.remain > 0) return false;
   return !holdForQuiet();
 }
 /* Run out, but holding for the morning. */
-function clockHeld(c){ return !!(c && c.remain <= 0 && holdForQuiet()); }
+function clockHeld(c){ return !!(c && !clockPaused(c) && c.remain <= 0 && holdForQuiet()); }
 function quietResumesAt(){
   const q=S.settings.trades.quiet, to=parseHM(q.to), d=new Date();
   const r=new Date(d); r.setHours(Math.floor(to/60), to%60, 0, 0);
@@ -3819,6 +3825,7 @@ function newClock(hours){ return { remain: Math.max(0, (+hours||0)*3600000), las
 function tickClock(c){
   if(!c) return 0;
   const now = Date.now();
+  if(clockPaused(c)){ c.lastAt = now; return c.remain; }
   if(now > c.lastAt){
     const used = quietSkips() ? (now - c.lastAt)
                               : activeMsBetween(c.lastAt, now, S.settings.trades.quiet);
@@ -6012,6 +6019,11 @@ document.addEventListener('change', e=>{
      focus that means "mid-typing", not "cleared" — leave the stored value be. */
   if(t.type==='date' && val(t)==='' && document.activeElement===t) return;
   setPath(t.dataset.set, val(t));
+  if(t.dataset.set==='settings.trades.pauseTimers' && val(t)===false){
+    const n = resumeAllTradeClocks();
+    if(n) toast(n+' paused timer'+(n===1?'':'s')+' running again','good');
+    save(); render(); return;
+  }
   /* Switching off the power puts you back on your own team straight away,
      rather than leaving trades pointed at whoever you were last on. */
   if(t.dataset.set==='settings.powers.actAs' && !actAsAllowed()) ui.tmp.actAs = null;
@@ -6557,7 +6569,7 @@ VIEWS.dash = function(){
       ${pend.map(tr=>`<div style="padding:12px 14px;border-bottom:1px solid var(--rule-soft)" class="row">
         <div style="flex:1;min-width:200px"><span class="pill warn">In review</span>
           <b>${esc(tradeTeams(tr).map(teamName).join(' ⇄ '))}</b><div class="tiny muted">${tradeLine(tr)}</div></div>
-        <span class="clock calm" style="font-size:17px" data-clock="trade:${tr.id}">${hhmm(tr.clock.remain)}</span>
+        <span class="clock ${clockPaused(tr.clock)?'paused':'calm'}" style="font-size:17px" data-clock="trade:${tr.id}">${hhmm(tr.clock.remain)}</span>
         <button class="btn sm" data-a="openTrade" data-id="${tr.id}">Counter</button></div>`).join('')}
     </div></div>
   </div>`:''}
@@ -23065,6 +23077,57 @@ ACT.acceptTrade = (d)=>{
   save(); render(); toast('Accepted — review clock running','good');
 };
 ACT.rejectTrade = (d)=>{ const tr=byId(S.trades,d.id); if(!tr){ render(); return toast('That offer has gone','bad'); } tr.status='rejected'; tr.log.unshift({at:Date.now(),text:'Turned down'}); save(); render(); };
+function pauseBtn(tr){
+  if(!tr || tr.status!=='review' || !tr.clock || !isCommish() || !tradePauseOn()) return '';
+  return tr.clock.paused
+    ? '<button class="btn sm" data-a="tradeResume" data-id="'+tr.id+'">\u25B6 Resume timer</button>'
+    : '<button class="btn ghost sm" data-a="tradePause" data-id="'+tr.id+'">\u23F8 Pause timer</button>';
+}
+function pausedNote(tr){
+  return tr && tr.clock && clockPaused(tr.clock)
+    ? 'paused by the commissioner'+(tr.clock.pausedAt ? ' '+dstr(tr.clock.pausedAt) : '') : '';
+}
+function tradeTeamsOf(tr){ return tr.type==='multi' ? (tr.teams||[]) : [tr.a.teamId, tr.b.teamId]; }
+ACT.tradePause = (d)=>{
+  const tr = byId(S.trades, d.id);
+  if(!tr || tr.status!=='review' || !tr.clock) return toast('That trade is not in review','bad');
+  if(!isCommish()) return toast('Only the commissioner can pause a timer','bad');
+  if(!tradePauseOn()) return toast('Pausing is switched off in Timing rules','bad');
+  if(tr.clock.paused) return;
+  tickClock(tr.clock);
+  tr.clock.paused = true; tr.clock.pausedAt = Date.now();
+  tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:'Timer paused by the commissioner with '+hhmm(tr.clock.remain)+' left'});
+  notify('Trade timer paused', 'The commissioner paused the review timer on '+tradeTeamsOf(tr).map(teamName).join(' \u21C4 ')+
+    ' with '+hhmm(tr.clock.remain)+' left.', 'warn', tradeTeamsOf(tr));
+  save(); render(); toast('Timer paused','good');
+};
+function resumeClock(tr){
+  tr.clock.paused = false; delete tr.clock.pausedAt; tr.clock.lastAt = Date.now();
+}
+ACT.tradeResume = (d)=>{
+  const tr = byId(S.trades, d.id);
+  if(!tr || tr.status!=='review' || !tr.clock || !tr.clock.paused) return;
+  if(!isCommish()) return toast('Only the commissioner can restart a timer','bad');
+  resumeClock(tr);
+  tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:'Timer restarted by the commissioner with '+hhmm(tr.clock.remain)+' left'});
+  notify('Trade timer running again', 'The review timer on '+tradeTeamsOf(tr).map(teamName).join(' \u21C4 ')+
+    ' is running again with '+hhmm(tr.clock.remain)+' left.', 'warn', tradeTeamsOf(tr));
+  save(); render(); toast('Timer running','good');
+};
+/* Pausing switched off: nothing may be left stopped, so every paused timer
+   picks up where it was. */
+function resumeAllTradeClocks(){
+  let n = 0;
+  (S.trades||[]).forEach(tr=>{
+    if(tr.status==='review' && tr.clock && tr.clock.paused){
+      resumeClock(tr); n++;
+      tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:'Timer restarted — pausing was switched off'});
+      notify('Trade timer running again', 'Review on '+tradeTeamsOf(tr).map(teamName).join(' \u21C4 ')+
+        ' is running again with '+hhmm(tr.clock.remain)+' left.', 'warn', tradeTeamsOf(tr));
+    }
+  });
+  return n;
+}
 ACT.forceProcess = (d)=>{ const tr=byId(S.trades,d.id); tr.clock.remain=0; processTrade(tr); save(); render(); };
 ACT.undoTrade = (d)=>{
   const tr = byId(S.trades,d.id);
@@ -23382,7 +23445,8 @@ ACT.acceptCounter = (d)=>{
      trade was originally accepted. It carries the clock as it stands, and only
      tops it up where it was inside the last stretch — the same anti-snipe rule
      a late bid gets. */
-  const carried = tr.clock ? {remain: Math.max(0, +tr.clock.remain||0), lastAt: Date.now()}
+  const carried = tr.clock ? Object.assign({remain: Math.max(0, +tr.clock.remain||0), lastAt: Date.now()},
+                              tr.clock.paused ? {paused:true, pausedAt:tr.clock.pausedAt} : {})
                            : newClock(S.settings.trades.reviewHours);
   const bumped = antiSnipe(carried);
   if(c.outcome==='replace'){
@@ -25406,7 +25470,8 @@ VIEWS.trades = function(){
     return `<div class="panel" ${ui.tmp.focusTrade===tr.id?'style="border-color:var(--brass)"':''}>
       <div class="ph"><h3>${(tr.teams||[]).length}-team deal</h3><div class="spacer"></div>
         <span class="pill ${tr.status==='review'?'warn':tr.status==='approved'?'ok':''}">${esc(tr.status)}</span>
-        ${tr.clock?'<span class="clock" data-clock="tr:'+tr.id+'">'+hhmm(tr.clock.remain)+'</span>':''}</div>
+        ${tr.clock?'<span class="clock'+(clockPaused(tr.clock)?' paused':'')+'" data-clock="tr:'+tr.id+'">'+hhmm(tr.clock.remain)+'</span>':''}</div>
+      ${tr.clock && clockPaused(tr.clock) ? '<div class="pb" style="padding-top:0"><div class="tiny dim">\u23F8 Timer '+pausedNote(tr)+'</div></div>' : ''}
       ${tradeTimes(tr)}
       <div class="pb">
         <div class="stack">
@@ -25430,7 +25495,7 @@ VIEWS.trades = function(){
             said ? '<span class="pill ok">you are in</span>' : ''}
           ${canEditTrade(tr) ? '' : '<button class="btn" data-a="editTrade" data-id="'+tr.id+'">Change the offer</button>'}
         </div>`:''}
-        ${tr.status==='review' && isCommish()?'<div class="row" style="margin-top:10px">'+
+        ${tr.status==='review' && isCommish()?'<div class="row" style="margin-top:10px">'+pauseBtn(tr)+
           '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button>'+
           '<button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button></div>':''}
         ${undoWindowLeft(tr)?'<div class="row" style="margin-top:10px"><button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button></div>':''}
@@ -25461,9 +25526,9 @@ VIEWS.trades = function(){
         <div class="eyebrow">${tr.status==='review'?'In review':tr.status==='proposed'?'Waiting on '+teamName(tr.b.teamId):tr.status}</div>
         <div style="font:700 17px/1.2 var(--disp);text-transform:uppercase;letter-spacing:.04em">${esc(teamName(tr.a.teamId))} ⇄ ${esc(teamName(tr.b.teamId))}</div></div>
         ${tr.clock&&tr.status==='review'?`<div class="right">
-          <div class="clock ${clockHeld(tr.clock)?'paused':(isQuietNow()&&!quietSkips())?'paused':'calm'}"
+          <div class="clock ${clockPaused(tr.clock)||clockHeld(tr.clock)?'paused':(isQuietNow()&&!quietSkips())?'paused':'calm'}"
             data-clock="trade:${tr.id}">${hhmm(clockHeld(tr.clock)?Math.max(0,quietResumesAt()-Date.now()):tr.clock.remain)}</div>
-          <div class="tiny dim">${clockHeld(tr.clock)
+          <div class="tiny dim">${clockPaused(tr.clock) ? '\u23F8 '+pausedNote(tr) : clockHeld(tr.clock)
             ? 'ran out overnight — goes through at '+fmtHM(c.quiet.to)
             : (isQuietNow() && !quietSkips())
               ? 'paused until '+fmtHM(c.quiet.to)
@@ -25493,7 +25558,7 @@ VIEWS.trades = function(){
                 : '');
           })() : ''}
           ${canCounter ? sides.map(s=>'<button class="btn" data-a="counter" data-id="'+tr.id+'" data-side="'+s+'">Counter '+esc(teamName(tr[s].teamId))+'</button>').join('') : ''}
-          ${tr.status==='review' && isCommish() ? '<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button><button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button>':''}
+          ${tr.status==='review' && isCommish() ? pauseBtn(tr)+'<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button><button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button>':''}
           ${undoWindowLeft(tr) ? '<button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button>':''}
         </div>
         ${(tr.counters||[]).filter(ct=> seesCounter(tr, ct, me)).length?`<div class="hr"></div><div class="flabel">Counters</div>
@@ -25551,6 +25616,9 @@ VIEWS.trades = function(){
           <select data-set="settings.trades.antiSnipeUnit">
             <option value="min"${c.antiSnipeUnit!=='hr'?' selected':''}>minutes</option>
             <option value="hr"${c.antiSnipeUnit==='hr'?' selected':''}>hours</option></select></label>
+        <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.trades.pauseTimers" ${c.pauseTimers!==false?'checked':''}>
+          <span>Let the commissioner pause a trade’s review timer
+            <span class="dim">— clear this to take the Pause button away; any timer that is paused starts again where it stopped</span></span></label>
         <label class="f" style="grid-column:1/-1"><span>Reverse a processed trade within (hours, 0 for never)</span>
           <input type="number" min="0" data-set="settings.trades.undoHours" value="${c.undoHours||0}"></label>
         <div class="hint" style="grid-column:1/-1">${(+c.undoHours)?'Either side, or the commissioner, can put a trade back for '+c.undoHours+' hours after it processes. Everything returns, including retained salary.':'Once a trade processes it stands.'}</div>
@@ -40560,6 +40628,7 @@ function paintClocks(){
             : kind==='pd' ? byId(S.pending,id) : kind==='to' ? byId(S.tagOffers,id)
             : byId(S.trades,id);
     if(!o || !o.clock) return;
+    if(clockPaused(o.clock)){ el.textContent = hhmm(o.clock.remain); el.className = 'clock paused'; return; }
     if(clockHeld(o.clock)){
       /* Run out in the small hours: it goes through when the window ends, so
          that is what the countdown should be showing. */
