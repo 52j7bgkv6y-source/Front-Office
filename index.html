@@ -460,6 +460,9 @@ tr.tot td{border-top:1px solid var(--rule);border-bottom:0;font-weight:600}
 .pill.live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--signal);animation:blink 1.4s infinite}
 .pill.ok{border-color:var(--good-edge);color:var(--sage)}
 .pill.warn{border-color:var(--warn-edge);color:var(--brass)}
+.pill.noclub{border-color:var(--bad-edge);color:var(--signal);font-size:11px}
+.pill.newclub{border-color:var(--good-edge);color:var(--sage);font-size:11px}
+.clubnews{border-color:var(--bad-edge)}
 .pill.waiver{border-color:var(--void-a);color:var(--mute);background:var(--ink-3);letter-spacing:.1em;font-weight:700}
 .pill.waiver.dim{opacity:.55}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
@@ -1694,6 +1697,9 @@ a.plink:hover{text-decoration-style:solid}
 .dealyears .dy{display:flex;flex-direction:column;gap:2px;padding:6px 8px;border:1px solid var(--line);border-radius:8px}
 .dealyears .dy.now{border-color:currentColor}
 .dealyears .dy.past b{opacity:.7}
+.dealyears.eats{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+.dealyears .dy.eaten{border-style:dashed}
+.dealyears .dyate{color:var(--sage);line-height:1.25;overflow-wrap:anywhere}
 .addlist{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 8px}
 .addrow{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid var(--line);cursor:pointer;min-height:36px}
 .addrow:last-child{border-bottom:0}
@@ -1721,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19a · commissioner can pause a trade timer';
+const APP_BUILD = '2026-11-19d · the cut picks itself from the news; commissioner can override';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -13938,6 +13944,7 @@ ACT.seasonIRGo = (d)=>{
 ACT.release = (d)=>{
   { const o = ownerOf(d.id); if(o && !mustManage(o)) return; }
   const p = byId(S.players,d.id), y = S.league.season;
+  if(ui.tmp.cutPid !== d.id){ ui.tmp.cutSplit = null; ui.tmp.cutOver = null; }
   ui.tmp.cutPid = d.id;
   const gross = p.contract ? fixInc(sum(p.contract.salaries.map((v,i)=>
     (p.contract.startYear+i) >= y ? +v||0 : 0))) : 0;
@@ -13971,7 +13978,7 @@ ACT.release = (d)=>{
       '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
       '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release him \u2014 no dead cap</button>');
   }
-  modal('Release '+p.name,
+  const deadHTML = (
     (late
       ? '<div class="assetbox" style="border-color:var(--bad-edge);margin-bottom:10px">'+
         '<b class="bad">It is week '+(+S.live.week||1)+', past week '+lateCutWeek()+'.</b>'+
@@ -14023,8 +14030,8 @@ ACT.release = (d)=>{
         ' data-a="cutSplit" data-m="now"> <span>All this season — '+money(dead)+' on '+y+'</span></label>'+
       '<label class="check"><input type="radio" name="cutsplit" '+(mode==='split'?'checked':'')+
         ' data-a="cutSplit" data-m="split"> <span>Split it 50/50 — '+money(half)+' on '+y+', '+money(half2)+' on '+(y+1)+'</span></label>'+
-    '</div>'+
-    (canFreePracticeCutHere(p) ? '<div class="hr"></div>'+
+    '</div>');
+  const psHTML = (    (canFreePracticeCutHere(p) ? 
       '<div class="flabel">NFL practice squad — free cut</div>'+
       '<div class="assetbox"><div class="row"><div style="flex:1"><b>Cut him free</b>'+
         '<div class="tiny muted">He is on '+(p.nfl?esc(p.nfl):'an NFL')+' practice squad, so this is a free cut — '+
@@ -14032,10 +14039,8 @@ ACT.release = (d)=>{
         ((+((S.settings.roster||{}).practiceCutMax)||0)>0?' Allowed because his '+money(grossHit(p,S.league.season))+' salary is within the league\'s '+money(S.settings.roster.practiceCutMax)+' limit.':'')+
         '</div></div>'+
         '<button class="btn sm danger" data-a="psqCutGo" data-id="'+p.id+'">Do it</button></div></div>'+
-      '</div>' : '')+
-    '<div class="hr"></div>'+
-    '<div class="flabel">Retired / free agent</div>'+rfaCutHTML(p)+
-    (isCommish() ? '<div class="hr"></div>'+
+      '</div>' : ''));
+  const freeHTML = (    (isCommish() ? 
       '<div class="flabel">Commissioner — cut him free, no dead cap</div>'+
       '<div class="stack">'+
       '<div class="assetbox"><div class="row"><div style="flex:1"><b>Free agent, deal and all</b>'+
@@ -14044,9 +14049,39 @@ ACT.release = (d)=>{
         (gross<=(+S.settings.waivers.salary||1)?' At '+money(gross)+' he would come back as a waiver player.':'')+
         '</div></div>'+
         '<button class="btn sm" data-a="freeCut" data-id="'+p.id+'" data-to="free">Do it</button></div></div>'+
-      '</div>' : ''),
-    '<button class="btn ghost" data-a="closeModal">Keep him</button>'+
-    '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release with dead cap</button>');
+      '</div>' : ''));
+  /* Front Office decides which cut this is, from the news on his card and from
+     Sleeper. An owner gets that cut. The commissioner can open every other one. */
+  const ak = autoCut(p);
+  const over = isCommish() && ui.tmp.cutOver === p.id;
+  const primary = ak.kind === 'dead'
+    ? '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release with dead cap</button>'
+    : '<button class="btn danger" data-a="freeCut" data-id="'+p.id+'" data-to="'+ak.kind+'">'+
+        (ak.kind==='retired' ? 'Cut him as retired' : 'Cut him as an NFL free agent')+
+        (()=>{ const b = backloadOwed(p), cfg = S.settings.cap.backload || {};
+               return (cfg.on !== false && !!cfg.on && b.owed > 0) ? ' — pay '+money(b.owed) : ''; })()+'</button>';
+  const body = autoCutBox(p, ak)+
+    (ak.kind === 'dead' ? deadHTML + (psHTML ? '<div class="hr"></div>'+psHTML : '')
+                        : rfaCutHTML(p, ak.kind))+
+    (isCommish()
+      ? '<div class="hr"></div><div class="row"><button class="btn sm ghost" data-a="cutOver" data-id="'+p.id+'" data-cutover="1">'+
+          (over ? '\u25BE Hide the other cuts' : '\u25B8 Commissioner — pick a different cut')+'</button></div>'+
+        (over ? '<div class="stack" data-cutoverlist="1" style="margin-top:10px">'+
+          (ak.kind !== 'dead' ? '<div><div class="flabel">The 50% cut, with dead cap</div>'+deadHTML+
+            '<div class="row" style="margin-top:6px"><button class="btn sm danger" data-a="releaseGo" data-id="'+p.id+'">Release with dead cap</button></div></div>' : '')+
+          '<div><div class="flabel">Retired / free agent</div>'+rfaCutHTML(p)+'</div>'+
+          (ak.kind !== 'dead' && psHTML ? '<div>'+psHTML+'</div>' : '')+
+          (freeHTML ? '<div>'+freeHTML+'</div>' : '')+
+        '</div>' : '')
+      : '');
+  modal('Release '+p.name, body,
+    '<button class="btn ghost" data-a="closeModal">Keep him</button>'+primary);
+  /* His own news may not be in yet; once it is, the call is made again. */
+  if(p.espnId && playerFeedState(p) === 'cold'){
+    pullPlayerNews(p, false, true).then(()=>{
+      if(ui.tmp.cutPid === p.id && $('#modal') && $('#modal').classList.contains('on') && autoCut(p).kind !== ak.kind) ACT.release({id:p.id});
+    }, ()=>{});
+  }
 };
 /* ---- The retired / free agent cut ----------------------------------------------
    For a man who has retired, or is a free agent with no NFL team. Anybody can
@@ -14054,7 +14089,7 @@ ACT.release = (d)=>{
    commissioner is told, and every one of them has its own place among the
    transactions. The deal is torn up: nothing this season, nothing after. A
    back loaded deal hands back what its light early years saved (see rfaBase). */
-function rfaCutHTML(p){
+function rfaCutHTML(p, only){
   const b = backloadOwed(p), cfg = S.settings.cap.backload || {}, on = cfg.on !== false && !!cfg.on;
   const owes = on && b.owed > 0;
   const words = !on ? ' The league has back-loading payback switched off, so nothing is owed.'
@@ -14074,15 +14109,16 @@ function rfaCutHTML(p){
       '</tbody></table></div>'
     : '';
   const who = isCommish() ? '' : '<div class="tiny dim" style="margin-top:6px">The commissioner is told when you do this.</div>';
-  return '<div class="assetbox"><div><b>He has retired, or has no NFL team</b>'+
+  const title = only==='retired' ? 'He has retired' : only==='nflfa' ? 'He has no NFL team' : 'He has retired, or has no NFL team';
+  return '<div class="assetbox"><div><b>'+title+'</b>'+
       '<div class="tiny muted">Nothing on your cap for '+S.league.season+' or any season after. His deal stays on him until the free agency draft — anyone who signs him before then takes it as it stands; after it, he is a free agent at '+money(+S.settings.waivers.salary || +S.settings.contracts.minSalary || 1)+'.'+words+'</div></div>'+
     table+
-    '<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'+
-      '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="retired">He retired'+(owes?' — pay '+money(b.owed):'')+'</button>'+
-      '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="nflfa">NFL free agent'+(owes?' — pay '+money(b.owed):'')+'</button>'+
-    '</div>'+
-    '<div class="tiny dim" style="margin-top:6px">Retired, he is out of the league until a commissioner brings him back. '+
-      'An NFL free agent goes into free agency, his deal with him, for anybody to sign.</div>'+
+    (only ? '' : '<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap">'+
+      (only && only!=='retired' ? '' : '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="retired">He retired'+(owes?' — pay '+money(b.owed):'')+'</button>')+
+      (only && only!=='nflfa' ? '' : '<button class="btn sm '+(owes?'danger':'')+'" data-a="freeCut" data-id="'+p.id+'" data-to="nflfa">NFL free agent'+(owes?' — pay '+money(b.owed):'')+'</button>')+
+    '</div>')+
+    '<div class="tiny dim" style="margin-top:6px">'+(only==='nflfa' ? '' : 'Retired, he is out of the league until a commissioner brings him back. ')+
+      (only==='retired' ? '' : 'An NFL free agent goes into free agency, his deal with him, for anybody to sign.')+'</div>'+
     who+
     (isCommish() ? '<div class="row" style="margin-top:6px;gap:8px"><button class="btn sm ghost" data-a="blEdit" data-id="'+p.id+'">Earlier years / fix the math</button>'+
       (b.prior ? '<span class="tiny dim">'+b.prior+' earlier year'+(b.prior===1?'':'s')+' counted</span>' : '')+
@@ -14091,7 +14127,11 @@ function rfaCutHTML(p){
   '</div>';
 }
 ACT.cutSplit = (d)=>{ ui.tmp.cutSplit = d.m==='split' ? 'split' : 'now'; ACT.release({id:ui.tmp.cutPid}); };
-ACT.releaseGo = (d)=>{ releasePlayer(d.id, ui.tmp.cutSplit||'now'); ui.tmp.cutSplit=null; closeModal(); save(); render(); toast('Player released'); };
+ACT.cutOver = (d)=>{ ui.tmp.cutOver = ui.tmp.cutOver === d.id ? null : d.id; ACT.release({id:d.id}); };
+ACT.releaseGo = (d)=>{
+  const p0 = byId(S.players, d.id), k0 = p0 ? autoCut(p0).kind : 'dead';
+  if(!isCommish() && k0 !== 'dead') return toast('The news has him '+(k0==='retired'?'retired':'with no NFL team')+', so it is that cut — ask the commissioner to change it','bad');
+  releasePlayer(d.id, ui.tmp.cutSplit||'now'); ui.tmp.cutSplit=null; closeModal(); save(); render(); toast('Player released'); };
 /* ---- Cutting a hurt man off a minimum deal ----------------------------------
    A player on nothing but the league minimum for a single year, who is on
    injured reserve in real life, is not an asset anybody is hoarding. A
@@ -14169,8 +14209,12 @@ ACT.freeCut = (d)=>{
   if(!p || !p.contract) return toast('He is not under contract','bad');
   const from = p.contract.teamId || null;
   if(d.to === 'retired' || d.to === 'nflfa'){
-    /* Anybody may do this for their own side. */
+    /* An owner may do this for his own side when it is the cut Front Office has
+       called for him; any other kind is the commissioner's to choose. */
     if(from && !isCommish() && !mustManage(from)) return;
+    if(!isCommish() && autoCut(p).kind !== d.to)
+      return toast(autoCut(p).kind === 'dead' ? 'He still has an NFL team, so this is the 50% cut — ask the commissioner if that is wrong'
+        : 'The news has him '+(autoCut(p).kind==='retired'?'retired':'with no NFL team')+' — ask the commissioner to change it', 'bad');
     const retire = d.to === 'retired';
     const was = grossHit(p, S.league.season);
     const owed = applyBackload(p, from);
@@ -14519,9 +14563,7 @@ ACT.depthPull = async (quiet)=>{
       /* His club as Sleeper has it now, not just when it was blank — a man who
          has moved kept his old club here, and the whole starter question turns
          on which club he is at. */
-      if(src.team && String(src.team).toUpperCase() !== String(pl.nfl||'').toUpperCase()){
-        pl.nfl = src.team; moved++;
-      }
+      if(clubFromSleeper(pl, src)) moved++;
       /* And whether he is hurt, which decides whether he is starting at all. */
       applySleeperInjury(pl, src);
     });
@@ -18271,13 +18313,17 @@ ACT.playerCard = (d)=>{
           : '<div>('+esc(nick)+')</div>')+
         '</div>';
     })()}
+    ${clubCardHTML(p)}
     <div class="grid g2" style="margin-bottom:12px">
       <div class="assetbox"><div class="flabel">Contract</div>
         ${c?`<div class="kv">
           <dt>Team</dt><dd>${esc(teamName(c.teamId))}</dd>
           <dt>Running</dt><dd>${c.startYear}–${c.startYear+c.years-1}</dd>
           <dt>This year</dt><dd>${money(capHit(p,S.league.season))}${offCap(p)?' <span class="dim tiny">parked</span>':''}</dd>
-          <dt>Total</dt><dd>${money(c.total)}</dd>
+          <dt>Total</dt><dd>${money(c.total)}${(()=>{
+            const ate = fixInc(sum((c.retained||[]).map(r=> sum(Object.keys(r.amounts||{}).filter(y=> +y>=c.startYear && +y<c.startYear+c.years).map(y=> +r.amounts[y]||0)))));
+            return ate > 0 ? ' <span class="tiny dim">· '+esc(teamName(c.teamId))+' pays '+money(Math.max(0, (+c.total||0) - ate))+', '+money(ate)+' eaten</span>' : '';
+          })()}</dd>
           <dt>Structure</dt><dd>${dealShapeHTML(c, true)}</dd>
         </div>${dealYearsHTML(c)}`:'<span class="dim tiny">no contract — free agent</span>'}</div>
       <div class="assetbox"><div class="flabel">Form</div>
@@ -25154,8 +25200,19 @@ function dealYearsHTML(c){
   const rows = blPrior(c).map(x=> ({year:x.year, amt:x.amt, earlier:true}));
   (c.salaries||[]).forEach((v,i)=> rows.push({year:c.startYear + i, amt:+v||0}));
   if(!rows.length) return '';
-  return '<div class="dealyears">'+rows.map(r=> '<div class="dy'+(r.year===y?' now':'')+(r.year<y?' past':'')+'"><span class="tiny dim">'+r.year+(r.earlier?'*':'')+'</span>'+
-      '<b class="num">'+money(r.amt)+'</b></div>').join('')+'</div>'+
+  /* Whoever is eating part of a season: each team and how much, and what his
+     own team is left carrying. The full salary stays on show beside it. */
+  const ate = (yr)=> (c.retained||[]).map(r=> ({teamId:r.teamId, amt:+((r.amounts||{})[yr])||0})).filter(x=> x.amt > 0);
+  rows.forEach(r=>{ r.ate = ate(r.year); r.eaten = fixInc(sum(r.ate.map(x=> x.amt))); r.pays = fixInc(Math.max(0, r.amt - r.eaten)); });
+  const any = rows.some(r=> r.eaten > 0);
+  const who = (id)=> id === c.teamId ? teamName(id)+' (his own team, kept from before)' : teamName(id);
+  return '<div class="dealyears'+(any?' eats':'')+'">'+rows.map(r=> '<div class="dy'+(r.year===y?' now':'')+(r.year<y?' past':'')+(r.eaten>0?' eaten':'')+'"><span class="tiny dim">'+r.year+(r.earlier?'*':'')+'</span>'+
+      (r.eaten > 0
+        ? '<b class="num">'+money(r.pays)+'</b><span class="tiny dim">of <s>'+money(r.amt)+'</s></span>'+
+          r.ate.map(x=> '<span class="tiny dyate" data-eater="'+esc(x.teamId)+'">'+esc(who(x.teamId))+' eats <b class="num">'+money(x.amt)+'</b></span>').join('')
+        : '<b class="num">'+money(r.amt)+'</b>')+
+      '</div>').join('')+'</div>'+
+    (any ? '<div class="tiny dim">The big number is what '+esc(teamName(c.teamId))+' pays that season; the rest is being eaten by the team named.</div>' : '')+
     (rows.some(r=> r.earlier) ? '<div class="tiny dim">* paid before the deal came into the app</div>' : '');
 }
 /* A year of a deal in Find a player: what it pays that season. */
@@ -30793,6 +30850,7 @@ async function pullNews(loud){
 
       S.news = {at:Date.now(), items, from:t.what, byPlayer:(S.news&&S.news.byPlayer)||{}};
       S.meta.newsTrouble = null;
+      try{ if(clubWatch()) save(); }catch(e){}
       pullEspnIds().then(()=>{}, ()=>{});
       
       saveLocal(); render();
@@ -31810,7 +31868,195 @@ function pendingSwapLine(teamId, p, week){
   }
   return out ? '<div class="swapline bad">Ruled OUT — nobody is set to come on for him. Name a sub, or turn on fill-in.</div>' : '';
 }
-function injuryTag(p){
+/* ---- Is he on an NFL team? ---------------------------------------------------
+   Two things say. Sleeper's player list, read through the day with the injury
+   report, has each man's club, or none at all once he is let go. And the news:
+   a story saying a club released, waived or signed him is usually out hours
+   before Sleeper moves him, so the stories about each man are read for that.
+   The news only ever shows as what the news says — the club on his record moves
+   when Sleeper moves him. */
+const NFL_NICK = {cardinals:'ARI',falcons:'ATL',ravens:'BAL',bills:'BUF',panthers:'CAR',bears:'CHI',bengals:'CIN',
+  browns:'CLE',cowboys:'DAL',broncos:'DEN',lions:'DET',packers:'GB',texans:'HOU',colts:'IND',jaguars:'JAX',jags:'JAX',
+  chiefs:'KC',raiders:'LV',chargers:'LAC',rams:'LAR',dolphins:'MIA',vikings:'MIN',patriots:'NE',pats:'NE',saints:'NO',
+  giants:'NYG',jets:'NYJ',eagles:'PHI',steelers:'PIT','49ers':'SF',niners:'SF',seahawks:'SEA',buccaneers:'TB',bucs:'TB',
+  titans:'TEN',commanders:'WAS',
+  arizona:'ARI',atlanta:'ATL',baltimore:'BAL',buffalo:'BUF',carolina:'CAR',chicago:'CHI',cincinnati:'CIN',cleveland:'CLE',
+  dallas:'DAL',denver:'DEN',detroit:'DET','green bay':'GB',houston:'HOU',indianapolis:'IND',jacksonville:'JAX',
+  'kansas city':'KC','las vegas':'LV',miami:'MIA',minnesota:'MIN','new england':'NE','new orleans':'NO',
+  philadelphia:'PHI',pittsburgh:'PIT','san francisco':'SF',seattle:'SEA','tampa bay':'TB',tennessee:'TEN',washington:'WAS'};
+const NFL_NICK_RE = new RegExp('\\b('+Object.keys(NFL_NICK).sort((a,b)=> b.length-a.length).map(k=> k.replace(/ /g,'\\s+')).join('|')+')\\b','i');
+function nickClub(txt){ const m = NFL_NICK_RE.exec(txt||''); return m ? NFL_NICK[m[1].toLowerCase().replace(/\s+/g,' ')] : ''; }
+/* Talk, not news: "could be released", "expected to sign", "if they cut him". */
+const CLUB_MAYBE = /\b(could|may|might|would|should|expected to|likely to|plans? to|planning to|considering|consider|candidates?|if|whether|rumou?rs?|potential(ly)?|possible|possibly|speculat\w*|trade (?:talks|interest|rumou?rs?)|on the block|shopping|hopes? to|wants? to|interested in|interest in|visit\w*|workout|work out|worked out|tryout|not (?:be )?(?:released|cut|waived))\b/i;
+const CLUB_GONE = /\b(?!cut (?:into|back|down|in|out|short)\b)(cut|released|releases|release|waived|waives|waive|were cut|was cut|is cut|cuts|cut ties|parted ways|part ways|parting ways|lets? go|let go of|terminated|terminates)\b/i;
+const CLUB_RETIRED = /\b(retires|retired|is retiring|will retire|announce[sd]? (?:his )?retirement|calls? it a career|hangs? up (?:his )?cleats)\b/i;
+const CLUB_SIGNED = /\b(?!signs? of\b)(sign|signs|signed|signing|re-sign|claim|acquire|add|promote|elevate|re-signs|re-signed|inks|inked|agree[sd]? to terms|agree[sd]? to (?:a )?(?:\d+-year )?deal|claims|claimed|acquires|acquired|traded|trade for|trades for|lands with|joins|joined|adds|added|promotes|promoted|elevates|elevated)\b/i;
+const CLUB_FRESH_DAYS = 21;       /* a release or signing counts this long on its own */
+const CLUB_NAMED_DAYS = 120;      /* longer where it names the club he is still at */
+const CLUB_RETIRED_DAYS = 400;    /* a retirement holds for a year */
+/* What the stories about him say happened to his club, newest first. */
+function clubNews(p){
+  if(!p || !p.name || p.pos==='DEF') return null;
+  const bits = String(p.name).split(/\s+/);
+  let last = bits[bits.length-1] || '';
+  if(/^(jr\.?|sr\.?|ii|iii|iv|v)$/i.test(last) && bits.length > 2) last = bits[bits.length-2];
+  const lastL = last.replace(/[^\w'-]/g,'').toLowerCase();
+  if(lastL.length < 3) return null;
+  const nameRe = new RegExp('\\b'+lastL.replace(/[-']/g,'\\$&')+'\\b','i');
+  const stories = playerNewsAll(p).slice()
+    .map(x=> ({x, at:Date.parse(x.published||'')||0}))
+    .filter(o=> o.at && Date.now() - o.at < CLUB_RETIRED_DAYS*86400000)
+    .sort((a,b)=> b.at - a.at);
+  for(const {x, at} of stories){
+    /* The headline first, then the opening of the story. */
+    const sentences = [x.headline||''].concat(String(x.description||'').split(/(?<=[.!?])\s+/).slice(0,3));
+    for(const sent of sentences){
+      /* A sentence is cut into its pieces, so "the Bills signed Smith, who the
+         Jets released last week" reads as Smith signed with the Bills. */
+      const clauses = sent.split(/[,;:]|\s+—\s+|\s+-\s+|\s+(?:and|but|after|while|who|which|before|as)\s+/i);
+      for(const cl of clauses){
+        const nm = nameRe.exec(cl); if(!nm) continue;
+        if(CLUB_MAYBE.test(cl)) continue;
+        const near = (re)=>{ const m = re.exec(cl); if(!m) return false;
+          const between = m.index < nm.index ? cl.slice(m.index + m[0].length, nm.index) : cl.slice(nm.index + nm[0].length, m.index);
+          return between.split(/\s+/).filter(Boolean).length <= 6; };
+        const base = {at, headline:x.headline||'', link:x.link||''};
+        /* The newest story that says anything decides; too old for what it says
+           and it says nothing. */
+        const days = (Date.now() - at)/86400000;
+        if(near(CLUB_RETIRED) && !/\b(from|out of|un-?)\s*retire/i.test(cl))
+          return days < CLUB_RETIRED_DAYS ? Object.assign(base, {kind:'retired', club:''}) : null;
+        if(near(CLUB_GONE)){
+          const club = nickClub(cl);
+          return (days < CLUB_FRESH_DAYS || (days < CLUB_NAMED_DAYS && club && club === String(p.nfl||'').toUpperCase()))
+            ? Object.assign(base, {kind:'none', club}) : null;
+        }
+        if(near(CLUB_SIGNED))
+          return days < CLUB_FRESH_DAYS ? Object.assign(base, {kind:'team', club:nickClub(cl), ps:/practice squad/i.test(cl)}) : null;
+      }
+    }
+  }
+  return null;
+}
+/* Every story about him this phone has: the wire and his own feed. */
+function playerNewsAll(p){
+  const own = (pnewsBox()[p.id] || {}).items || [];
+  const wire = newsMatches().byPlayer[p.id] || [];
+  const seen = {}, out = [];
+  own.concat(wire).forEach(x=>{ const k = (x.headline||'').toLowerCase(); if(!k || seen[k]) return; seen[k] = 1; out.push(x); });
+  return out;
+}
+/* Sleeper's word on his club. A man Sleeper has with no team is shown with no
+   team — rostered here or not. Returns whether it changed. */
+function clubFromSleeper(p, pl){
+  if(!p || !pl || p.pos === 'DEF') return false;
+  let flip = false;
+  const ret = /retir/i.test(String(pl.status||''));
+  if(!!p.slRetired !== ret){ if(ret) p.slRetired = true; else delete p.slRetired; flip = true; }
+  const now = pl.team ? String(pl.team).toUpperCase() : '';
+  const was = String(p.nfl||'').toUpperCase();
+  if(now === was) return flip;
+  p.clubWas = p.nfl || '';
+  p.nfl = now;
+  p.clubAt = Date.now();
+  return true;
+}
+/* Where he stands: no team, a team the news has him at that Sleeper has not
+   caught up with, or nothing to say. */
+function clubNow(p){
+  if(!p || p.pos === 'DEF' || !(p.name)) return null;
+  const n = clubNews(p);
+  const fresh = n && n.at > (+p.clubAt||0);
+  if(fresh){
+    if(n.kind === 'retired') return {none:true, retired:true, by:'news', news:n};
+    if(n.kind === 'none' && p.nfl && (!n.club || n.club === String(p.nfl).toUpperCase()))
+      return {none:true, by:'news', from:p.nfl, news:n};
+    if(n.kind === 'team' && (!p.nfl || (n.club && n.club !== String(p.nfl).toUpperCase())))
+      return {none:false, club:n.club||'', by:'news', ps:n.ps, news:n};
+  }
+  if(!p.nfl && p.slRetired) return {none:true, retired:true, by:'sleeper', at:p.clubAt||0, news:(n && n.kind==='retired') ? n : null};
+  if(!p.nfl) return {none:true, retired: !!(n && n.kind==='retired'), by:'sleeper', from:p.clubWas||'', at:p.clubAt||0, news:(n && n.kind!=='team') ? n : null};
+  return null;
+}
+function noClubTag(p){
+  const c = clubNow(p); if(!c) return '';
+  if(c.none) return ' <span class="pill noclub" title="'+esc(c.retired ? 'Retired, per the news' : c.by==='news'
+      ? 'Released'+(c.from?' by '+c.from:'')+', per the news — Sleeper has not moved him yet' : 'No NFL team on Sleeper')+'">'+
+    (c.retired ? 'Retired?' : 'No NFL team')+'</span>';
+  return ' <span class="pill newclub" title="Per the news — Sleeper has not moved him yet">'+
+    (c.club ? 'Now '+esc(c.club) : 'Signed')+(c.ps?' PS':'')+'</span>';
+}
+/* The box on his card: what is known, from where, and the story itself. */
+function clubCardHTML(p){
+  const c = clubNow(p); if(!c) return '';
+  const n = c.news;
+  const head = c.none
+    ? (c.retired ? 'He has retired, according to the news'
+      : c.by === 'news' ? 'Released'+(c.from ? ' by '+esc(c.from) : '')+', according to the news'
+      : 'He has no NFL team'+(c.from ? ' — he was with '+esc(c.from) : ''))
+    : 'Signed'+(c.club ? ' with '+esc(c.club) : '')+(c.ps ? ' to the practice squad' : '')+', according to the news';
+  const src = c.by === 'news' ? 'Sleeper has not moved him yet; his club here changes when it does.'
+    : 'From Sleeper'+(c.at ? ', '+dstr(c.at) : '')+'.';
+  const own = p.contract && p.contract.teamId;
+  return '<div class="assetbox clubnews" style="margin-bottom:12px" data-clubnews="'+(c.none?'none':'team')+'">'+
+    '<div class="flabel">NFL team</div><b>'+head+'</b>'+
+    '<div class="tiny dim">'+src+'</div>'+
+    (n && n.headline ? '<div class="tiny" style="margin-top:5px">'+
+      (n.link ? '<a href="'+esc(n.link)+'" target="_blank" rel="noopener">'+esc(n.headline)+'</a>' : esc(n.headline))+
+      ' <span class="dim">· '+dstr(n.at)+'</span></div>' : '')+
+    (c.none && own ? '<div class="tiny" style="margin-top:6px">He stays on '+esc(teamName(own))+'. Only if he is cut, it is '+
+      (c.retired ? 'the retired cut' : 'the NFL free agent cut')+' rather than the 50% cut.</div>' : '')+
+  '</div>';
+}
+/* Which cut he gets, from the same reading: retired, an NFL free agent, or the
+   ordinary cut with dead cap. */
+function autoCut(p){
+  const c = clubNow(p);
+  if(c && c.none) return {kind: c.retired ? 'retired' : 'nflfa', c};
+  return {kind:'dead', c};
+}
+function autoCutBox(p, ak){
+  const c = ak.c, n = c && c.news;
+  const story = n && n.headline ? '<div class="tiny" style="margin-top:5px">'+
+      (n.link ? '<a href="'+esc(n.link)+'" target="_blank" rel="noopener">'+esc(n.headline)+'</a>' : esc(n.headline))+
+      ' <span class="dim">· '+dstr(n.at)+'</span></div>' : '';
+  const src = !c ? '' : c.by === 'news' ? 'from the news' : 'Sleeper has him with no NFL team';
+  const head = ak.kind === 'retired' ? 'Retired — '+src+'. This is the retired cut: no 50% dead cap.'
+    : ak.kind === 'nflfa' ? 'No NFL team — '+src+(c.from ? ' (he was with '+esc(c.from)+')' : '')+'. This is the NFL free agent cut: no 50% dead cap.'
+    : (p.nfl ? 'He is with '+esc(String(p.nfl).toUpperCase()) : 'He is on an NFL team')+', so this is the 50% cut.';
+  return '<div class="assetbox" data-autocut="'+ak.kind+'" style="margin-bottom:10px;border-color:var(--'+(ak.kind==='dead'?'line':'warn-edge')+')">'+
+    '<div class="flabel">Front Office\u2019s call</div><b>'+head+'</b>'+story+
+    (!isCommish() ? '<div class="tiny dim" style="margin-top:5px">If this is wrong, the commissioner can pick a different cut.</div>' : '')+
+  '</div>';
+}
+/* Tell the team that has him, once, when he loses his club or finds one. */
+function clubWatch(){
+  if(!S || !S.players || (S.meta && S.meta.demo)) return 0;
+  S.clubTold = S.clubTold || {};
+  let told = 0;
+  S.players.forEach(p=>{
+    const own = p.contract && p.contract.teamId; if(!own) return;
+    const c = clubNow(p); if(!c) return;
+    const when = c.news ? c.news.at : (+c.at||0);
+    if(!when || Date.now() - when > 7*86400000) return;      /* old news is not news */
+    const key = p.id+'|'+(c.none ? (c.retired?'retired':'none') : 'team:'+(c.club||''));
+    if(S.clubTold[key]) return;
+    S.clubTold[key] = Date.now();
+    if(c.none){
+      notify(p.name+(c.retired ? ' has retired' : ' has no NFL team'),
+        (c.news && c.news.headline ? c.news.headline+'. ' : '')+
+        'He stays on your roster. Only if you cut him, it is '+(c.retired ? 'the retired cut' : 'the NFL free agent cut')+' rather than the 50% cut.', 'warn', [own]);
+    } else {
+      notify(p.name+' signed'+(c.club?' with '+c.club:''), (c.news && c.news.headline) || '', 'info', [own]);
+    }
+    told++;
+  });
+  /* Keys older than two months are let go. */
+  Object.keys(S.clubTold).forEach(k=>{ if(Date.now() - S.clubTold[k] > 60*86400000) delete S.clubTold[k]; });
+  return told;
+}
+function injuryTag(p){ return injuryPill(p) + noClubTag(p); }
+function injuryPill(p){
   const inj = p && p.injury;
   if(!inj || !inj.status) return '';
   const bad = isOut(p) || injStatus(p)==='doubtful';
@@ -33497,8 +33743,11 @@ async function injSync(){
   (S.players||[]).forEach(p=>{
     if(!p.sleeperId) return;
     const pl = players[String(p.sleeperId)];
-    if(pl && applySleeperInjury(p, pl)) changed.push(p);
+    if(!pl) return;
+    const hurt = applySleeperInjury(p, pl), club = clubFromSleeper(p, pl);
+    if(hurt || club) changed.push(p);
   });
+  try{ clubWatch(); }catch(e){}
   const now = Date.now();
   try{ localStorage.setItem(INJ_KEY, String(now)); }catch(e){}
   if(changed.length){
@@ -38928,6 +39177,8 @@ function mergeStreams(before, after){
        that way round; the rest are held newest-first. */
     after[s.key] = (s.key==='chat') ? joined.slice().reverse() : joined;
   });
+  /* Who has been told a man lost or found his club: told on any phone is told. */
+  if(before.clubTold || after.clubTold) after.clubTold = Object.assign({}, before.clubTold||{}, after.clubTold||{});
   /* A message read on this device stays read, and one read on another device
      counts too — whoever saw it, it has been seen. */
   const wasRead = {};
