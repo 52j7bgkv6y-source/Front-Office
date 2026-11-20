@@ -1727,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19f · a Cut button on every player card again';
+const APP_BUILD = '2026-11-19g · season-ending IR keeps a man out of the starting lineup';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -7218,12 +7218,23 @@ function matchupLine(p){
   return matchupChip(p) + whenBit +
     ' <span class="tiny dim">'+esc(mi.thin ? mi.thinWhy : mi.what)+'</span>' + extra;
 }
+/* On season-ending IR: out of every starting lineup from the week he went on it
+   to the end of the season. The week itself only if his game had not started
+   when he went on — a man who has already played that week keeps his score. */
+function seasonIRBarred(p, week){
+  const ir = p && p.ir;
+  if(!ir || !ir.seasonEnding || +ir.year !== +S.league.season) return false;
+  const w = +week || +S.live.week || 1, from = +ir.week || 1, cur = +S.live.week || 1;
+  if(w > from) return true;
+  if(w < from) return false;
+  return w === cur ? !playerLocked(p) : false;
+}
 function bestLineup(teamId, week){
   /* Only men who could actually have been started. Somebody on the taxi squad or
      injured reserve was never an option, so counting him would make every
      manager look worse than he was. */
   const pool = teamPlayers(teamId)
-    .filter(p=> playerSlot(p)==='active')
+    .filter(p=> playerSlot(p)==='active' && !seasonIRBarred(p, week))
     .map(p=>({p, pts:fptsInWeek(p.id, week)})).sort((a,b)=> b.pts-a.pts);
   const used = {}, starters=[];
   S.settings.roster.slots.forEach(sl=>{
@@ -13563,6 +13574,15 @@ function lineupForm(teamId, week){
       ${S.league.season+1} first-round pick, and the ${esc(loserName())} decides who takes the first pick.</div>`:''}
     ${(()=>{ const n = lineupLockNote(); return n? '<div class="hint warn">'+esc(n)+'</div>':''; })()}
     ${ssLineupNote(teamId, week)}
+    ${(()=>{
+      /* A man on season-ending IR left in a lineup — from Sleeper, or saved before
+         he went on it — is taken out and that spot scores nothing. */
+      const saved = ((S.lineups||{})[week]||{})[teamId] || [];
+      const out = saved.map(id=> id && byId(S.players, id)).filter(p=> p && seasonIRBarred(p, week));
+      return out.length ? '<div class="hint bad" data-sirout="1">'+out.map(p=> esc(p.name)).join(', ')+
+        (out.length===1?' is':' are')+' on season-ending IR and cannot start, so '+(out.length===1?'his spot':'those spots')+
+        ' in this lineup '+(out.length===1?'is':'are')+' empty. Pick somebody else.</div>' : '';
+    })()}
     <div class="stack" style="margin:10px 0">
       ${L.slots.map((x,i)=>{
         const elig = x.eligible || [];
@@ -13574,7 +13594,8 @@ function lineupForm(teamId, week){
           .map(p=>{
             const locked = playerLocked(p);
             // a locked player can only stay where they already are, never be moved in
-            const disable = (chosen[p.id] && (!x.p||x.p.id!==p.id)) || (locked && (!x.p||x.p.id!==p.id));
+            const sir = seasonIRBarred(p, week);
+            const disable = sir || (chosen[p.id] && (!x.p||x.p.id!==p.id)) || (locked && (!x.p||x.p.id!==p.id));
             const started = gameForPlayer(p);
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
@@ -13586,7 +13607,7 @@ function lineupForm(teamId, week){
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
               (ko?' · '+ko:'')+
-              (mt?' · '+esc(mt):'')+(wxWord(p)?' · '+wxWord(p):'')+tail+'</option>';
+              (mt?' · '+esc(mt):'')+(wxWord(p)?' · '+wxWord(p):'')+tail+(sir?' · season-ending IR':'')+'</option>';
           }).join('');
         return `<div class="lurow" style="border-bottom:1px solid var(--line);padding:6px 0">
           <div class="row" style="gap:8px">
@@ -13670,6 +13691,8 @@ ACT.luSet = (d, el)=>{
      out is a courtesy, this is the guard. Only the current week can lock;
      editing a past or future week is unaffected. */
   let forced = null;
+  { const inc = val ? byId(S.players, val) : null;
+    if(inc && seasonIRBarred(inc, w)){ el.value = arr[i]||''; return toast(inc.name+' is on season-ending IR and cannot start','bad'); } }
   if(w === (+S.live.week||1)){
     const outgoing = arr[i] ? byId(S.players, arr[i]) : null;
     const incoming = val ? byId(S.players, val) : null;
@@ -29831,7 +29854,7 @@ function fieldedTotal(teamId){
   const saved = ((S.lineups||{})[S.live.week]||{})[teamId];
   const best = bestLineup(teamId);
   if(!saved || !saved.length) return {got:best.total, best:best.total};
-  const got = sum(saved.map(pid=> fpts(pid)));
+  const got = sum(saved.map(pid=>{ const p = pid && byId(S.players, pid); return (p && seasonIRBarred(p, S.live.week)) ? 0 : fpts(pid); }));
   return {got: Math.round(got*100)/100, best: best.total};
 }
 /* ---- What a trade is worth --------------------------------------------------
@@ -30771,7 +30794,7 @@ function lineupFor(teamId, week){
   const pool = teamPlayers(teamId), used = {};
   const slots = spots.map((sl,i)=>{
     const pid = saved[i];
-    const p = pid ? pool.find(x=> x.id===pid && !used[x.id]) : null;
+    const p = pid ? pool.find(x=> x.id===pid && !used[x.id] && !seasonIRBarred(x, w)) : null;
     if(p) used[p.id] = 1;
     return {slot:sl.label, p:p||null, pts:p?fpts(p.id):0, eligible:sl.eligible};
   });
@@ -31656,6 +31679,7 @@ function subAllowed(starter, sub, teamId, week){
   if(!starter || !sub || starter.id===sub.id) return {ok:false, why:''};
   if(sub.contract && sub.contract.teamId !== teamId) return {ok:false, why:'not on your roster'};
   if(playerSlot(sub) !== 'active') return {ok:false, why:'not on your active roster'};
+  if(seasonIRBarred(sub, w)) return {ok:false, why:'on season-ending IR'};
   /* He has to be able to fill the same place in the lineup. */
   const slot = (S.settings.roster.slots||[]).find(sl=> sl.eligible.indexOf(starter.pos)>=0);
   if(slot && slot.eligible.indexOf(sub.pos) < 0) return {ok:false, why:'cannot play there'};
