@@ -1727,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19e · on IR and $1 or less every year: a free cut, picked automatically';
+const APP_BUILD = '2026-11-19f · a Cut button on every player card again';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -5855,6 +5855,7 @@ function closeSheet(){ $('#sheet').classList.remove('on'); document.body.classLi
 function modal(title, bodyHTML, footHTML, opts){
   const locked = !!(opts && opts.locked);
   ui.modalLocked = locked;
+  ui.modalTitle = title;
   $('#modalBox').innerHTML =
     '<div class="mh">'+(ui.tmp && ui.tmp.modalReturn ? '<button class="btn ghost sm" data-a="modalBack" data-modalback="1">\u2190 '+esc(ui.tmp.modalReturn.label || 'Trade')+'</button>' : '')+
     '<h2>'+esc(title)+'</h2><div class="spacer"></div>'+
@@ -18343,7 +18344,10 @@ ACT.playerCard = (d)=>{
             return ate > 0 ? ' <span class="tiny dim">· '+esc(teamName(c.teamId))+' pays '+money(Math.max(0, (+c.total||0) - ate))+', '+money(ate)+' eaten</span>' : '';
           })()}</dd>
           <dt>Structure</dt><dd>${dealShapeHTML(c, true)}</dd>
-        </div>${dealYearsHTML(c)}`:'<span class="dim tiny">no contract — free agent</span>'}</div>
+        </div>${dealYearsHTML(c)}${(c.teamId && canManage(c.teamId))
+          ? '<div class="row" style="margin-top:10px"><button class="btn sm danger" data-a="release" data-id="'+esc(p.id)+'" data-cardcut="1">Cut him</button>'+
+            '<span class="tiny dim" style="align-self:center">'+esc(({hurt:'free cut — on IR at $1 or less', nflfa:'NFL free agent cut', retired:'retired cut', dead:'50% cut'})[autoCut(p).kind])+'</span></div>'
+          : ''}`:'<span class="dim tiny">no contract — free agent</span>'}</div>
       <div class="assetbox"><div class="flabel">Form</div>
         <div class="kv">
           <dt>Real production</dt><dd>${b.real==null?'—':Math.round(b.real)+' · '+Math.round(b.rRank*100)+'th'}</dd>
@@ -31122,7 +31126,9 @@ async function pullPlayerNews(p, force, quiet){
      if his card is the one open — the usual case, because the press that opened
      it is what sent for the feed — it is redrawn so the stories appear in it. */
   const modalOn = $('#modal') && $('#modal').classList.contains('on');
-  if(modalOn && ui.tmp.pcId === p.id){
+  /* Only while his card is what is on the screen: a cut screen or anything else
+     opened from the card is not swapped back for the card. */
+  if(modalOn && ui.tmp.pcId === p.id && ui.modalTitle === p.name){
     /* His card is the one open — the usual case, since the press that opened it
        is what sent for the feed — so it is drawn again and the stories appear
        in it. Without this the card sat saying it was reading one. */
