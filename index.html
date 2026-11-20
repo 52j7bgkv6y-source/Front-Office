@@ -1727,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19d · the cut picks itself from the news; commissioner can override';
+const APP_BUILD = '2026-11-19e · on IR and $1 or less every year: a free cut, picked automatically';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -14056,12 +14056,16 @@ ACT.release = (d)=>{
   const over = isCommish() && ui.tmp.cutOver === p.id;
   const primary = ak.kind === 'dead'
     ? '<button class="btn danger" data-a="releaseGo" data-id="'+p.id+'">Release with dead cap</button>'
+    : ak.kind === 'hurt'
+    ? '<button class="btn pri" data-a="hurtCutGo" data-id="'+p.id+'">Let him go free</button>'
     : '<button class="btn danger" data-a="freeCut" data-id="'+p.id+'" data-to="'+ak.kind+'">'+
         (ak.kind==='retired' ? 'Cut him as retired' : 'Cut him as an NFL free agent')+
         (()=>{ const b = backloadOwed(p), cfg = S.settings.cap.backload || {};
                return (cfg.on !== false && !!cfg.on && b.owed > 0) ? ' — pay '+money(b.owed) : ''; })()+'</button>';
   const body = autoCutBox(p, ak)+
     (ak.kind === 'dead' ? deadHTML + (psHTML ? '<div class="hr"></div>'+psHTML : '')
+      : ak.kind === 'hurt' ? '<div class="assetbox"><b>Free cut — on injured reserve</b><div class="tiny muted">Nothing on your cap for '+y+
+          ' or any season after, and no dead money. His deal goes with him into free agency until the free agency draft, and he can be signed back.</div></div>'
                         : rfaCutHTML(p, ak.kind))+
     (isCommish()
       ? '<div class="hr"></div><div class="row"><button class="btn sm ghost" data-a="cutOver" data-id="'+p.id+'" data-cutover="1">'+
@@ -14130,7 +14134,8 @@ ACT.cutSplit = (d)=>{ ui.tmp.cutSplit = d.m==='split' ? 'split' : 'now'; ACT.rel
 ACT.cutOver = (d)=>{ ui.tmp.cutOver = ui.tmp.cutOver === d.id ? null : d.id; ACT.release({id:d.id}); };
 ACT.releaseGo = (d)=>{
   const p0 = byId(S.players, d.id), k0 = p0 ? autoCut(p0).kind : 'dead';
-  if(!isCommish() && k0 !== 'dead') return toast('The news has him '+(k0==='retired'?'retired':'with no NFL team')+', so it is that cut — ask the commissioner to change it','bad');
+  if(!isCommish() && k0 !== 'dead') return toast(k0==='hurt' ? 'He is on injured reserve at $1 or less, so he goes free — use Let him go free'
+    : 'The news has him '+(k0==='retired'?'retired':'with no NFL team')+', so it is that cut — ask the commissioner to change it','bad');
   releasePlayer(d.id, ui.tmp.cutSplit||'now'); ui.tmp.cutSplit=null; closeModal(); save(); render(); toast('Player released'); };
 /* ---- Cutting a hurt man off a minimum deal ----------------------------------
    A player on nothing but the league minimum for a single year, who is on
@@ -14148,16 +14153,21 @@ function freeCutOk(p){
   if(r.hurtFreeCut === false) return {ok:false, why:'switched off for this league'};
   const c = p && p.contract;
   if(!c || !c.teamId) return {ok:false, why:'he is not on a roster'};
-  const floor = +S.settings.waivers.salary || +S.settings.contracts.minSalary || 1;
-  const perYear = Math.round(((+c.total||0) / Math.max(1, +c.years||1))*100)/100;
-  if((+c.years||1) > 1) return {ok:false, why:'his deal runs more than a year'};
-  if(perYear > floor + 0.005)
-    return {ok:false, why:'he is on '+money(perYear)+', above the '+money(floor)+' minimum'};
+  /* Every season left on his deal, this one included, taken on its own: each has
+     to be $1 or less. */
+  const floor = HURT_FREE_MAX;
+  const y0 = +S.league.season, years = [];
+  (c.salaries||[]).forEach((v,i)=>{ const yr = +c.startYear + i; if(yr >= y0) years.push({year:yr, amt:fixInc(+v||0)}); });
+  if(!years.length) return {ok:false, why:'nothing is left on his deal'};
+  const over = years.find(x=> x.amt > floor + 0.005);
+  if(over) return {ok:false, why:'he is on '+money(over.amt)+' in '+over.year+', over '+money(floor)};
+  const perYear = Math.max.apply(null, years.map(x=> x.amt));
   if(!onRealIR(p))
     return {ok:false, why:'he is not on injured reserve'+
       (((p.injury||{}).status) ? ' — he is listed '+esc(p.injury.status) : '')};
-  return {ok:true, perYear, floor};
+  return {ok:true, perYear, floor, years};
 }
+const HURT_FREE_MAX = 1;
 /* Let him go with nothing left behind. */
 ACT.duesRemindNow = ()=>{
   if(!isCommish()) return toast('Commissioners only','bad');
@@ -14176,7 +14186,7 @@ ACT.hurtCut = (d)=>{
   if(!g.ok) return toast('He cannot be let go for nothing — '+g.why,'bad');
   const from = p.contract.teamId;
   modal('Let '+esc(p.name)+' go for nothing',
-    '<p class="muted" style="margin:0 0 8px">He is on '+money(g.perYear)+' for a single year and is '+
+    '<p class="muted" style="margin:0 0 8px">He is on '+g.years.map(x=> x.year+' '+money(x.amt)).join(', ')+' and is '+
     esc(String((p.injury||{}).status||'on injured reserve'))+' in real life. '+
     esc(teamName(from))+' can let him go with <b>no dead money at all</b>.</p>'+
     '<div class="kv"><dt>Normally left behind</dt><dd>'+money(cutSaving(p) ? 
@@ -14187,8 +14197,12 @@ ACT.hurtCut = (d)=>{
     '<button class="btn pri" data-a="hurtCutGo" data-id="'+p.id+'">Let him go</button>');
 };
 ACT.hurtCutGo = (d)=>{
-  if(!isCommish()) return toast('Commissioners only','bad');
   const p = byId(S.players, d.id); if(!p) return;
+  if(!isCommish()){
+    const own = p.contract && p.contract.teamId;
+    if(!own || !mustManage(own)) return;
+    if(autoCut(p).kind !== 'hurt') return toast('That is not the cut for him — ask the commissioner','bad');
+  }
   const g = freeCutOk(p);
   if(!g.ok) return toast('He cannot be let go for nothing — '+g.why,'bad');
   const from = p.contract.teamId;
@@ -14201,6 +14215,9 @@ ACT.hurtCutGo = (d)=>{
     ' on injured reserve, no dead money; his deal goes with him until the free agency draft', {type:'drop', teams:[from], players:[p.id]});
   notify('Let go for nothing', p.name+' was on '+money(was)+' and injured reserve, so '+
     teamName(from)+' let him go with nothing left behind.', 'info');
+  if(!isCommish() && headCommishId()) notify('Free IR cut — '+teamName(from),
+    (currentActorName() || teamName(from))+' let '+p.name+' go for nothing: on injured reserve and $1 or less every year. Check it in Transactions.',
+    'warn', [headCommishId()]);
   closeModal(); save(); render();
   toast(p.name+' let go, nothing owed','good');
 };
@@ -14213,7 +14230,8 @@ ACT.freeCut = (d)=>{
        called for him; any other kind is the commissioner's to choose. */
     if(from && !isCommish() && !mustManage(from)) return;
     if(!isCommish() && autoCut(p).kind !== d.to)
-      return toast(autoCut(p).kind === 'dead' ? 'He still has an NFL team, so this is the 50% cut — ask the commissioner if that is wrong'
+      return toast(autoCut(p).kind === 'hurt' ? 'He is on injured reserve at $1 or less, so he goes free — use Let him go free'
+        : autoCut(p).kind === 'dead' ? 'He still has an NFL team, so this is the 50% cut — ask the commissioner if that is wrong'
         : 'The news has him '+(autoCut(p).kind==='retired'?'retired':'with no NFL team')+' — ask the commissioner to change it', 'bad');
     const retire = d.to === 'retired';
     const was = grossHit(p, S.league.season);
@@ -20630,9 +20648,9 @@ function capLadderHTML(pend){
         <label class="f"><span>Dead cap on a release</span><input type="number" min="0" max="100" data-set="settings.cap.deadCapPct" value="${c.deadCapPct}"></label>
             <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.lateCutOn" ${lateCutOn()?'checked':''}>
         <label class="check" style="grid-column:1/-1"><input type="checkbox" data-set="settings.cap.hurtFreeCut" ${(S.settings.cap.hurtFreeCut!==false)?'checked':''}>
-          <span>A commissioner can let a hurt man on the minimum go for nothing
-            <span class="dim">— a single year at ${money(+S.settings.waivers.salary||1)} and on injured
-            reserve in real life, cut with no dead money at all</span></span></label>
+          <span>A man on injured reserve at $1 or less goes for nothing
+            <span class="dim">— on injured reserve in real life and $1.00 or less in every season left on his deal:
+            cutting him is a free cut, no dead money at all, picked automatically on the cut screen</span></span></label>
               <span>Late cuts save nothing
                 <span class="dim">— past the week below, the whole season's salary stays on the books</span></span></label>
             ${!lateCutOn() ? '' : `<label class="f"><span>From after week</span>
@@ -32012,6 +32030,8 @@ function clubCardHTML(p){
    ordinary cut with dead cap. */
 function autoCut(p){
   const c = clubNow(p);
+  const g = freeCutOk(p);
+  if(g.ok) return {kind:'hurt', c, g};
   if(c && c.none) return {kind: c.retired ? 'retired' : 'nflfa', c};
   return {kind:'dead', c};
 }
@@ -32021,7 +32041,10 @@ function autoCutBox(p, ak){
       (n.link ? '<a href="'+esc(n.link)+'" target="_blank" rel="noopener">'+esc(n.headline)+'</a>' : esc(n.headline))+
       ' <span class="dim">· '+dstr(n.at)+'</span></div>' : '';
   const src = !c ? '' : c.by === 'news' ? 'from the news' : 'Sleeper has him with no NFL team';
-  const head = ak.kind === 'retired' ? 'Retired — '+src+'. This is the retired cut: no 50% dead cap.'
+  const head = ak.kind === 'hurt'
+    ? esc(String((p.injury||{}).status||'IR'))+' in real life, and '+ak.g.years.map(x=> x.year+' '+money(x.amt)).join(' · ')+
+      ' — $1 or less every year. This is a free cut: no dead money at all.'
+    : ak.kind === 'retired' ? 'Retired — '+src+'. This is the retired cut: no 50% dead cap.'
     : ak.kind === 'nflfa' ? 'No NFL team — '+src+(c.from ? ' (he was with '+esc(c.from)+')' : '')+'. This is the NFL free agent cut: no 50% dead cap.'
     : (p.nfl ? 'He is with '+esc(String(p.nfl).toUpperCase()) : 'He is on an NFL team')+', so this is the 50% cut.';
   return '<div class="assetbox" data-autocut="'+ak.kind+'" style="margin-bottom:10px;border-color:var(--'+(ak.kind==='dead'?'line':'warn-edge')+')">'+
