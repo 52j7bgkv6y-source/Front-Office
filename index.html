@@ -1727,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19i · seeing the site as someone else changes nothing; Tank Bigsby put back';
+const APP_BUILD = '2026-11-20a · commissioner edits salary kept on any trade or counter; trades wait for the cap';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -2152,6 +2152,7 @@ const esc = (s)=> String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'
 const sum = (a)=> a.reduce((x,y)=>x+(+y||0),0);
 const byId = (arr,id)=> arr.find(x=>x.id===id);
 const deep = (o)=> JSON.parse(JSON.stringify(o));
+const uniq = (xs)=> Array.from(new Set((xs||[]).filter(Boolean)));
 
 function centsOn(){ return ((S.settings.cap||{}).cents) !== false; }   /* on unless turned off */
 function decimals(){
@@ -3946,7 +3947,7 @@ function notify(title, body, kind, teams){
   S.notices.unshift({id:uid('n'), at:Date.now(), title, body, kind:kind||'info',
     teams: (only && only.length) ? only : null, read:false, by});
   /* And on to any phone it concerns that is locked. */
-  try{ if(typeof Push==='object' && !viewAsTeam()) Push.relay(S.notices[0]); }catch(e){}
+  try{ if(typeof Push==='object' && !viewAsTeam() && !tradeSimming) Push.relay(S.notices[0]); }catch(e){}
   if(S.notices.length>200) S.notices.length=200;
 }
 /* Is this notice any of my business? */
@@ -22331,10 +22332,78 @@ function capSpaceAfterPending(teamId, year){
 function capRoomAfterPending(teamId, year){
   return fixCents(capSpaceAfterPending(teamId, year) - capFloor());
 }
+/* ---- A trade waits for the cap -------------------------------------------------
+   Played out on a copy of the league, salary kept and any follow-on counter
+   included: every team in it, every season on the books. Anyone below what the
+   league allows over the cap (-$10) in any season, and the trade cannot be
+   completed until they are back at -$10 or better in that season. It waits in
+   review rather than being thrown out, and says who has to clear what. */
+let tradeSimming = 0;
+function tradeCapProblems(tr){
+  if(!tr || tr.type==='multi' || !S.settings.trades.capMustBeLegal) return [];
+  const ch = (tr.counters||[]).find(c=> c.status==='accepted');
+  const key = 'tcap:'+tr.id+':'+JSON.stringify([tr.a, tr.b, ch ? [ch.byTeamId, ch.side, ch.gives, ch.wants, ch.retain, ch.giveRetain] : 0]);
+  return memo(key, ()=>{
+    const keepS = S, keepCap = capCache, keepMemo = memoBook, out = [];
+    tradeSimming++;
+    try{
+      S = Object.assign({}, keepS, {players:deep(keepS.players), picks:deep(keepS.picks), teams:deep(keepS.teams), log:[], notices:[]});
+      capCache = {}; memoBook = {};
+      moveAssets(tr.a.teamId, tr.b.teamId, tr.a);
+      moveAssets(tr.b.teamId, tr.a.teamId, tr.b);
+      const who = [tr.a.teamId, tr.b.teamId];
+      if(ch){
+        const target = tr[ch.side].teamId;
+        moveAssets(ch.byTeamId, target, Object.assign({}, ch.gives, {retain:ch.giveRetain||{}}));
+        moveAssets(target, ch.byTeamId, Object.assign({}, ch.wants, {retain:ch.retain||{}}));
+        if(who.indexOf(ch.byTeamId) < 0) who.push(ch.byTeamId);
+      }
+      const yrs = (projYears()||[]).map(Number).filter(y=> y >= +S.league.season);
+      who.forEach(id=>{
+        for(const y of (yrs.length ? yrs : [+S.league.season])){
+          const sp = capSpace(id, y);
+          if(sp < capFloor() - 1e-9) out.push({team:id, year:y, space:fixCents(sp), need:fixCents(capFloor() - sp)});
+        }
+      });
+    }catch(e){ try{ console.warn('[front office] trade cap check', e); }catch(_){} }
+    finally{ S = keepS; capCache = keepCap; memoBook = keepMemo; tradeSimming--; }
+    return out;
+  });
+}
+function capHoldText(probs){
+  const by = {};
+  probs.forEach(x=> (by[x.team] = by[x.team] || []).push(x));
+  return 'This trade cannot be completed until '+Object.keys(by).map(id=>
+    teamName(id)+' is at '+money(capFloor())+' or better in '+by[id].map(x=> x.year+' (now '+money(x.space)+' — clear '+money(x.need)+')').join(', ')
+  ).join(', and ')+'.';
+}
+function capHoldHTML(tr){
+  if(!tr || (tr.status!=='review' && tr.status!=='proposed')) return '';
+  const probs = tradeCapProblems(tr);
+  if(!probs.length) return '';
+  return '<div class="hint bad" data-caphold="1"><b>Over the cap.</b> '+esc(capHoldText(probs))+
+    ' The league allows '+money(-capFloor())+' over; the trade waits in review until then.</div>';
+}
 function processTrade(tr){
   if(tr.type==='multi') return processMulti(tr);
   if(tr.status!=='review') return;
   if(S.settings.trades.capMustBeLegal){
+    if(tr.capHold && Date.now() - (+tr.capHold.checkedAt||0) < 20000) return;
+    const probs = tradeCapProblems(tr);
+    if(probs.length){
+      const sig = probs.map(x=> x.team+':'+x.year+':'+x.need).join('|');
+      if(!tr.capHold || tr.capHold.sig !== sig){
+        tr.capHold = {at:Date.now(), sig};
+        const txt = capHoldText(probs);
+        tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:'On hold — '+txt});
+        notify('Trade on hold — over the cap', txt, 'bad', uniq([tr.a.teamId, tr.b.teamId].concat(probs.map(x=> x.team))));
+      }
+      tr.capHold.checkedAt = Date.now();
+      return;
+    }
+    if(tr.capHold){ delete tr.capHold; tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:'Back under the line — going through'}); }
+  }
+  if(false){
     const test = ()=>{
       const snap = deep({p:S.players.map(p=>p.contract?{id:p.id,t:p.contract.teamId}:null), k:S.picks.map(k=>({id:k.id,t:k.ownerTeamId}))});
       moveAssets(tr.a.teamId, tr.b.teamId, {players:tr.a.players, picks:tr.a.picks});
@@ -23238,6 +23307,124 @@ ACT.acceptTrade = (d)=>{
   save(); render(); toast('Accepted — review clock running','good');
 };
 ACT.rejectTrade = (d)=>{ const tr=byId(S.trades,d.id); if(!tr){ render(); return toast('That offer has gone','bad'); } tr.status='rejected'; tr.log.unshift({at:Date.now(),text:'Turned down'}); save(); render(); };
+/* ---- The commissioner sets the salary kept on a trade or a counter -----------
+   Either side, any player going across, any season of his deal: how much the
+   team sending him keeps paying. Both teams are told what changed. */
+function trEditLegs(tr, cid){
+  if(cid){
+    const ct = (tr.counters||[]).find(c=> c.id === cid); if(!ct) return [];
+    const target = tr[ct.side].teamId;
+    return [{key:'giveRetain', obj:ct, payer:ct.byTeamId, players:(ct.gives||{}).players||[]},
+            {key:'retain',     obj:ct, payer:target,      players:(ct.wants||{}).players||[]}];
+  }
+  return [{key:'retain', obj:tr.a, payer:tr.a.teamId, players:tr.a.players||[]},
+          {key:'retain', obj:tr.b, payer:tr.b.teamId, players:tr.b.players||[]}];
+}
+function trEditForm(){
+  const e = ui.tmp.trEdit, tr = byId(S.trades, e.id); if(!tr) return '';
+  const legs = trEditLegs(tr, e.cid);
+  return (e.cid ? '<p class="muted" style="margin:0 0 8px">A counter on '+esc(teamName(tr.a.teamId))+' \u21C4 '+esc(teamName(tr.b.teamId))+'.</p>' : '')+
+    legs.map((lg, li)=>{
+      const ids = lg.players.filter(pid=>{ const p = byId(S.players, pid); return p && p.contract; });
+      if(!ids.length) return '';
+      return '<div class="flabel">'+esc(teamName(lg.payer))+' keeps paying</div>'+posSortIds(ids).map(pid=>{
+        const pl = byId(S.players, pid), keep = (e.legs[li][pid] || {});
+        return '<div style="margin-bottom:8px"><div class="row" style="margin-bottom:3px"><span class="tiny" style="flex:1;min-width:90px">'+esc(pl.name)+'</span>'+
+          '<button class="btn sm ghost" data-a="trEditAll" data-li="'+li+'" data-pid="'+pid+'">All of it</button>'+
+          '<button class="btn sm ghost" data-a="trEditNone" data-li="'+li+'" data-pid="'+pid+'">None</button></div>'+
+          '<div class="scrollx"><table><tbody><tr>'+contractYears(pl).map(x=>
+            '<td style="padding:1px 3px"><div class="tiny dim" style="text-align:center">'+x.year+'</div>'+
+            '<input type="number" min="0" max="'+x.salary+'" step="'+S.settings.cap.increment+'" value="'+(+keep[x.year]||0)+'" style="width:86px;text-align:right"'+
+              ' data-oninput="trEditKeep" data-li="'+li+'" data-pid="'+pid+'" data-y="'+x.year+'">'+
+            '<div class="tiny dim" style="text-align:center">of '+money(x.salary)+'</div></td>').join('')+
+          '</tr></tbody></table></div></div>';
+      }).join('');
+    }).join('')+
+    '<div class="tiny dim">Saving tells both teams what changed. The review clock is not touched.</div>';
+}
+ACT.trEdit = (d)=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const tr = byId(S.trades, d.id); if(!tr) return;
+  const legs = trEditLegs(tr, d.cid);
+  ui.tmp.trEdit = {id:tr.id, cid:d.cid||null, legs: legs.map(lg=>{
+    const yrs = retainToYears({retain:lg.obj[lg.key]||{}}), out = {};
+    Object.keys(yrs).forEach(pid=> out[pid] = Object.assign({}, yrs[pid].byYear));
+    return out;
+  })};
+  modal('Salary kept'+(d.cid ? ' — counter' : ''), trEditForm(),
+    '<button class="btn ghost" data-a="closeModal">Cancel</button><button class="btn pri" data-a="trEditGo">Save</button>');
+};
+function trEditRedraw(){ const box = $('#modalBox'), top = box ? box.scrollTop : 0; $('#modalBox .mb').innerHTML = trEditForm(); if(box) box.scrollTop = top; }
+ACT.trEditKeep = (d, el)=>{
+  const e = ui.tmp.trEdit; if(!e) return;
+  const p = byId(S.players, d.pid), yr = (contractYears(p).find(x=> x.year === +d.y) || {}).salary || 0;
+  const v = Math.min(yr, Math.max(0, +el.value||0));
+  const m = e.legs[+d.li][d.pid] = e.legs[+d.li][d.pid] || {};
+  if(v) m[d.y] = fixInc(v); else delete m[d.y];
+};
+ACT.trEditAll = (d)=>{
+  const e = ui.tmp.trEdit, p = byId(S.players, d.pid); if(!e || !p) return;
+  const m = e.legs[+d.li][d.pid] = {};
+  contractYears(p).forEach(x=>{ if(x.salary > 0) m[x.year] = fixInc(x.salary); });
+  trEditRedraw();
+};
+ACT.trEditNone = (d)=>{ const e = ui.tmp.trEdit; if(!e) return; e.legs[+d.li][d.pid] = {}; trEditRedraw(); };
+ACT.trEditGo = ()=>{
+  if(!isCommish()) return toast('Commissioners only','bad');
+  const e = ui.tmp.trEdit, tr = e && byId(S.trades, e.id); if(!tr) return;
+  const legs = trEditLegs(tr, e.cid), said = [];
+  const ct0 = e.cid ? (tr.counters||[]).find(c=> c.id===e.cid) : null;
+  /* Already processed: the change goes onto the man's deal as well — what the
+     paying team eats moves by exactly the difference. */
+  const done = e.cid ? !!(ct0 && ct0.status === 'processed') : tr.status === 'approved';
+  const overs = [];
+  legs.forEach((lg, li)=>{
+    const was = retainToYears({retain:lg.obj[lg.key]||{}}), now = {};
+    lg.players.forEach(pid=>{
+      const m = e.legs[li][pid] || {}, byYear = {};
+      Object.keys(m).forEach(y=>{ if(+m[y] > 0) byYear[y] = fixInc(+m[y]); });
+      if(Object.keys(byYear).length) now[pid] = {byYear};
+      const a = JSON.stringify((was[pid]||{}).byYear||{}), b = JSON.stringify(byYear);
+      if(a !== b && done) trEditOntoDeal(pid, lg.payer, (was[pid]||{}).byYear||{}, byYear, overs);
+      if(a !== b){
+        const p = byId(S.players, pid);
+        said.push(teamName(lg.payer)+' keeps '+(Object.keys(byYear).length
+          ? Object.keys(byYear).sort().map(y=> money(byYear[y])+' in '+y).join(', ')
+          : 'nothing')+' of '+(p ? p.name : 'him'));
+      }
+    });
+    lg.obj[lg.key] = now;
+  });
+  closeModal();
+  if(!said.length) return toast('Nothing changed','warn');
+  const txt = 'The commissioner changed the salary kept'+(done ? ' after the trade went through' : '')+': '+said.join('; ');
+  if(done) logIt(txt+' — '+teamName(tr.a.teamId)+' \u21C4 '+teamName(tr.b.teamId), Object.assign(txMeta(tr), {type:'trade'}));
+  tr.log = tr.log||[]; tr.log.unshift({at:Date.now(), text:txt});
+  delete tr.capHold;
+  notify('Trade changed by the commissioner', txt, 'warn', uniq([tr.a.teamId, tr.b.teamId].concat(e.cid ? [((tr.counters||[]).find(c=> c.id===e.cid)||{}).byTeamId] : [])));
+  ui.tmp.trEdit = null; clearCapCache(); save(); render();
+  /* Done trades are not held up, but anyone it leaves below the line is told. */
+  const under = done ? uniq(legs.map(lg=> lg.payer)).map(id=>{
+    const bad = [];
+    (projYears()||[]).map(Number).filter(y=> y >= +S.league.season).forEach(y=>{ if(capSpace(id, y) < capFloor() - 1e-9) bad.push(y); });
+    return bad.length ? teamName(id)+' is now below '+money(capFloor())+' in '+bad.join(', ') : '';
+  }).filter(Boolean) : [];
+  toast(under.length ? 'Salary kept saved — '+under.join('; ') : 'Salary kept saved', under.length ? 'warn' : 'good', under.length ? 8000 : 2600);
+};
+function trEditOntoDeal(pid, payer, before, after, overs){
+  const p = byId(S.players, pid), c = p && p.contract; if(!c) return;
+  c.retained = c.retained || [];
+  let r = c.retained.find(x=> x.teamId === payer);
+  if(!r){ r = {teamId:payer, pct:null, mode:'years', through:null, amounts:{}, at:Date.now()}; c.retained.push(r); }
+  r.amounts = r.amounts || {};
+  const years = uniq(Object.keys(before).concat(Object.keys(after)));
+  years.forEach(y=>{
+    const i = (+y) - c.startYear, cap = (i >= 0 && i < (c.salaries||[]).length) ? (+c.salaries[i]||0) : 0;
+    const v = fixInc(Math.max(0, Math.min(cap, (+r.amounts[y]||0) - (+before[y]||0) + (+after[y]||0))));
+    if(v > 0) r.amounts[y] = v; else delete r.amounts[y];
+  });
+  if(!Object.keys(r.amounts).length) c.retained = c.retained.filter(x=> x !== r);
+}
 function pauseBtn(tr){
   if(!tr || tr.status!=='review' || !tr.clock || !isCommish() || !tradePauseOn()) return '';
   return tr.clock.paused
@@ -23289,7 +23476,12 @@ function resumeAllTradeClocks(){
   });
   return n;
 }
-ACT.forceProcess = (d)=>{ const tr=byId(S.trades,d.id); tr.clock.remain=0; processTrade(tr); save(); render(); };
+ACT.forceProcess = (d)=>{
+  const tr=byId(S.trades,d.id); if(!tr) return;
+  const probs = tradeCapProblems(tr);
+  if(probs.length) return toast(capHoldText(probs), 'bad', 9000);
+  tr.clock.remain=0; delete tr.capHold; processTrade(tr); save(); render();
+};
 ACT.undoTrade = (d)=>{
   const tr = byId(S.trades,d.id);
   if(!undoWindowLeft(tr)) return toast('That window has closed','bad');
@@ -25714,6 +25906,7 @@ VIEWS.trades = function(){
         </div>
         ${(tr.status==='proposed' || tr.status==='review') ? '<div class="row" style="margin-top:8px"><button class="btn sm ghost" data-a="tradeTable" data-id="'+tr.id+'">See both rosters as a table</button></div>' : ''}
         ${retainNote(tr.a)}${retainNote(tr.b)}
+        ${capHoldHTML(tr)}
         ${tradeGradeHTML(tr)}
         ${tr.reason?'<div class="hint bad">'+esc(tr.reason)+'</div>':''}
         <div class="row" style="margin-top:12px">
@@ -25730,6 +25923,7 @@ VIEWS.trades = function(){
                 : '');
           })() : ''}
           ${canCounter ? sides.map(s=>'<button class="btn" data-a="counter" data-id="'+tr.id+'" data-side="'+s+'">Counter '+esc(teamName(tr[s].teamId))+'</button>').join('') : ''}
+          ${(tr.status==='review' || tr.status==='proposed' || tr.status==='approved') && isCommish() ? '<button class="btn ghost sm" data-a="trEdit" data-id="'+tr.id+'">\u270E Salary kept</button>' : ''}
           ${tr.status==='review' && isCommish() ? pauseBtn(tr)+'<button class="btn ghost sm" data-a="forceProcess" data-id="'+tr.id+'">Process now</button><button class="btn ghost sm danger" data-a="rejectTrade" data-id="'+tr.id+'">Veto</button>':''}
           ${undoWindowLeft(tr) ? '<button class="btn danger sm" data-a="undoTrade" data-id="'+tr.id+'">Reverse it — '+hhmm(undoWindowLeft(tr))+' left</button>':''}
         </div>
@@ -25744,7 +25938,9 @@ VIEWS.trades = function(){
             <div class="right">${ct.status==='pending' ? (!counterAnswerNo(tr, ct)
                 ? '<button class="btn sm pri" data-a="acceptCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Accept</button> <button class="btn sm ghost" data-a="declineCounter" data-id="'+tr.id+'" data-cid="'+ct.id+'">Decline</button>'
                 : '<span class="pill">Waiting on '+esc(teamName(tr[ct.side].teamId))+'</span>')
-              : '<span class="pill '+(ct.status==='declined'?'':'ok')+'">'+ct.status+'</span>'}</div>
+              : '<span class="pill '+(ct.status==='declined'?'':'ok')+'">'+ct.status+'</span>'}
+              ${(ct.status==='pending' || ct.status==='accepted' || ct.status==='processed') && isCommish() && (tr.status==='review'||tr.status==='proposed'||tr.status==='approved')
+                ? '<div style="margin-top:6px"><button class="btn ghost sm" data-a="trEdit" data-id="'+tr.id+'" data-cid="'+ct.id+'">\u270E Salary kept</button></div>' : ''}</div>
           </div></div>`).join('')}`:''}
         <div class="hr"></div><div class="log">${(tr.log||[]).filter(x=> logSees(x, me)).slice(0,5).map(l=>'<div><span class="dim">'+dstr(l.at)+'</span> — '+esc(l.text)+'</div>').join('')}</div>
       </div></div>`;
