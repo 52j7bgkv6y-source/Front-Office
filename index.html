@@ -1727,7 +1727,7 @@ a.plink:hover{text-decoration-style:solid}
 <div id="modal"><div class="box" id="modalBox"></div></div>
 <div id="toasts"></div>
 <script>
-const APP_BUILD = '2026-11-19g · season-ending IR keeps a man out of the starting lineup';
+const APP_BUILD = '2026-11-19h · pick a starter for another spot and the two swap';
 /* The date-and-letter part alone: later builds sort after earlier ones. */
 const BUILD_ID = String(APP_BUILD).split(' \u00b7 ')[0].trim();
 
@@ -13567,7 +13567,7 @@ ACT.ssUse = (d)=>{
 function lineupForm(teamId, week){
   const L = lineupFor(teamId, week);
   const pool = teamPlayers(teamId).filter(p=> !offCap(p) || playerSlot(p)==='active');
-  const chosen = {}; L.slots.forEach(x=>{ if(x.p) chosen[x.p.id]=1; });
+  const chosen = {}; L.slots.forEach((x, k)=>{ if(x.p) chosen[x.p.id] = {k, slot:x.slot, eligible:x.eligible||[]}; });
   const boss = lineupBoss(teamId, week);
   return `
     ${boss!==teamId?`<div class="hint warn">You are setting this because you hold ${esc(teamName(teamId))}'s
@@ -13595,7 +13595,12 @@ function lineupForm(teamId, week){
             const locked = playerLocked(p);
             // a locked player can only stay where they already are, never be moved in
             const sir = seasonIRBarred(p, week);
-            const disable = sir || (chosen[p.id] && (!x.p||x.p.id!==p.id)) || (locked && (!x.p||x.p.id!==p.id));
+            /* A man already starting somewhere else can be picked: the two swap,
+               or — where the one here cannot play that spot — he moves across
+               and that spot is left empty. */
+            const elsewhere = chosen[p.id] && (!x.p || x.p.id !== p.id) ? chosen[p.id] : null;
+            const swaps = elsewhere && x.p && elsewhere.eligible.indexOf(x.p.pos) >= 0 && !seasonIRBarred(x.p, week);
+            const disable = sir || (locked && (!x.p||x.p.id!==p.id));
             const started = gameForPlayer(p);
             const tail = started ? (started.status==='final'?' · final':' · playing') : '';
             const mt = matchupTag(p);
@@ -13607,7 +13612,8 @@ function lineupForm(teamId, week){
               esc(p.name)+' · '+posTag(p.pos).replace(/<[^>]+>/g,'')+' · '+fpts(p.id).toFixed(1)+
               (pj!=null?' · proj '+pj.toFixed(1):'')+
               (ko?' · '+ko:'')+
-              (mt?' · '+esc(mt):'')+(wxWord(p)?' · '+wxWord(p):'')+tail+(sir?' · season-ending IR':'')+'</option>';
+              (mt?' · '+esc(mt):'')+(wxWord(p)?' · '+wxWord(p):'')+tail+(sir?' · season-ending IR':'')+
+              (elsewhere ? (swaps ? ' · \u21C4 swap with '+esc(elsewhere.slot) : ' · moves from '+esc(elsewhere.slot)) : '')+'</option>';
           }).join('');
         return `<div class="lurow" style="border-bottom:1px solid var(--line);padding:6px 0">
           <div class="row" style="gap:8px">
@@ -13710,7 +13716,15 @@ ACT.luSet = (d, el)=>{
   S.lineups = S.lineups || {};
   S.lineups[w] = S.lineups[w] || {};
   const dup = arr.indexOf(val);
-  if(val && dup>=0 && dup!==i) arr[dup] = '';    // nobody plays two positions
+  let swapped = null;
+  if(val && dup>=0 && dup!==i){
+    /* Nobody plays two positions. The man he is replacing here goes to the
+       spot he came from, where he can play it; otherwise that spot is empty. */
+    const back = arr[i] ? byId(S.players, arr[i]) : null;
+    const there = cur.slots[dup] || {};
+    if(back && (there.eligible||[]).indexOf(back.pos) >= 0 && !seasonIRBarred(back, w)){ arr[dup] = back.id; swapped = [back, there.slot]; }
+    else arr[dup] = '';
+  }
   arr[i] = val;
   S.lineups[w][tid] = arr;
   if(forced){
@@ -13723,6 +13737,7 @@ ACT.luSet = (d, el)=>{
   }
   save();
   { const mb = $('#modalBox .mb'); if(mb) mb.innerHTML = lineupForm(tid, w); }
+  if(swapped) toast('Swapped — '+swapped[0].name+' is at '+swapped[1]+' now','good');
 };
 ACT.luClear = ()=>{
   const lu = ui.tmp.lu; if(!lu) return;
